@@ -330,50 +330,93 @@ class ConfigTab:
         reinsertion_frame = ttk.LabelFrame(self.frame, text="Crop Reinsertion", padding="10")
         reinsertion_frame.pack(fill=tk.X, pady=5)
         
-        # Original images directory selection
+        # Directory selection section
         dir_frame = ttk.Frame(reinsertion_frame)
         dir_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(dir_frame, text="Original Images Directory:").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(dir_frame, textvariable=self.parent.original_images_dir, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Button(dir_frame, text="Browse...", command=self._browse_original_dir).pack(side=tk.LEFT, padx=5)
+        # Source images directory
+        ttk.Label(dir_frame, text="Source Images Directory:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Entry(dir_frame, textvariable=self.parent.source_images_dir, width=30).grid(column=1, row=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Button(dir_frame, text="Browse...", command=self._browse_source_dir).grid(column=2, row=0, padx=5, pady=5)
         
-        # Original image selection
-        image_frame = ttk.Frame(reinsertion_frame)
-        image_frame.pack(fill=tk.X, pady=5)
+        # Create a separator
+        ttk.Separator(reinsertion_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
         
-        ttk.Label(image_frame, text="Original Image:").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(image_frame, textvariable=self.parent.selected_original_image, width=40).pack(side=tk.LEFT, padx=5)
-        ttk.Button(image_frame, text="Browse...", command=self._browse_original_image).pack(side=tk.LEFT, padx=5)
+        # Matching method section
+        match_frame = ttk.Frame(reinsertion_frame)
+        match_frame.pack(fill=tk.X, pady=5)
         
-        # Crop position and dimensions
-        params_frame = ttk.Frame(reinsertion_frame)
-        params_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(match_frame, text="Match Source Images By:").pack(side=tk.LEFT, padx=5)
+        match_combo = ttk.Combobox(match_frame, textvariable=self.parent.reinsert_match_method, width=15)
+        match_combo['values'] = ["name_prefix", "name_suffix", "numeric_match", "metadata", "exact_match"]
+        match_combo.current(0)  # Default to name_prefix
+        match_combo.pack(side=tk.LEFT, padx=5)
         
-        # Create a grid for parameters
-        ttk.Label(params_frame, text="X Position:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_x_position, width=6).grid(
+        # Add reinsertion padding control
+        padding_frame = ttk.Frame(reinsertion_frame)
+        padding_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(padding_frame, text="Padding Percentage:").pack(side=tk.LEFT, padx=5)
+        ttk.Spinbox(padding_frame, from_=0, to=100, textvariable=self.parent.reinsert_padding, width=5).pack(side=tk.LEFT, padx=5)
+        ttk.Label(padding_frame, text="%").pack(side=tk.LEFT)
+        
+        # Add option to use automatic center positioning
+        pos_frame = ttk.Frame(reinsertion_frame)
+        pos_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Checkbutton(pos_frame, text="Auto-center cropped image", variable=self.parent.use_center_position).pack(side=tk.LEFT, padx=5)
+        
+        # Add manual position controls
+        manual_frame = ttk.LabelFrame(reinsertion_frame, text="Manual Position (if auto-center is disabled)", padding=5)
+        manual_frame.pack(fill=tk.X, pady=5)
+        
+        # Create a grid for position parameters
+        ttk.Label(manual_frame, text="X Position:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_x, width=6).grid(
             column=1, row=0, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Label(params_frame, text="Y Position:").grid(column=2, row=0, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_y_position, width=6).grid(
+        ttk.Label(manual_frame, text="Y Position:").grid(column=2, row=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_y, width=6).grid(
             column=3, row=0, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Label(params_frame, text="Width:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_width, width=6).grid(
+        ttk.Label(manual_frame, text="Width:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_width, width=6).grid(
             column=1, row=1, sticky=tk.W, padx=5, pady=2)
         
-        ttk.Label(params_frame, text="Height:").grid(column=2, row=1, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_height, width=6).grid(
+        ttk.Label(manual_frame, text="Height:").grid(column=2, row=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_height, width=6).grid(
             column=3, row=1, sticky=tk.W, padx=5, pady=2)
+        
+        # Enable/disable manual position controls based on auto-center checkbox
+        def toggle_manual_controls(*args):
+            state = "disabled" if self.parent.use_center_position.get() else "normal"
+            for child in manual_frame.winfo_children():
+                if isinstance(child, ttk.Spinbox):
+                    child.configure(state=state)
+        
+        # Register callback
+        self.parent.use_center_position.trace_add("write", toggle_manual_controls)
+        
+        # Call once to initialize
+        toggle_manual_controls()
         
         # Help text
         help_text = ttk.Label(
             reinsertion_frame, 
-            text="Configure these values to match the original crop parameters. The cropped image will be positioned at (X,Y) with the specified dimensions.",
+            text="This feature reinserts cropped images back into their original source images. "
+                "Select the directory containing the original source images and set how to match "
+                "cropped images to their sources. The padding percentage should match what was "
+                "used during the initial cropping process.",
             wraplength=600
         )
         help_text.pack(fill=tk.X, pady=10)
+
+    def _browse_source_dir(self):
+        """Browse for the source images directory."""
+        from tkinter import filedialog
+        directory = filedialog.askdirectory()
+        if directory:
+            self.parent.source_images_dir.set(directory)
 
     def _browse_original_dir(self):
         """Browse for original images directory."""
