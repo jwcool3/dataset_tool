@@ -160,9 +160,12 @@ class ImageComparison:
         
         # Add labels if image_paths is provided
         if image_paths:
-            sorted_labels = [os.path.basename(image_paths[i]) for i in sorted_indices]
-            # Truncate long filenames
-            sorted_labels = [label[:15] + '...' if len(label) > 15 else label for label in sorted_labels]
+            sorted_labels = []
+            for i in sorted_indices:
+                path = image_paths[i]
+                folder = os.path.basename(os.path.dirname(path))
+                filename = os.path.basename(path)
+                sorted_labels.append(f"{folder}/{filename[:10]}")
             
             ax1.set_xticks(np.arange(n_images))
             ax1.set_yticks(np.arange(n_images))
@@ -296,19 +299,30 @@ class ImageComparison:
         
         return comparison
     
-    def generate_detailed_report(self, img1, img2, filename1, filename2):
+    def generate_detailed_report(self, img1, img2, path1, path2):
         """
         Generate a detailed report comparing two images.
         
         Args:
             img1: First image (numpy array)
             img2: Second image (numpy array)
-            filename1: Name of first image
-            filename2: Name of second image
+            path1: Path of first image
+            path2: Path of second image
             
         Returns:
             PIL.Image: Report as a PIL image
         """
+        # Extract folder names for better display
+        folder1 = os.path.basename(os.path.dirname(path1))
+        folder2 = os.path.basename(os.path.dirname(path2))
+        filename1 = os.path.basename(path1)
+        filename2 = os.path.basename(path2)
+        
+        # Use combined folder/filename for display
+        # Use combined folder/filename for display
+        display_name1 = f"{folder1}/{filename1}"
+        display_name2 = f"{folder2}/{filename2}"
+        
         # Ensure images are in RGB
         if img1.shape[2] != 3:
             img1 = cv2.cvtColor(img1, cv2.COLOR_GRAY2RGB)
@@ -330,7 +344,6 @@ class ImageComparison:
         
         # Calculate metrics
         metrics = {}
-        
         # Histogram comparison
         hist1_b = cv2.calcHist([img1], [0], None, [256], [0, 256])
         hist1_g = cv2.calcHist([img1], [1], None, [256], [0, 256])

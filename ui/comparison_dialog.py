@@ -311,20 +311,24 @@ class ComparisonDialog:
     
     def _populate_image_dropdowns(self):
         """Fill the image selection combo boxes with file paths."""
-        # Extract filenames for display
-        filenames = [os.path.basename(path) for path in self.image_paths]
+        # Create a list of strings that include folder and filename
+        folder_prefixed_filenames = []
+        for path in self.image_paths:
+            folder = os.path.basename(os.path.dirname(path))
+            filename = os.path.basename(path)
+            folder_prefixed_filenames.append(f"{folder}/{filename}")
         
-        # Configure comboboxes
-        self.image1_combo['values'] = filenames
-        self.image2_combo['values'] = filenames
+        # Configure comboboxes with these prefixed filenames
+        self.image1_combo['values'] = folder_prefixed_filenames
+        self.image2_combo['values'] = folder_prefixed_filenames
         
         # Set initial values if possible
-        if filenames:
-            self.image1_var.set(filenames[0])
-            if len(filenames) > 1:
-                self.image2_var.set(filenames[1])
+        if folder_prefixed_filenames:
+            self.image1_var.set(folder_prefixed_filenames[0])
+            if len(folder_prefixed_filenames) > 1:
+                self.image2_var.set(folder_prefixed_filenames[1])
             else:
-                self.image2_var.set(filenames[0])
+                self.image2_var.set(folder_prefixed_filenames[0])
     
     def _bind_mousewheel(self, widget):
         """Bind mousewheel scrolling to a widget."""
@@ -588,6 +592,8 @@ class ComparisonDialog:
             self.notebook.select(2)  # Switch to comparison tab
             self._compare_selected()
     
+
+
     def _compare_selected(self):
         """Compare the two selected images in detail."""
         try:
@@ -599,11 +605,27 @@ class ComparisonDialog:
             image1_path = None
             image2_path = None
             
+            # Store full paths in a dictionary with folder prefixes
+            path_dict = {}
             for path in self.image_paths:
-                if os.path.basename(path) == image1_name:
-                    image1_path = path
-                if os.path.basename(path) == image2_name:
-                    image2_path = path
+                folder_name = os.path.basename(os.path.dirname(path))
+                filename = os.path.basename(path)
+                path_key = f"{folder_name}/{filename}"
+                path_dict[path_key] = path
+            
+            # Check if the selected names include folder prefixes
+            if "/" in image1_name:
+                image1_path = path_dict.get(image1_name)
+            if "/" in image2_name:
+                image2_path = path_dict.get(image2_name)
+                
+            # If not found with folder prefix, try just the filename
+            if not image1_path or not image2_path:
+                for path in self.image_paths:
+                    if os.path.basename(path) == image1_name and not image1_path:
+                        image1_path = path
+                    if os.path.basename(path) == image2_name and not image2_path:
+                        image2_path = path
             
             if not image1_path or not image2_path:
                 self.status_label.config(text="Error: Selected images not found.")
