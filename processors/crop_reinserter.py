@@ -6,7 +6,8 @@ Reinserts cropped images back into their original uncropped versions.
 import os
 import cv2
 import numpy as np
-from utils.image_utils import add_padding_to_square
+import re
+import json
 
 class CropReinserter:
     """Reinserts cropped images back into their original positions."""
@@ -46,93 +47,89 @@ class CropReinserter:
             self.app.status_label.config(text="No cropped images found.")
             return False
         
-        # Get original images directory
-        original_dir = self.app.original_images_dir.get()
-        if not original_dir or not os.path.isdir(original_dir):
-            self.app.status_label.config(text="Original images directory not set or invalid.")
+        # Get source directory (original images)
+        source_dir = self.app.source_images_dir.get()
+        if not source_dir or not os.path.isdir(source_dir):
+            self.app.status_label.config(text="Source images directory not set or invalid.")
             return False
         
-        # Load all original images with their filename patterns
-        original_images = {}
-        for file in os.listdir(original_dir):
+        # Load all source images
+        source_images = {}
+        for file in os.listdir(source_dir):
             if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                original_images[file] = os.path.join(original_dir, file)
+                source_images[file] = os.path.join(source_dir, file)
+        
+        if not source_images:
+            self.app.status_label.config(text="No source images found.")
+            return False
+        
+        # Get reinsertion parameters
+        padding_percent = self.app.reinsert_padding.get()
+        match_method = self.app.reinsert_match_method.get()
         
         # Process each cropped image
         total_images = len(cropped_images)
         processed_count = 0
-        
-        # Get batch processing options
-        naming_pattern = self.app.reinsert_naming_pattern.get()
-        crop_width = self.app.crop_width.get()
-        crop_height = self.app.crop_height.get()
+        failed_count = 0
         
         for idx, cropped_path in enumerate(cropped_images):
             if not self.app.processing:  # Check if processing was cancelled
                 break
             
-            # Get cropped image filename and extract information from it
+            # Get cropped image filename
             cropped_filename = os.path.basename(cropped_path)
             cropped_basename, cropped_ext = os.path.splitext(cropped_filename)
             
-            # Match to original image based on naming pattern
-            original_filename = self._find_original_image(
-                cropped_basename, 
-                original_images,
-                naming_pattern
-            )
-            
-            if not original_filename:
-                self.app.status_label.config(text=f"Original image not found for {cropped_filename}")
-                continue
-            
-            original_path = original_images[original_filename]
-            
-            # Get crop position data (either from filename or from metadata file)
-            x_pos, y_pos, width, height = self._get_crop_position(
-                cropped_path, 
-                cropped_basename,
-                self.app.position_source.get()
-            )
-            
-            # If no valid position data found, use defaults from UI
-            if x_pos is None or y_pos is None:
-                x_pos = self.app.crop_x_position.get()
-                y_pos = self.app.crop_y_position.get()
-                width = crop_width if width is None else width
-                height = crop_height if height is None else height
-            
-            # Process the reinsert operation
             try:
+                # Match cropped image to source image
+                source_filename = self._match_source_image(cropped_basename, source_images, match_method)
+                
+                if not source_filename:
+                    self.app.status_label.config(text=f"Source image not found for {cropped_filename}")
+                    failed_count += 1
+                    continue
+                
+                source_path = source_images[source_filename]
+                
                 # Load images
                 cropped_img = cv2.imread(cropped_path)
-                original_img = cv2.imread(original_path)
+                source_img = cv2.imread(source_path)
                 
-                if cropped_img is None or original_img is None:
+                if cropped_img is None or source_img is None:
                     self.app.status_label.config(text=f"Error loading images for {cropped_filename}")
+                    failed_count += 1
                     continue
                 
                 # Get dimensions
-                orig_height, orig_width = original_img.shape[:2]
-                crop_height_curr, crop_width_curr = cropped_img.shape[:2]
+                source_height, source_width = source_img.shape[:2]
+                crop_height, crop_width = cropped_img.shape[:2]
                 
-                # Resize cropped image back to original crop dimensions if needed
-                if crop_width_curr != width or crop_height_curr != height:
-                    cropped_img = cv2.resize(cropped_img, (width, height), 
-                                        interpolation=cv2.INTER_LANCZOS4)
+                # Calculate crop position based on padding percent
+                # This reverses the padding calculation from the mask_processor
+                x_pos, y_pos, insert_width, insert_height = self._calculate_insertion_position(
+                    source_img, 
+                    cropped_img, 
+                    padding_percent
+                )
                 
-                # Validate position
-                if x_pos + width > orig_width or y_pos + height > orig_height:
-                    self.app.status_label.config(text=f"Warning: Crop position out of bounds for {cropped_filename}")
-                    # Adjust position to fit within bounds
-                    x_pos = min(x_pos, orig_width - width)
-                    y_pos = min(y_pos, orig_height - height)
+                # Create a copy of the source image to modify
+                result_img = source_img.copy()
                 
-                # Create a copy of the original image to modify
-                result_img = original_img.copy()
+                # Resize cropped image if needed to fit calculated dimensions
+                if crop_width != insert_width or crop_height != insert_height:
+                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
+                                           interpolation=cv2.INTER_LANCZOS4)
+                else:
+                    resized_crop = cropped_img
                 
-                # Place the cropped image back into the original
-                result_img[y_pos:y_pos+height, x_pos:x_pos+width] = cropped_img
+                # Place the cropped image back into the source
+                # Ensure coordinates are within bounds
+                x_end = min(x_pos + insert_width, source_width)
+                y_end = min(y_pos + insert_height, source_height)
+                insert_width = x_end - x_pos
+                insert_height = y_end - y_pos
+                
+                result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
                 
                 # Save the reinserted image
                 output_path = os.path.join(reinsert_output_dir, f"reinserted_{cropped_filename}")
@@ -140,330 +137,131 @@ class CropReinserter:
                 
                 processed_count += 1
                 
-                # Update progress
-                progress = (idx + 1) / total_images * 100
-                self.app.progress_bar['value'] = min(progress, 100)
-                self.app.status_label.config(text=f"Processed {idx+1}/{total_images} images")
-                self.app.root.update_idletasks()
-                
             except Exception as e:
                 self.app.status_label.config(text=f"Error processing {cropped_filename}: {str(e)}")
                 print(f"Error in reinsert_crops: {str(e)}")
                 import traceback
                 traceback.print_exc()
-        
-        self.app.status_label.config(text=f"Reinsertion completed. Processed {processed_count} images.")
-        self.app.progress_bar['value'] = 100
-        return True
-
-    def _find_original_image(self, cropped_basename, original_images, naming_pattern):
-        """
-        Find the corresponding original image based on naming pattern.
-        
-        Args:
-            cropped_basename: Base name of the cropped image (without extension)
-            original_images: Dictionary of original image filenames
-            naming_pattern: Pattern to derive original name from cropped name
-            
-        Returns:
-            str: Filename of the matching original image, or None if not found
-        """
-        # Different naming pattern strategies:
-        if naming_pattern == "prefix":
-            # Example: crop_original.jpg -> original.jpg
-            # Find the original where cropped has a prefix
-            prefix_len = self.app.prefix_length.get()
-            original_base = cropped_basename[prefix_len:] if len(cropped_basename) > prefix_len else cropped_basename
-            
-            # Find original with this base name and any extension
-            for orig_name in original_images.keys():
-                orig_base = os.path.splitext(orig_name)[0]
-                if orig_base == original_base:
-                    return orig_name
-        
-        elif naming_pattern == "suffix":
-            # Example: original_crop.jpg -> original.jpg
-            # Find the original where cropped has a suffix
-            suffix_len = self.app.suffix_length.get()
-            original_base = cropped_basename[:-suffix_len] if len(cropped_basename) > suffix_len else cropped_basename
-            
-            # Find original with this base name and any extension
-            for orig_name in original_images.keys():
-                orig_base = os.path.splitext(orig_name)[0]
-                if orig_base == original_base:
-                    return orig_name
-        
-        elif naming_pattern == "indexed":
-            # Example: original_001.jpg comes from original.jpg
-            # Remove numeric suffix
-            import re
-            original_base = re.sub(r'_\d+$', '', cropped_basename)
-            
-            # Find original with this base name and any extension
-            for orig_name in original_images.keys():
-                orig_base = os.path.splitext(orig_name)[0]
-                if orig_base == original_base:
-                    return orig_name
-        
-        elif naming_pattern == "metadata":
-            # The original filename should be stored in metadata
-            # This would be implemented with the _get_crop_position method
-            # using the metadata for both position and original filename
-            pass
-        
-        # If no match found, try exact match
-        for orig_name in original_images.keys():
-            orig_base = os.path.splitext(orig_name)[0]
-            if orig_base == cropped_basename:
-                return orig_name
-        
-        return None
-
-    def reinsert_crops(self, input_dir, output_dir):
-        """
-        Reinsert cropped images back into their original images.
-        
-        Args:
-            input_dir: Input directory containing cropped images
-            output_dir: Output directory for reinserted images
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        # Create output directory for reinserted images
-        reinsert_output_dir = os.path.join(output_dir, "reinserted")
-        os.makedirs(reinsert_output_dir, exist_ok=True)
-        
-        # Find all cropped images
-        cropped_images = []
-        for root, _, files in os.walk(input_dir):
-            for file in files:
-                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    cropped_images.append(os.path.join(root, file))
-        
-        if not cropped_images:
-            self.app.status_label.config(text="No cropped images found.")
-            return False
-        
-        # Get original images directory
-        original_dir = self.app.original_images_dir.get()
-        if not original_dir or not os.path.isdir(original_dir):
-            self.app.status_label.config(text="Original images directory not set or invalid.")
-            return False
-        
-        # Load all original images with their filename patterns
-        original_images = {}
-        for file in os.listdir(original_dir):
-            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                original_images[file] = os.path.join(original_dir, file)
-        
-        # Process each cropped image
-        total_images = len(cropped_images)
-        processed_count = 0
-        
-        # Get batch processing options
-        naming_pattern = self.app.reinsert_naming_pattern.get()
-        crop_width = self.app.crop_width.get()
-        crop_height = self.app.crop_height.get()
-        
-        for idx, cropped_path in enumerate(cropped_images):
-            if not self.app.processing:  # Check if processing was cancelled
-                break
-            
-            # Get cropped image filename and extract information from it
-            cropped_filename = os.path.basename(cropped_path)
-            cropped_basename, cropped_ext = os.path.splitext(cropped_filename)
-            
-            # Match to original image based on naming pattern
-            original_filename = self._find_original_image(
-                cropped_basename, 
-                original_images,
-                naming_pattern
-            )
-            
-            if not original_filename:
-                self.app.status_label.config(text=f"Original image not found for {cropped_filename}")
+                failed_count += 1
                 continue
             
-            original_path = original_images[original_filename]
-            
-            # Get crop position data (either from filename or from metadata file)
-            x_pos, y_pos, width, height = self._get_crop_position(
-                cropped_path, 
-                cropped_basename,
-                self.app.position_source.get()
-            )
-            
-            # If no valid position data found, use defaults from UI
-            if x_pos is None or y_pos is None:
-                x_pos = self.app.crop_x_position.get()
-                y_pos = self.app.crop_y_position.get()
-                width = crop_width if width is None else width
-                height = crop_height if height is None else height
-            
-            # Process the reinsert operation
-            try:
-                # Load images
-                cropped_img = cv2.imread(cropped_path)
-                original_img = cv2.imread(original_path)
-                
-                if cropped_img is None or original_img is None:
-                    self.app.status_label.config(text=f"Error loading images for {cropped_filename}")
-                    continue
-                
-                # Get dimensions
-                orig_height, orig_width = original_img.shape[:2]
-                crop_height_curr, crop_width_curr = cropped_img.shape[:2]
-                
-                # Resize cropped image back to original crop dimensions if needed
-                if crop_width_curr != width or crop_height_curr != height:
-                    cropped_img = cv2.resize(cropped_img, (width, height), 
-                                        interpolation=cv2.INTER_LANCZOS4)
-                
-                # Validate position
-                if x_pos + width > orig_width or y_pos + height > orig_height:
-                    self.app.status_label.config(text=f"Warning: Crop position out of bounds for {cropped_filename}")
-                    # Adjust position to fit within bounds
-                    x_pos = min(x_pos, orig_width - width)
-                    y_pos = min(y_pos, orig_height - height)
-                
-                # Create a copy of the original image to modify
-                result_img = original_img.copy()
-                
-                # Place the cropped image back into the original
-                result_img[y_pos:y_pos+height, x_pos:x_pos+width] = cropped_img
-                
-                # Save the reinserted image
-                output_path = os.path.join(reinsert_output_dir, f"reinserted_{cropped_filename}")
-                cv2.imwrite(output_path, result_img)
-                
-                processed_count += 1
-                
-                # Update progress
-                progress = (idx + 1) / total_images * 100
-                self.app.progress_bar['value'] = min(progress, 100)
-                self.app.status_label.config(text=f"Processed {idx+1}/{total_images} images")
-                self.app.root.update_idletasks()
-                
-            except Exception as e:
-                self.app.status_label.config(text=f"Error processing {cropped_filename}: {str(e)}")
-                print(f"Error in reinsert_crops: {str(e)}")
-                import traceback
-                traceback.print_exc()
+            # Update progress
+            progress = (idx + 1) / total_images * 100
+            self.app.progress_bar['value'] = min(progress, 100)
+            self.app.status_label.config(text=f"Processed {idx+1}/{total_images} images")
+            self.app.root.update_idletasks()
         
-        self.app.status_label.config(text=f"Reinsertion completed. Processed {processed_count} images.")
+        # Final status update
+        if failed_count > 0:
+            self.app.status_label.config(text=f"Reinsertion completed. Processed {processed_count} images. Failed: {failed_count}.")
+        else:
+            self.app.status_label.config(text=f"Reinsertion completed. Processed {processed_count} images.")
+        
         self.app.progress_bar['value'] = 100
-        return True
-
-    def _find_original_image(self, cropped_basename, original_images, naming_pattern):
+        return processed_count > 0
+    
+    def _match_source_image(self, cropped_basename, source_images, match_method):
         """
-        Find the corresponding original image based on naming pattern.
+        Match cropped image to source image using the specified method.
         
         Args:
-            cropped_basename: Base name of the cropped image (without extension)
-            original_images: Dictionary of original image filenames
-            naming_pattern: Pattern to derive original name from cropped name
-            
-        Returns:
-            str: Filename of the matching original image, or None if not found
-        """
-        # Different naming pattern strategies:
-        if naming_pattern == "prefix":
-            # Example: crop_original.jpg -> original.jpg
-            # Find the original where cropped has a prefix
-            prefix_len = self.app.prefix_length.get()
-            original_base = cropped_basename[prefix_len:] if len(cropped_basename) > prefix_len else cropped_basename
-            
-            # Find original with this base name and any extension
-            for orig_name in original_images.keys():
-                orig_base = os.path.splitext(orig_name)[0]
-                if orig_base == original_base:
-                    return orig_name
-        
-        elif naming_pattern == "suffix":
-            # Example: original_crop.jpg -> original.jpg
-            # Find the original where cropped has a suffix
-            suffix_len = self.app.suffix_length.get()
-            original_base = cropped_basename[:-suffix_len] if len(cropped_basename) > suffix_len else cropped_basename
-            
-            # Find original with this base name and any extension
-            for orig_name in original_images.keys():
-                orig_base = os.path.splitext(orig_name)[0]
-                if orig_base == original_base:
-                    return orig_name
-        
-        elif naming_pattern == "indexed":
-            # Example: original_001.jpg comes from original.jpg
-            # Remove numeric suffix
-            import re
-            original_base = re.sub(r'_\d+$', '', cropped_basename)
-            
-            # Find original with this base name and any extension
-            for orig_name in original_images.keys():
-                orig_base = os.path.splitext(orig_name)[0]
-                if orig_base == original_base:
-                    return orig_name
-        
-        elif naming_pattern == "metadata":
-            # The original filename should be stored in metadata
-            # This would be implemented with the _get_crop_position method
-            # using the metadata for both position and original filename
-            pass
-        
-        # If no match found, try exact match
-        for orig_name in original_images.keys():
-            orig_base = os.path.splitext(orig_name)[0]
-            if orig_base == cropped_basename:
-                return orig_name
-        
-        return None
-
-    def _get_crop_position(self, cropped_path, cropped_basename, position_source):
-        """
-        Get crop position data from the specified source.
-        
-        Args:
-            cropped_path: Path to the cropped image
             cropped_basename: Base name of the cropped image
-            position_source: Source for position data ('filename', 'metadata', or 'defaults')
+            source_images: Dictionary of source images
+            match_method: Method to use for matching
             
         Returns:
-            tuple: (x, y, width, height) or (None, None, None, None) if not found
+            str: Filename of the matching source image, or None if not found
         """
-        if position_source == "filename":
-            # Extract coordinates from filename
-            # Example format: original_x100_y200_w300_h400.jpg
-            import re
-            x_match = re.search(r'_x(\d+)', cropped_basename)
-            y_match = re.search(r'_y(\d+)', cropped_basename)
-            w_match = re.search(r'_w(\d+)', cropped_basename)
-            h_match = re.search(r'_h(\d+)', cropped_basename)
-            
-            if x_match and y_match and w_match and h_match:
-                x = int(x_match.group(1))
-                y = int(y_match.group(1))
-                w = int(w_match.group(1))
-                h = int(h_match.group(1))
-                return (x, y, w, h)
+        if match_method == "name_prefix":
+            # Remove prefix (anything before first underscore)
+            parts = cropped_basename.split('_', 1)
+            if len(parts) > 1:
+                # The source name is everything after the first underscore
+                source_base = parts[1]
+                for source_name in source_images:
+                    source_basename = os.path.splitext(source_name)[0]
+                    if source_basename == source_base:
+                        return source_name
         
-        elif position_source == "metadata":
-            # Look for a metadata JSON file with the same basename
-            metadata_path = os.path.splitext(cropped_path)[0] + ".json"
+        elif match_method == "name_suffix":
+            # Remove suffix (anything after last underscore)
+            parts = cropped_basename.rsplit('_', 1)
+            if len(parts) > 1:
+                # The source name is everything before the last underscore
+                source_base = parts[0]
+                for source_name in source_images:
+                    source_basename = os.path.splitext(source_name)[0]
+                    if source_basename == source_base:
+                        return source_name
+        
+        elif match_method == "metadata":
+            # Check for a metadata JSON file with the same base name
+            metadata_path = os.path.dirname(cropped_filename) + ".json"
             if os.path.exists(metadata_path):
                 try:
-                    import json
                     with open(metadata_path, 'r') as f:
                         metadata = json.load(f)
-                    
-                    if 'crop_x' in metadata and 'crop_y' in metadata and 'crop_width' in metadata and 'crop_height' in metadata:
-                        return (
-                            metadata['crop_x'], 
-                            metadata['crop_y'], 
-                            metadata['crop_width'], 
-                            metadata['crop_height']
-                        )
+                    if 'source_image' in metadata:
+                        return metadata['source_image']
                 except Exception as e:
-                    print(f"Error reading metadata for {cropped_path}: {str(e)}")
+                    print(f"Error reading metadata: {str(e)}")
         
-        # If we couldn't extract position data, return None values
-        return (None, None, None, None)
+        elif match_method == "numeric_match":
+            # Extract numeric part of filename and match to same number in source
+            numbers = re.findall(r'\d+', cropped_basename)
+            if numbers:
+                # Use the last number in the filename
+                number = numbers[-1]
+                for source_name in source_images:
+                    source_numbers = re.findall(r'\d+', os.path.splitext(source_name)[0])
+                    if source_numbers and source_numbers[-1] == number:
+                        return source_name
+        
+        # Fall back to exact match
+        for source_name in source_images:
+            source_basename = os.path.splitext(source_name)[0]
+            if source_basename == cropped_basename:
+                return source_name
+        
+        # If all else fails, try to find a source image that contains the cropped basename
+        for source_name in source_images:
+            source_basename = os.path.splitext(source_name)[0]
+            if cropped_basename in source_basename or source_basename in cropped_basename:
+                return source_name
+        
+        return None
+    
+    def _calculate_insertion_position(self, source_img, cropped_img, padding_percent):
+        """
+        Calculate where to insert the cropped image in the source image.
+        
+        Args:
+            source_img: Source image (numpy array)
+            cropped_img: Cropped image (numpy array)
+            padding_percent: Padding percentage used in the original crop
+            
+        Returns:
+            tuple: (x_position, y_position, width, height)
+        """
+        source_height, source_width = source_img.shape[:2]
+        crop_height, crop_width = cropped_img.shape[:2]
+        
+        # Two approaches, depending on whether we're using auto-detection or fixed position
+        if self.app.use_center_position.get():
+            # Center the cropped image in the source image
+            x_pos = (source_width - crop_width) // 2
+            y_pos = (source_height - crop_height) // 2
+            return x_pos, y_pos, crop_width, crop_height
+        else:
+            # Use fixed position
+            x_pos = self.app.reinsert_x.get()
+            y_pos = self.app.reinsert_y.get()
+            
+            # If dimensions are specified, use them
+            if self.app.reinsert_width.get() > 0 and self.app.reinsert_height.get() > 0:
+                width = self.app.reinsert_width.get()
+                height = self.app.reinsert_height.get()
+                return x_pos, y_pos, width, height
+            else:
+                # Otherwise use crop dimensions
+                return x_pos, y_pos, crop_width, crop_height
