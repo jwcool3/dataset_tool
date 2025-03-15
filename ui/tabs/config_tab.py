@@ -35,6 +35,7 @@ class ConfigTab:
         self._create_conditional_resize()
         self._create_square_padding()
         self._create_portrait_crop()
+        self._create_crop_reinsertion()  # Add this line to create the reinsertion section
     
     def _create_general_config(self):
         """Create the general configuration options section."""
