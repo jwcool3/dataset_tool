@@ -103,7 +103,7 @@ class MainWindow:
         self.organize_files = tk.BooleanVar(value=False)
         self.convert_to_video = tk.BooleanVar(value=False)
         self.square_pad_images = tk.BooleanVar(value=False)
-        self.reinsert_crops_option = tk.BooleanVar(value=False)  # Add new option
+        self.reinsert_crops_option = tk.BooleanVar(value=False)  # Make sure this exists
         self.debug_mode = tk.BooleanVar(value=False)
 
 
