@@ -324,3 +324,71 @@ class ConfigTab:
         filepath = filedialog.askopenfilename(filetypes=filetypes, title="Select Mask Video")
         if filepath:
             self.parent.mask_video_path.set(filepath)
+
+    def _create_crop_reinsertion(self):
+        """Create the crop reinsertion options section."""
+        reinsertion_frame = ttk.LabelFrame(self.frame, text="Crop Reinsertion", padding="10")
+        reinsertion_frame.pack(fill=tk.X, pady=5)
+        
+        # Original images directory selection
+        dir_frame = ttk.Frame(reinsertion_frame)
+        dir_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(dir_frame, text="Original Images Directory:").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(dir_frame, textvariable=self.parent.original_images_dir, width=40).pack(side=tk.LEFT, padx=5)
+        ttk.Button(dir_frame, text="Browse...", command=self._browse_original_dir).pack(side=tk.LEFT, padx=5)
+        
+        # Original image selection
+        image_frame = ttk.Frame(reinsertion_frame)
+        image_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(image_frame, text="Original Image:").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(image_frame, textvariable=self.parent.selected_original_image, width=40).pack(side=tk.LEFT, padx=5)
+        ttk.Button(image_frame, text="Browse...", command=self._browse_original_image).pack(side=tk.LEFT, padx=5)
+        
+        # Crop position and dimensions
+        params_frame = ttk.Frame(reinsertion_frame)
+        params_frame.pack(fill=tk.X, pady=5)
+        
+        # Create a grid for parameters
+        ttk.Label(params_frame, text="X Position:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_x_position, width=6).grid(
+            column=1, row=0, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(params_frame, text="Y Position:").grid(column=2, row=0, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_y_position, width=6).grid(
+            column=3, row=0, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(params_frame, text="Width:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_width, width=6).grid(
+            column=1, row=1, sticky=tk.W, padx=5, pady=2)
+        
+        ttk.Label(params_frame, text="Height:").grid(column=2, row=1, sticky=tk.W, padx=5, pady=2)
+        ttk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.parent.crop_height, width=6).grid(
+            column=3, row=1, sticky=tk.W, padx=5, pady=2)
+        
+        # Help text
+        help_text = ttk.Label(
+            reinsertion_frame, 
+            text="Configure these values to match the original crop parameters. The cropped image will be positioned at (X,Y) with the specified dimensions.",
+            wraplength=600
+        )
+        help_text.pack(fill=tk.X, pady=10)
+
+    def _browse_original_dir(self):
+        """Browse for original images directory."""
+        from tkinter import filedialog
+        directory = filedialog.askdirectory()
+        if directory:
+            self.parent.original_images_dir.set(directory)
+
+    def _browse_original_image(self):
+        """Browse for original image file."""
+        from tkinter import filedialog
+        filetypes = [
+            ("Image files", "*.jpg *.jpeg *.png"),
+            ("All files", "*.*")
+        ]
+        filepath = filedialog.askopenfilename(filetypes=filetypes, title="Select Original Image")
+        if filepath:
+            self.parent.selected_original_image.set(filepath)

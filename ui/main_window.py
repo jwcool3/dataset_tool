@@ -40,6 +40,16 @@ class MainWindow:
         self._create_status_bar()
         self._create_menu()
         
+
+        self.reinsert_crops_option = tk.BooleanVar(value=False)
+        self.original_images_dir = tk.StringVar()
+        self.selected_original_image = tk.StringVar()
+        self.crop_x_position = tk.IntVar(value=0)
+        self.crop_y_position = tk.IntVar(value=0)
+        self.crop_width = tk.IntVar(value=0)
+        self.crop_height = tk.IntVar(value=0)
+        self.reinsert_padding = tk.IntVar(value=0)
+
         # Create the notebook and tabs
         self._create_notebook()
 
@@ -393,6 +403,7 @@ class MainWindow:
             from processors.file_organizer import FileOrganizer
             from processors.video_converter import VideoConverter
             from processors.square_padder import SquarePadder
+            from processors.crop_reinserter import CropReinserter  # Add new import
             
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
@@ -401,6 +412,7 @@ class MainWindow:
             file_organizer = FileOrganizer(self)
             video_converter = VideoConverter(self)
             square_padder = SquarePadder(self)
+            crop_reinserter = CropReinserter(self)  # Add new instance
             
             # Define pipeline steps in order
             pipeline_steps = []
@@ -416,7 +428,8 @@ class MainWindow:
                 pipeline_steps.append(("organize_files", file_organizer.organize_files))
             if self.convert_to_video.get():
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
-                
+            if self.reinsert_crops_option.get():
+                pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))  # Add new step
             # Calculate progress per step
             if pipeline_steps:
                 progress_per_step = 100 / len(pipeline_steps)
@@ -431,7 +444,8 @@ class MainWindow:
                 "square_padded": os.path.join(self.output_dir.get(), "square_padded"),
                 "resized": os.path.join(self.output_dir.get(), "resized"),
                 "organized": os.path.join(self.output_dir.get(), "organized"),
-                "videos": os.path.join(self.output_dir.get(), "videos")
+                "videos": os.path.join(self.output_dir.get(), "videos"),
+                "reinserted": os.path.join(self.output_dir.get(), "reinserted")  # Add new directory
             }
             
             # Keep track of which directory to use as input for each step

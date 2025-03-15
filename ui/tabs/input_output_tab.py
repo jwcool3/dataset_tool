@@ -95,7 +95,7 @@ class InputOutputTab:
             self._load_preview_images()
             # Enable appropriate processing options based on content
             self._enable_appropriate_options(directory)
-            
+
     def _browse_output_dir(self):
         """Browse for an output directory."""
         directory = filedialog.askdirectory()
@@ -184,3 +184,21 @@ class InputOutputTab:
             return
         
         self.parent.preview_tab.generate_preview()
+
+
+    def _create_pipeline_section(self):
+        """Create the processing pipeline section with checkboxes."""
+        pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
+        pipeline_frame.pack(fill=tk.X, pady=5)
+        
+        # Processing options with improved layout
+        processing_options = [
+            ("Extract frames from videos", self.parent.extract_frames),
+            ("Detect and crop mask regions", self.parent.crop_mask_regions),
+            ("Resize images and masks", self.parent.resize_images),
+            ("Organize and rename files", self.parent.organize_files),
+            ("Convert images to video", self.parent.convert_to_video),
+            ("Add padding to make images square", self.parent.square_pad_images),
+            ("Reinsert cropped images", self.parent.reinsert_crops_option)  # Add new option
+        ]
+        
