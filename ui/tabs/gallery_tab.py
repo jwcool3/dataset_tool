@@ -99,6 +99,9 @@ class GalleryTab:
                        value="large", variable=self.view_mode,
                        command=self._switch_view_mode).pack(side=tk.LEFT, padx=5)
         
+
+
+        
         # Create a paned window for dynamic resizing
         self.gallery_paned = ttk.PanedWindow(self.gallery_outer_frame, orient=tk.VERTICAL)
         self.gallery_paned.pack(fill=tk.BOTH, expand=True)
@@ -907,6 +910,15 @@ class GalleryTab:
         self.delete_button = ttk.Button(buttons_frame, text="Delete Selected", command=self._delete_selected_images)
         self.delete_button.pack(side=tk.LEFT, padx=5)
         
+
+        # Add outlier detection button (add this where you add other buttons)
+        self.outlier_button = ttk.Button(
+            buttons_frame,  # Use your actual frame name for buttons
+            text="Find Outlier Groups",
+            command=self._find_outlier_groups
+        )
+        self.outlier_button.pack(side=tk.LEFT, padx=5)  # or use grid() based on your layout
+
         # Add a separator
         ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
         
@@ -917,6 +929,16 @@ class GalleryTab:
         self.info_label = ttk.Label(info_frame, text="Select a folder with image versions to begin.")
         self.info_label.pack(side=tk.LEFT, padx=5)
 
+
+    def _find_outlier_groups(self):
+        """Launch the outlier group detection."""
+        from utils.outlier_detection import OutlierGroupDetector, run_outlier_scan
+        
+        # Create detector instance
+        detector = OutlierGroupDetector(self)
+        
+        # Run the outlier scan
+        run_outlier_scan(self.parent, detector)
 
 
     def _delete_selected_images(self):

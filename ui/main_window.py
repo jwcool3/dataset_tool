@@ -111,12 +111,34 @@ class MainWindow:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         
+        # Tools menu (add this)
+        tools_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Tools", menu=tools_menu)
+        
+        # Add outlier detection option (add this)
+        tools_menu.add_command(
+            label="Find Outlier Groups...", 
+            command=self._run_outlier_detection
+    )
+
         # Help menu
         help_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self._show_about)
         help_menu.add_command(label="Usage Guide", command=self._show_usage_guide)
     
+    def _run_outlier_detection(self):
+        """Run the outlier detection feature."""
+        from utils.outlier_detection import OutlierGroupDetector, run_outlier_scan
+        
+        # Create detector instance
+        detector = OutlierGroupDetector(self.gallery_tab)
+        
+        # Run the outlier scan
+        run_outlier_scan(self, detector)
+
+
+
     def _create_main_content(self):
         """Create the main content area of the window."""
         self.main_content = ttk.Frame(self.root)
