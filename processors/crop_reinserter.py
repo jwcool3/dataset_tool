@@ -53,6 +53,14 @@ class CropReinserter:
             self.app.status_label.config(text="Source images directory not set or invalid.")
             return False
         
+        # Cropped images come from the input_dir parameter
+        cropped_dir = input_dir
+        
+        # If source_dir and cropped_dir are the same, show an error
+        if os.path.abspath(source_dir) == os.path.abspath(cropped_dir):
+            self.app.status_label.config(text="Error: Source directory and input directory cannot be the same for reinsertion.")
+            return False
+        
         # Load all source images
         source_images = {}
         for file in os.listdir(source_dir):

@@ -29,14 +29,8 @@ class InputOutputTab:
         io_frame = ttk.LabelFrame(self.frame, text="Directory Selection", padding="10")
         io_frame.pack(fill=tk.X, pady=5)
         
-        # Input directory (clarify this is for cropped images when reinsertion is selected)
-        input_label_text = "Input Directory:"
-        if self.parent.reinsert_crops_option.get():
-            input_label_text = "Input Directory (Cropped Images):"
-        
-        self.input_dir_label = ttk.Label(io_frame, text=input_label_text)
-        self.input_dir_label.grid(column=0, row=0, sticky=tk.W)
-        
+        # Input directory (always labeled the same)
+        ttk.Label(io_frame, text="Input Directory:").grid(column=0, row=0, sticky=tk.W)
         ttk.Entry(io_frame, textvariable=self.parent.input_dir, width=50).grid(column=1, row=0, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_input_dir).grid(column=2, row=0, padx=5)
         
@@ -45,6 +39,21 @@ class InputOutputTab:
         ttk.Entry(io_frame, textvariable=self.parent.output_dir, width=50).grid(column=1, row=1, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_output_dir).grid(column=2, row=1, padx=5)
         
+        # Create a frame for the reinsertion note, initially hidden
+        self.reinsertion_note_frame = ttk.Frame(io_frame, padding=5)
+        self.reinsertion_note_frame.grid(column=0, row=2, columnspan=3, sticky=tk.W, pady=5)
+        self.reinsertion_note_frame.grid_remove()  # Initially hidden
+        
+        # Add the note in a colored label
+        style = ttk.Style()
+        style.configure("Info.TLabel", foreground="blue")
+        self.reinsertion_note = ttk.Label(
+            self.reinsertion_note_frame,
+            text="For Image Reinsertion: Input Directory = Cropped Images, Source Directory (in Config tab) = Original Images",
+            style="Info.TLabel", 
+            wraplength=500
+        )
+        self.reinsertion_note.pack(anchor=tk.W)
         # Add a method to update the label when the reinsertion option changes
         def update_input_label(*args):
             if self.parent.reinsert_crops_option.get():
@@ -96,6 +105,25 @@ class InputOutputTab:
                        variable=self.parent.debug_mode).grid(
             column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
+    
+        # Add command to show/hide reinsertion note when the checkbox is toggled
+        def on_reinsertion_toggle():
+            if self.parent.reinsert_crops_option.get():
+                self.reinsertion_note_frame.grid()  # Show the note
+            else:
+                self.reinsertion_note_frame.grid_remove()  # Hide the note
+        
+        # Create checkboxes for each option
+        for i, (text, var) in enumerate(processing_options):
+            row = i % 3
+            col = i // 3
+            cb = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
+            cb.grid(column=col, row=row, sticky=tk.W, padx=10, pady=2)
+            
+            # Add special handling for reinsertion option
+            if text == "Reinsert cropped images":
+                cb.config(command=on_reinsertion_toggle)
+
     
     def _browse_input_dir(self):
         """Browse for an input directory."""
