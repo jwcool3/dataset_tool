@@ -392,12 +392,12 @@ class ImageComparison:
         # Image previews
         ax1 = fig.add_subplot(gs[0, 0])
         ax1.imshow(img1)
-        ax1.set_title(f"Image 1: {filename1}")
+        ax1.set_title(f"Image 1: {display_name1}")
         ax1.axis('off')
         
         ax2 = fig.add_subplot(gs[0, 1])
         ax2.imshow(img2)
-        ax2.set_title(f"Image 2: {filename2}")
+        ax2.set_title(f"Image 2: {display_name2}")
         ax2.axis('off')
         
         # Difference visualizations
