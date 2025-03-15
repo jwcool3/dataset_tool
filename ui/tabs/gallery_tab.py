@@ -278,14 +278,21 @@ class GalleryTab:
         window_width = self.gallery_canvas.winfo_width()
         
         # Calculate ideal thumbnail size based on window width
-        # We want to fill the area while maintaining some margins
+        # We want to fit a reasonable number of images while keeping them large
+        
+        # Determine number of columns based on how many images we have and window size
+        if len(source_versions) <= 2:
+            num_cols = len(source_versions)  # 1 or 2 columns for few images
+        else:
+            num_cols = min(3, len(source_versions))  # Max 3 columns for better visibility
+        
+        # Calculate padding needed for grid layout
         padding_per_item = 30  # Total horizontal padding per thumbnail cell
         
-        # Number of columns: try to fit at least 2, at most 5
-        num_cols = min(5, max(2, len(source_versions)))
-        
-        # Calculate optimal thumbnail width to fill space
+        # Calculate optimal thumbnail width to fill space with fewer columns
+        # for higher resolution images
         optimal_width = (window_width - (padding_per_item * num_cols)) // num_cols
+        optimal_width = max(400, optimal_width)  # Ensure a minimum size of 400px
         
         # Create frame for the grid
         grid_outer_frame = ttk.Frame(sources_frame)
@@ -345,28 +352,36 @@ class GalleryTab:
             # Convert to RGB for PIL
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
-            # Get appropriate thumbnail size
+            # Get original dimensions
+            orig_height, orig_width = img_rgb.shape[:2]
+            
+            # Get appropriate thumbnail size - INCREASED for higher resolution
             if optimal_size:
-                # Use the provided optimal size
-                max_size = optimal_size
+                # Use the provided optimal size, but ensure it's large enough
+                max_size = max(400, optimal_size)
             else:
                 # Calculate based on window width if not provided
                 window_width = self.gallery_canvas.winfo_width()
                 if window_width < 800:
-                    max_size = 180
-                elif window_width < 1200:
-                    max_size = 240
-                else:
                     max_size = 300
+                elif window_width < 1200:
+                    max_size = 400
+                else:
+                    max_size = 500  # Much larger maximum size
             
-            # Resize for thumbnail while preserving aspect ratio
-            h, w = img_rgb.shape[:2]
-            scale = min(max_size / w, max_size / h)
-            new_w, new_h = int(w * scale), int(h * scale)
-            thumbnail = cv2.resize(img_rgb, (new_w, new_h))
+            # Resize for display while preserving aspect ratio
+            scale = min(max_size / orig_width, max_size / orig_height)
+            new_w, new_h = int(orig_width * scale), int(orig_height * scale)
+            
+            # Only resize if needed (if smaller than target, keep original size)
+            if orig_width > max_size or orig_height > max_size:
+                display_img = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            else:
+                display_img = img_rgb
+                new_w, new_h = orig_width, orig_height
             
             # Convert to PIL and then to ImageTk
-            pil_img = Image.fromarray(thumbnail)
+            pil_img = Image.fromarray(display_img)
             tk_img = ImageTk.PhotoImage(pil_img)
             
             # Store reference to prevent garbage collection
@@ -387,7 +402,7 @@ class GalleryTab:
             
             # Add dimension info
             type_text = "Mask" if image_info['is_mask'] else "Image"
-            info_text = f"{type_text} | {w}x{h}"
+            info_text = f"{type_text} | {orig_width}x{orig_height}"
             
             info_label = ttk.Label(info_frame, text=info_text, font=("Helvetica", 9))
             info_label.pack()
@@ -548,14 +563,27 @@ class GalleryTab:
             # Convert to RGB
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
-            # Create thumbnail
-            h, w = img_rgb.shape[:2]
-            scale = min(optimal_width / w, optimal_width / h)
-            new_w, new_h = int(w * scale), int(h * scale)
-            thumbnail = cv2.resize(img_rgb, (new_w, new_h))
+            # Store original dimensions
+            orig_height, orig_width = img_rgb.shape[:2]
+            
+            # Calculate appropriate thumbnail size for overview
+            # We want thumbnails that are large enough to see details
+            # but small enough to fit many in the overview
+            optimal_width = max(220, optimal_width)
+            
+            # Resize image while preserving aspect ratio
+            scale = min(optimal_width / orig_width, optimal_width / orig_height)
+            new_w, new_h = int(orig_width * scale), int(orig_height * scale)
+            
+            # Resize if needed
+            if orig_width > optimal_width or orig_height > optimal_width:
+                display_img = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            else:
+                display_img = img_rgb
+                new_w, new_h = orig_width, orig_height
             
             # Convert to PIL and ImageTk
-            pil_img = Image.fromarray(thumbnail)
+            pil_img = Image.fromarray(display_img)
             tk_img = ImageTk.PhotoImage(pil_img)
             self.thumbnails.append(tk_img)
             
@@ -573,9 +601,9 @@ class GalleryTab:
             filename_label = ttk.Label(thumb_frame, text=image_group['filename'], font=("Helvetica", 9))
             filename_label.pack()
             
-            # Add count of versions
+            # Add count of versions and dimensions
             count_label = ttk.Label(thumb_frame, 
-                                  text=f"{len(source_images)} versions", 
+                                  text=f"{len(source_images)} versions | {orig_width}x{orig_height}", 
                                   font=("Helvetica", 8))
             count_label.pack()
             
@@ -604,8 +632,13 @@ class GalleryTab:
             mask_grid = ttk.Frame(self.mask_frame)
             mask_grid.pack(fill=tk.X, pady=5, padx=5)
             
-            # Add the mask image to the grid
-            self._add_image_to_grid(mask_grid, self.current_mask_version, 0, 0)
+            # Get window width for sizing the mask
+            window_width = self.gallery_canvas.winfo_width()
+            # Use a larger size for the mask, but maintain reasonable proportions
+            optimal_width = min(window_width - 40, 600)  # Cap at 600px width with margins
+            
+            # Add the mask image to the grid with higher resolution
+            self._add_image_to_grid(mask_grid, self.current_mask_version, 0, 0, optimal_width)
     
     def _update_counter(self):
         """Update the image counter label."""
