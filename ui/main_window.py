@@ -108,13 +108,16 @@ class MainWindow:
 
 
         # Crop reinsertion options
+        self.reinsert_crops_option = tk.BooleanVar(value=False)
         self.original_images_dir = tk.StringVar()
-        self.selected_original_image = tk.StringVar()
+        self.reinsert_naming_pattern = tk.StringVar(value="prefix")
+        self.prefix_length = tk.IntVar(value=5)
+        self.suffix_length = tk.IntVar(value=5)
+        self.position_source = tk.StringVar(value="filename")
         self.crop_x_position = tk.IntVar(value=0)
         self.crop_y_position = tk.IntVar(value=0)
         self.crop_width = tk.IntVar(value=0)
         self.crop_height = tk.IntVar(value=0)
-        self.reinsert_padding = tk.IntVar(value=0)
 
         # Preview image storage
         self.preview_image = None
