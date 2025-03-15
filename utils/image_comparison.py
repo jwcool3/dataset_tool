@@ -329,6 +329,100 @@ class ImageComparison:
         h, w = img1.shape[:2]
         
         # Calculate metrics
+        metrics = {}
+        
+        # Histogram comparison
+        hist1_b = cv2.calcHist([img1], [0], None, [256], [0, 256])
+        hist1_g = cv2.calcHist([img1], [1], None, [256], [0, 256])
+        hist1_r = cv2.calcHist([img1], [2], None, [256], [0, 256])
+        
+        hist2_b = cv2.calcHist([img2], [0], None, [256], [0, 256])
+        hist2_g = cv2.calcHist([img2], [1], None, [256], [0, 256])
+        hist2_r = cv2.calcHist([img2], [2], None, [256], [0, 256])
+        
+        # Normalize histograms
+        cv2.normalize(hist1_b, hist1_b, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist1_g, hist1_g, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist1_r, hist1_r, 0, 1.0, cv2.NORM_MINMAX)
+        
+        cv2.normalize(hist2_b, hist2_b, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist2_g, hist2_g, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist2_r, hist2_r, 0, 1.0, cv2.NORM_MINMAX)
+        
+        # Calculate correlation
+        metrics['correlation'] = {}
+        metrics['correlation']['blue'] = cv2.compareHist(hist1_b, hist2_b, cv2.HISTCMP_CORREL)
+        metrics['correlation']['green'] = cv2.compareHist(hist1_g, hist2_g, cv2.HISTCMP_CORREL)
+        metrics['correlation']['red'] = cv2.compareHist(hist1_r, hist2_r, cv2.HISTCMP_CORREL)
+        metrics['correlation']['avg'] = (metrics['correlation']['blue'] + 
+                                      metrics['correlation']['green'] + 
+                                      metrics['correlation']['red']) / 3.0
+        
+        # Calculate SSIM
+        metrics['ssim'] = {}
+        for i, color in enumerate(['blue', 'green', 'red']):
+            metrics['ssim'][color] = ssim(img1[:,:,i], img2[:,:,i], data_range=255)
+        metrics['ssim']['avg'] = np.mean(list(metrics['ssim'].values())[:3])  # Average of RGB
+        
+        # Calculate MSE
+        metrics['mse'] = np.mean((img1.astype(np.float32) - img2.astype(np.float32)) ** 2)
+        
+        # Create detailed report figure
+        fig = Figure(figsize=(10, 12), dpi=100)
+        
+        # Add title
+        fig.suptitle(f"Detailed Image Comparison Report", fontsize=16)
+        
+        # Create a grid layout
+        gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 1, 0.5], width_ratios=[1, 1], hspace=0.4, wspace=0.3)
+        
+        # Image previews
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.imshow(img1)
+        ax1.set_title(f"Image 1: {filename1}")
+        ax1.axis('off')
+        
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax2.imshow(img2)
+        ax2.set_title(f"Image 2: {filename2}")
+        ax2.axis('off')
+        
+        # Difference visualizations
+        diff = cv2.absdiff(img1, img2)
+        diff_gray = cv2.cvtColor(diff, cv2.COLOR_RGB2GRAY)
+        diff_heatmap = cv2.applyColorMap(diff_gray, cv2.COLORMAP_JET)
+        diff_heatmap = cv2.cvtColor(diff_heatmap, cv2.COLOR_BGR2RGB)
+        
+        ax3 = fig.add_subplot(gs[1, 0])
+        ax3.imshow(diff)
+        ax3.set_title("Absolute Difference")
+        ax3.axis('off')
+        
+        ax4 = fig.add_subplot(gs[1, 1])
+        ax4.imshow(diff_heatmap)
+        ax4.set_title("Difference Heatmap")
+        ax4.axis('off')
+        
+        # Histogram comparisons
+        ax5 = fig.add_subplot(gs[2, 0])
+        
+        # Plot the histograms
+        colors = ['blue', 'green', 'red']
+        for i, color_name in enumerate(colors):
+            ax5.plot(cv2.normalize(hist1_r if i == 2 else hist1_g if i == 1 else hist1_b, None, 0, 1, cv2.NORM_MINMAX), 
+                    color=color_name, linestyle='-', alpha=0.7, label=f"Image 1 {color_name}")
+            ax5.plot(cv2.normalize(hist2_r if i == 2 else hist2_g if i == 1 else hist2_b, None, 0, 1, cv2.NORM_MINMAX), 
+                    color=color_name, linestyle='--', alpha=0.7, label=f"Image 2 {color_name}")
+        
+        ax5.set_title("Color Histograms Comparison")
+        ax5.set_xlabel("Pixel Value")
+        ax5.set_ylabel("Normalized Frequency")
+        ax5.legend(loc='upper right', fontsize='x-small')
+        
+        # Metrics summary
+        ax6 = fig.add_subplot(gs[2, 1])
+        ax6.axis('off')
+        
         metrics_text = (
             f"Similarity Metrics:\n\n"
             f"• Histogram Correlation:\n"
@@ -625,98 +719,4 @@ class ImageComparison:
             "outlier_scores": sorted_scores,
             "threshold": threshold,
             "comparison_method": method
-        } = {}
-        
-        # Histogram comparison
-        hist1_b = cv2.calcHist([img1], [0], None, [256], [0, 256])
-        hist1_g = cv2.calcHist([img1], [1], None, [256], [0, 256])
-        hist1_r = cv2.calcHist([img1], [2], None, [256], [0, 256])
-        
-        hist2_b = cv2.calcHist([img2], [0], None, [256], [0, 256])
-        hist2_g = cv2.calcHist([img2], [1], None, [256], [0, 256])
-        hist2_r = cv2.calcHist([img2], [2], None, [256], [0, 256])
-        
-        # Normalize histograms
-        cv2.normalize(hist1_b, hist1_b, 0, 1.0, cv2.NORM_MINMAX)
-        cv2.normalize(hist1_g, hist1_g, 0, 1.0, cv2.NORM_MINMAX)
-        cv2.normalize(hist1_r, hist1_r, 0, 1.0, cv2.NORM_MINMAX)
-        
-        cv2.normalize(hist2_b, hist2_b, 0, 1.0, cv2.NORM_MINMAX)
-        cv2.normalize(hist2_g, hist2_g, 0, 1.0, cv2.NORM_MINMAX)
-        cv2.normalize(hist2_r, hist2_r, 0, 1.0, cv2.NORM_MINMAX)
-        
-        # Calculate correlation
-        metrics['correlation'] = {}
-        metrics['correlation']['blue'] = cv2.compareHist(hist1_b, hist2_b, cv2.HISTCMP_CORREL)
-        metrics['correlation']['green'] = cv2.compareHist(hist1_g, hist2_g, cv2.HISTCMP_CORREL)
-        metrics['correlation']['red'] = cv2.compareHist(hist1_r, hist2_r, cv2.HISTCMP_CORREL)
-        metrics['correlation']['avg'] = (metrics['correlation']['blue'] + 
-                                      metrics['correlation']['green'] + 
-                                      metrics['correlation']['red']) / 3.0
-        
-        # Calculate SSIM
-        metrics['ssim'] = {}
-        for i, color in enumerate(['blue', 'green', 'red']):
-            metrics['ssim'][color] = ssim(img1[:,:,i], img2[:,:,i], data_range=255)
-        metrics['ssim']['avg'] = np.mean(list(metrics['ssim'].values())[:3])  # Average of RGB
-        
-        # Calculate MSE
-        metrics['mse'] = np.mean((img1.astype(np.float32) - img2.astype(np.float32)) ** 2)
-        
-        # Create detailed report figure
-        fig = Figure(figsize=(10, 12), dpi=100)
-        
-        # Add title
-        fig.suptitle(f"Detailed Image Comparison Report", fontsize=16)
-        
-        # Create a grid layout
-        gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 1, 0.5], width_ratios=[1, 1], hspace=0.4, wspace=0.3)
-        
-        # Image previews
-        ax1 = fig.add_subplot(gs[0, 0])
-        ax1.imshow(img1)
-        ax1.set_title(f"Image 1: {filename1}")
-        ax1.axis('off')
-        
-        ax2 = fig.add_subplot(gs[0, 1])
-        ax2.imshow(img2)
-        ax2.set_title(f"Image 2: {filename2}")
-        ax2.axis('off')
-        
-        # Difference visualizations
-        diff = cv2.absdiff(img1, img2)
-        diff_gray = cv2.cvtColor(diff, cv2.COLOR_RGB2GRAY)
-        diff_heatmap = cv2.applyColorMap(diff_gray, cv2.COLORMAP_JET)
-        diff_heatmap = cv2.cvtColor(diff_heatmap, cv2.COLOR_BGR2RGB)
-        
-        ax3 = fig.add_subplot(gs[1, 0])
-        ax3.imshow(diff)
-        ax3.set_title("Absolute Difference")
-        ax3.axis('off')
-        
-        ax4 = fig.add_subplot(gs[1, 1])
-        ax4.imshow(diff_heatmap)
-        ax4.set_title("Difference Heatmap")
-        ax4.axis('off')
-        
-        # Histogram comparisons
-        ax5 = fig.add_subplot(gs[2, 0])
-        
-        # Plot the histograms
-        colors = ['blue', 'green', 'red']
-        for i, color_name in enumerate(colors):
-            ax5.plot(cv2.normalize(hist1_r if i == 2 else hist1_g if i == 1 else hist1_b, None, 0, 1, cv2.NORM_MINMAX), 
-                    color=color_name, linestyle='-', alpha=0.7, label=f"Image 1 {color_name}")
-            ax5.plot(cv2.normalize(hist2_r if i == 2 else hist2_g if i == 1 else hist2_b, None, 0, 1, cv2.NORM_MINMAX), 
-                    color=color_name, linestyle='--', alpha=0.7, label=f"Image 2 {color_name}")
-        
-        ax5.set_title("Color Histograms Comparison")
-        ax5.set_xlabel("Pixel Value")
-        ax5.set_ylabel("Normalized Frequency")
-        ax5.legend(loc='upper right', fontsize='x-small')
-        
-        # Metrics summary
-        ax6 = fig.add_subplot(gs[2, 1])
-        ax6.axis('off')
-        
-        metrics
+        }
