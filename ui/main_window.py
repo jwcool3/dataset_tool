@@ -11,6 +11,7 @@ import threading
 from ui.tabs.input_output_tab import InputOutputTab
 from ui.tabs.config_tab import ConfigTab
 from ui.tabs.preview_tab import PreviewTab
+from ui.tabs.gallery_tab import GalleryTab 
 from ui.dialogs import AboutDialog, UsageGuideDialog
 from utils.config_manager import ConfigManager
 
@@ -134,12 +135,14 @@ class MainWindow:
         self.input_output_tab = InputOutputTab(self)
         self.config_tab = ConfigTab(self)
         self.preview_tab = PreviewTab(self)
+        self.gallery_tab = GalleryTab(self)  # Add this line
         
         # Add tabs to notebook
         self.notebook.add(self.input_output_tab.frame, text="Input/Output")
         self.notebook.add(self.config_tab.frame, text="Configuration")
         self.notebook.add(self.preview_tab.frame, text="Preview")
-    
+        self.notebook.add(self.gallery_tab.frame, text="Gallery")  # Add this line
+
     def _show_about(self):
         """Show the about dialog."""
         AboutDialog(self.root)
