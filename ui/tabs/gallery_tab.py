@@ -81,12 +81,31 @@ class GalleryTab:
         self.gallery_outer_frame = ttk.Frame(self.frame)
         self.gallery_outer_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
+        # Create view mode selection
+        self.view_mode_frame = ttk.Frame(self.gallery_outer_frame)
+        self.view_mode_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        self.view_mode = tk.StringVar(value="single")
+        ttk.Radiobutton(self.view_mode_frame, text="Single Image View", 
+                       value="single", variable=self.view_mode, 
+                       command=self._switch_view_mode).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(self.view_mode_frame, text="Gallery Overview", 
+                       value="overview", variable=self.view_mode, 
+                       command=self._switch_view_mode).pack(side=tk.LEFT, padx=5)
+        
+        # Create a paned window for dynamic resizing
+        self.gallery_paned = ttk.PanedWindow(self.gallery_outer_frame, orient=tk.VERTICAL)
+        self.gallery_paned.pack(fill=tk.BOTH, expand=True)
+        
         # Create a canvas for scrolling
-        self.gallery_canvas = tk.Canvas(self.gallery_outer_frame, bg="#f0f0f0")
+        self.gallery_canvas_frame = ttk.Frame(self.gallery_paned)
+        self.gallery_paned.add(self.gallery_canvas_frame, weight=1)
+        
+        self.gallery_canvas = tk.Canvas(self.gallery_canvas_frame, bg="#f0f0f0")
         self.gallery_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Add scrollbar
-        self.scrollbar = ttk.Scrollbar(self.gallery_outer_frame, orient=tk.VERTICAL, command=self.gallery_canvas.yview)
+        self.scrollbar = ttk.Scrollbar(self.gallery_canvas_frame, orient=tk.VERTICAL, command=self.gallery_canvas.yview)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.gallery_canvas.configure(yscrollcommand=self.scrollbar.set)
         
@@ -253,15 +272,24 @@ class GalleryTab:
         
         # Display source images in a grid
         sources_frame = ttk.LabelFrame(self.gallery_content, text="Source Images")
-        sources_frame.pack(fill=tk.X, pady=10, padx=5)
+        sources_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=5)
         
-        grid_frame = ttk.Frame(sources_frame)
-        grid_frame.pack(fill=tk.X, pady=5, padx=5)
+        # Calculate how many columns based on available width
+        window_width = self.parent.root.winfo_width()
+        # Use 250px as approximate width per thumbnail
+        num_cols = max(1, min(6, window_width // 250))
         
-        # Display source images in a grid layout
+        # Create a frame for the grid that will expand
+        grid_outer_frame = ttk.Frame(sources_frame)
+        grid_outer_frame.pack(fill=tk.BOTH, expand=True, pady=5, padx=5)
+        
+        grid_frame = ttk.Frame(grid_outer_frame)
+        grid_frame.pack(pady=5, padx=5, anchor=tk.CENTER)
+        
+        # Display source images in a responsive grid layout
         for i, version in enumerate(source_versions):
-            col = i % 3  # 3 images per row
-            row = i // 3
+            col = i % num_cols
+            row = i // num_cols
             self._add_image_to_grid(grid_frame, version, row, col)
         
         # Add mask toggle if masks exist
@@ -285,12 +313,15 @@ class GalleryTab:
             
             # Store the mask version for later use
             self.current_mask_version = mask_versions[0] if mask_versions else None
+            
+        # Bind window resize event to update the layout
+        self.parent.root.bind("<Configure>", self._update_layout)
     
     def _add_image_to_grid(self, parent_frame, image_info, row, col):
         """Add an image thumbnail to the grid."""
         # Create a frame for this image
         version_frame = ttk.Frame(parent_frame, padding=5)
-        version_frame.grid(row=row, column=col, padx=10, pady=5)
+        version_frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
         self.version_frames.append(version_frame)
         
         # Load and display the image
@@ -303,8 +334,16 @@ class GalleryTab:
             # Convert to RGB for PIL
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
+            # Get thumbnail size based on window size
+            window_width = self.parent.root.winfo_width()
+            if window_width < 800:
+                max_size = 160
+            elif window_width < 1200:
+                max_size = 200
+            else:
+                max_size = 240
+            
             # Resize for thumbnail
-            max_size = 200
             h, w = img_rgb.shape[:2]
             scale = min(max_size / w, max_size / h)
             new_w, new_h = int(w * scale), int(h * scale)
@@ -317,41 +356,75 @@ class GalleryTab:
             # Store reference to prevent garbage collection
             self.thumbnails.append(tk_img)
             
+            # Create a frame with a border to highlight the image
+            img_frame = ttk.Frame(version_frame, borderwidth=2, relief="solid")
+            img_frame.pack(pady=(0, 5))
+            
             # Display image
-            img_label = ttk.Label(version_frame, image=tk_img)
-            img_label.pack(pady=(0, 5))
+            img_label = ttk.Label(img_frame, image=tk_img)
+            img_label.pack()
             img_label.bind("<Button-1>", lambda e, path=image_info['path']: self._toggle_selection(e.widget))
             
-            # Add image info labels
+            # Add image info labels in a compact format
+            info_frame = ttk.Frame(version_frame)
+            info_frame.pack(fill=tk.X, expand=True)
+            
+            # Add dimension info
             type_text = "Mask" if image_info['is_mask'] else "Image"
             info_text = f"{type_text} | {w}x{h}"
             
-            info_label = ttk.Label(version_frame, text=info_text)
+            info_label = ttk.Label(info_frame, text=info_text, font=("Helvetica", 9))
             info_label.pack()
             
             # Add folder label
-            folder_label = ttk.Label(version_frame, text=f"Folder: {image_info['subdir']}")
+            folder_label = ttk.Label(info_frame, text=f"Folder: {image_info['subdir']}", font=("Helvetica", 9))
             folder_label.pack()
             
             # Show shorter path instead of full path
             short_path = os.path.basename(os.path.dirname(image_info['path']))
-            path_label = ttk.Label(version_frame, text=f"{short_path}/{os.path.basename(image_info['path'])}", 
+            path_label = ttk.Label(info_frame, text=f"{short_path}/{os.path.basename(image_info['path'])}", 
                                   font=("Helvetica", 7))
             path_label.pack()
             self.version_labels.append(path_label)
             
-            # Add selection checkbox
+            # Add selection checkbox in a separate frame
+            select_frame = ttk.Frame(version_frame)
+            select_frame.pack(fill=tk.X, expand=True, pady=(5, 0))
+            
             var = tk.BooleanVar(value=False)
             image_info['select_var'] = var  # Store reference in the image info dict
             
-            select_check = ttk.Checkbutton(version_frame, text="Select", variable=var)
-            select_check.pack(pady=(5, 0))
+            select_check = ttk.Checkbutton(select_frame, text="Select", variable=var)
+            select_check.pack(pady=(0, 0))
             self.selected_labels.append((select_check, image_info))
             
         except Exception as e:
             print(f"Error displaying image: {str(e)}")
             error_label = ttk.Label(version_frame, text=f"Error: {str(e)}")
             error_label.pack()
+    
+    def _update_layout(self, event=None):
+        """Update the layout when the window is resized."""
+        # Only respond to main window resize events, not child widget events
+        if event and event.widget != self.parent.root:
+            return
+            
+        # If we're in single image view, update the grid layout
+        if hasattr(self, 'view_mode') and self.view_mode.get() == "single":
+            current_idx = self.current_image_index
+            self._show_current_image()
+        elif hasattr(self, 'view_mode') and self.view_mode.get() == "overview":
+            self._show_gallery_overview()
+    
+    def _adjust_thumbnail_size(self):
+        """Adjust thumbnail size based on window width."""
+        window_width = self.parent.root.winfo_width()
+        if window_width < 800:
+            return 150  # Small window
+        elif window_width < 1200:
+            return 180  # Medium window
+        else:
+            return 220  # Large window
     
     def _toggle_selection(self, widget):
         """Toggle selection when an image is clicked."""
@@ -366,6 +439,7 @@ class GalleryTab:
         if not self.images_data:
             return
         
+        self.view_mode.set("single")  # Ensure we're in single image view
         self.current_image_index = (self.current_image_index + 1) % len(self.images_data)
         self._update_counter()
         self._show_current_image()
@@ -375,9 +449,118 @@ class GalleryTab:
         if not self.images_data:
             return
         
+        self.view_mode.set("single")  # Ensure we're in single image view
         self.current_image_index = (self.current_image_index - 1) % len(self.images_data)
         self._update_counter()
         self._show_current_image()
+    
+    def _switch_view_mode(self):
+        """Switch between single image view and gallery overview."""
+        if self.view_mode.get() == "single":
+            # Switch to single image view
+            if hasattr(self, 'current_image_index'):
+                self._show_current_image()
+        else:
+            # Switch to gallery overview
+            self._show_gallery_overview()
+
+    def _show_gallery_overview(self):
+        """Display a gallery overview of all image groups."""
+        # Clear existing gallery
+        for widget in self.gallery_content.winfo_children():
+            widget.destroy()
+        
+        # Reset references
+        self.thumbnails = []
+        
+        if not self.images_data:
+            self.info_label.config(text="No images to display. Please load images first.")
+            return
+        
+        # Create a title
+        title_frame = ttk.Frame(self.gallery_content)
+        title_frame.pack(fill=tk.X, pady=(10, 15))
+        
+        title_label = ttk.Label(title_frame, text="Gallery Overview", font=("Helvetica", 14, "bold"))
+        title_label.pack()
+        
+        # Create a frame for the gallery grid
+        overview_frame = ttk.Frame(self.gallery_content)
+        overview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Calculate how many columns based on screen width
+        screen_width = self.parent.root.winfo_screenwidth()
+        num_cols = max(3, min(6, screen_width // 250))  # Between 3 and 6 columns
+        
+        # Add each image group as a thumbnail
+        for i, image_group in enumerate(self.images_data):
+            row, col = divmod(i, num_cols)
+            self._add_overview_thumbnail(overview_frame, image_group, i, row, col)
+    
+    def _add_overview_thumbnail(self, parent_frame, image_group, index, row, col):
+        """Add a thumbnail for the overview gallery."""
+        # Create frame for this thumbnail
+        thumb_frame = ttk.Frame(parent_frame, padding=5)
+        thumb_frame.grid(row=row, column=col, padx=10, pady=10)
+        
+        # Get a representative image (first source image)
+        source_images = [v for v in image_group['versions'] if not v['is_mask']]
+        if not source_images:
+            return
+        
+        rep_image = source_images[0]
+        
+        try:
+            # Load the image
+            img = cv2.imread(rep_image['path'])
+            if img is None:
+                raise ValueError(f"Failed to load image: {rep_image['path']}")
+            
+            # Convert to RGB
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # Create thumbnail
+            max_size = 180
+            h, w = img_rgb.shape[:2]
+            scale = min(max_size / w, max_size / h)
+            new_w, new_h = int(w * scale), int(h * scale)
+            thumbnail = cv2.resize(img_rgb, (new_w, new_h))
+            
+            # Convert to PIL and ImageTk
+            pil_img = Image.fromarray(thumbnail)
+            tk_img = ImageTk.PhotoImage(pil_img)
+            self.thumbnails.append(tk_img)
+            
+            # Display image with a border to indicate selection
+            img_frame = ttk.Frame(thumb_frame, borderwidth=2, relief="solid")
+            img_frame.pack(pady=(0, 5))
+            
+            img_label = ttk.Label(img_frame, image=tk_img)
+            img_label.pack()
+            
+            # Make clickable to view this image
+            img_label.bind("<Button-1>", lambda e, idx=index: self._view_image_from_overview(idx))
+            
+            # Add filename label
+            filename_label = ttk.Label(thumb_frame, text=image_group['filename'], font=("Helvetica", 9))
+            filename_label.pack()
+            
+            # Add count of versions
+            count_label = ttk.Label(thumb_frame, 
+                                  text=f"{len(source_images)} versions", 
+                                  font=("Helvetica", 8))
+            count_label.pack()
+            
+        except Exception as e:
+            error_label = ttk.Label(thumb_frame, text=f"Error: {str(e)}")
+            error_label.pack()
+            
+    def _view_image_from_overview(self, index):
+        """Switch to single image view for the selected index."""
+        self.current_image_index = index
+        self.view_mode.set("single")
+        self._show_current_image()
+        self._update_counter()
     
     def _toggle_mask_view(self):
         """Toggle display of the mask image."""
