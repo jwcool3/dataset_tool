@@ -135,13 +135,139 @@ class MainWindow:
         self.input_output_tab = InputOutputTab(self)
         self.config_tab = ConfigTab(self)
         self.preview_tab = PreviewTab(self)
-        self.gallery_tab = GalleryTab(self)  # Add this line
+        self.gallery_tab = GalleryTab(self)
         
         # Add tabs to notebook
         self.notebook.add(self.input_output_tab.frame, text="Input/Output")
         self.notebook.add(self.config_tab.frame, text="Configuration")
         self.notebook.add(self.preview_tab.frame, text="Preview")
-        self.notebook.add(self.gallery_tab.frame, text="Gallery")  # Add this line
+        self.notebook.add(self.gallery_tab.frame, text="Gallery")
+        
+        # Initialize image comparison integration
+        self._init_image_comparison()
+
+    def _init_image_comparison(self):
+        """Initialize image comparison functionality."""
+        # Import here to avoid circular imports
+        from utils.gallery_integration import GalleryComparisonIntegrator
+        
+        # Create instance of the gallery comparison integrator
+        self.gallery_integrator = GalleryComparisonIntegrator(self.gallery_tab)
+        
+        # Add Image Comparison to Help menu
+        help_menu = None
+        for i in range(self.menu_bar.index('end') + 1):
+            if self.menu_bar.type(i) == 'cascade' and self.menu_bar.entrycget(i, 'label') == 'Help':
+                help_menu = self.menu_bar.nametowidget(self.menu_bar.entrycget(i, 'menu'))
+                break
+        
+        if help_menu:
+            help_menu.add_separator()
+            help_menu.add_command(label="Image Comparison Help", command=self._show_comparison_help)
+
+    def _show_comparison_help(self):
+        """Show help information about image comparison."""
+        help_dialog = tk.Toplevel(self.root)
+        help_dialog.title("Image Comparison Help")
+        help_dialog.geometry("600x500")
+        help_dialog.transient(self.root)
+        
+        # Make dialog modal
+        help_dialog.grab_set()
+        
+        # Add scrollable text widget
+        help_frame = ttk.Frame(help_dialog, padding=10)
+        help_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create text widget with scrollbar
+        text_frame = ttk.Frame(help_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        text = tk.Text(text_frame, wrap=tk.WORD, padx=10, pady=10)
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(text_frame, command=text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text.configure(yscrollcommand=scrollbar.set)
+        
+        # Insert help text
+        help_text = """Image Comparison Tool
+
+    The Image Comparison tool helps you compare multiple versions of the same image to:
+    1. Identify outliers or anomalies in image sets
+    2. Visualize differences between images
+    3. Generate similarity metrics for quantitative analysis
+
+    Using Image Comparison:
+
+    1. Navigate to the Gallery tab to view your image sets
+    2. Click "Compare Images" to analyze the current image group
+    3. In the comparison dialog:
+    - Select a comparison method (different methods are sensitive to different types of changes)
+    - Run the comparison to see results across three tabs:
+        a) Overview: Shows similarity matrix and outlier scores
+        b) Outliers: Lists images ranked by difference from the group
+        c) Detailed Comparison: Direct side-by-side comparison with difference visualization
+
+    Comparison Methods:
+
+    1. histogram_correlation: Compares color distribution similarity
+    - Good for detecting overall color/tone differences
+    - Range: -1.0 to 1.0 (higher = more similar)
+
+    2. histogram_chi: Chi-square test for color histograms
+    - Sensitive to smaller color distribution differences
+    - Good for detecting subtle color changes
+    - Range: 0.0 to unbounded (lower = more similar)
+
+    3. histogram_intersection: Measures overlap between color histograms
+    - Useful for finding images with similar dominant colors
+    - Range: 0.0 to 1.0 (higher = more similar)
+
+    4. histogram_bhattacharyya: Statistical distance between distributions
+    - Good balance between sensitivity and noise tolerance
+    - Range: 0.0 to 1.0 (lower = more similar)
+
+    5. ssim: Structural Similarity Index
+    - Considers image structure, not just colors
+    - Better matches human perception of similarity
+    - Sensitive to position changes, blurring, compression
+    - Range: 0.0 to 1.0 (higher = more similar)
+
+    6. mse: Mean Squared Error
+    - Direct pixel-by-pixel comparison
+    - Very sensitive to positioning and small changes
+    - Range: 0.0 to unbounded (lower = more similar)
+
+    Batch Analysis:
+
+    1. From the Tools menu, select "Image Comparison > Batch Compare All Groups"
+    2. Choose analysis mode:
+    - Find Outliers: Identify potential anomalies in each image group
+    - Generate Similarity Report: Measure overall similarity within groups
+    3. Results are saved to a CSV file for further analysis
+
+    Tips:
+
+    - Different comparison methods highlight different types of differences
+    - The SSIM method often provides the most intuitive results for most scenarios
+    - For detecting color/tone issues, histogram methods work better
+    - Use the detailed comparison view to see exactly where images differ
+    - Export results for documentation or further analysis
+
+    The Image Comparison tool is valuable for:
+    - Quality control during dataset preparation
+    - Detecting processing anomalies or corrupted images
+    - Verifying consistency across image variations
+    - Understanding the effects of different processing steps
+    """
+
+        text.insert(tk.END, help_text)
+        text.config(state=tk.DISABLED)  # Make read-only
+        
+        # Add close button
+        close_btn = ttk.Button(help_frame, text="Close", command=help_dialog.destroy)
+        close_btn.pack(pady=10)
 
     def _show_about(self):
         """Show the about dialog."""

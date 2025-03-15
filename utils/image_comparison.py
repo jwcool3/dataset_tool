@@ -1,12 +1,14 @@
 """
-Image Comparison Utilities for Dataset Preparation Tool
-Provides functions to compare images and identify outliers in groups.
+Enhanced Image Comparison Utilities for Dataset Preparation Tool
+Provides advanced functions to compare images and identify outliers in groups.
 """
 import os
 import cv2
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from PIL import Image, ImageTk
 import io
 from skimage.metrics import structural_similarity as ssim
@@ -54,6 +56,8 @@ class ImageComparison:
         
         # Load and preprocess images
         images = []
+        valid_paths = []
+        
         for path in image_paths:
             try:
                 # Load image
@@ -75,6 +79,7 @@ class ImageComparison:
                     img = cv2.resize(img, resize_dim, interpolation=cv2.INTER_AREA)
                 
                 images.append(img)
+                valid_paths.append(path)
                 
             except Exception as e:
                 print(f"Error processing image {path}: {str(e)}")
@@ -103,14 +108,16 @@ class ImageComparison:
             "distance_matrix": distance_matrix,
             "outlier_scores": outlier_scores,
             "sorted_indices": sorted_indices,
-            "paths": [image_paths[i] for i in range(len(images))],
-            "ranked_paths": [image_paths[i] for i in sorted_indices if i < len(image_paths)]
+            "paths": valid_paths,
+            "ranked_paths": [valid_paths[i] for i in sorted_indices],
+            "comparison_method": method,
+            "color_space": color_space
         }
         
         return result
     
     def generate_comparison_visualization(self, images, distance_matrix, outlier_scores, 
-                                        image_paths=None, max_images=10):
+                                        image_paths=None, max_images=12):
         """
         Generate visualization of image similarity and outliers.
         
@@ -122,7 +129,7 @@ class ImageComparison:
             max_images: Maximum number of images to include in visualization
             
         Returns:
-            PIL.ImageTk.PhotoImage: Visualization as a Tkinter-compatible image
+            PIL.Image: Visualization as a PIL image
         """
         # Limit to max_images
         n_images = min(len(images), max_images)
@@ -131,47 +138,74 @@ class ImageComparison:
         sorted_indices = np.argsort(outlier_scores)[::-1][:n_images]
         
         # Create a figure with subplots for the heatmap and top outliers
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+        fig = Figure(figsize=(12, 8), dpi=100)
+        
+        # Add a suptitle
+        fig.suptitle("Image Similarity Analysis", fontsize=16)
+        
+        # Create a 2x1 grid layout
+        gs = fig.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.3)
+        
+        # First subplot: heatmap of image similarities
+        ax1 = fig.add_subplot(gs[0])
         
         # Plot distance heatmap (truncated to max_images)
         truncated_matrix = distance_matrix[sorted_indices][:, sorted_indices]
-        heatmap = axes[0].imshow(truncated_matrix, cmap='viridis')
-        axes[0].set_title('Image Distance Matrix')
-        plt.colorbar(heatmap, ax=axes[0], fraction=0.046, pad=0.04)
+        im = ax1.imshow(truncated_matrix, cmap='viridis', interpolation='nearest')
+        ax1.set_title('Image Distance Matrix (darker = more different)')
+        
+        # Add colorbar
+        cbar = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+        cbar.set_label('Distance')
         
         # Add labels if image_paths is provided
         if image_paths:
             sorted_labels = [os.path.basename(image_paths[i]) for i in sorted_indices]
-            axes[0].set_xticks(np.arange(n_images))
-            axes[0].set_yticks(np.arange(n_images))
-            axes[0].set_xticklabels(sorted_labels, rotation=90)
-            axes[0].set_yticklabels(sorted_labels)
+            # Truncate long filenames
+            sorted_labels = [label[:15] + '...' if len(label) > 15 else label for label in sorted_labels]
+            
+            ax1.set_xticks(np.arange(n_images))
+            ax1.set_yticks(np.arange(n_images))
+            ax1.set_xticklabels(sorted_labels, rotation=90, fontsize=8)
+            ax1.set_yticklabels(sorted_labels, fontsize=8)
         
-        # Plot outlier scores
+        # Add grid to help with readability
+        ax1.grid(False)
+        
+        # Second subplot: outlier scores bar chart
+        ax2 = fig.add_subplot(gs[1])
+        
+        # Get sorted outlier scores
         sorted_scores = outlier_scores[sorted_indices]
-        bars = axes[1].bar(np.arange(n_images), sorted_scores)
-        axes[1].set_title('Outlier Scores (Higher = More Different)')
-        axes[1].set_xlabel('Image Index')
-        axes[1].set_ylabel('Average Distance to Other Images')
+        
+        # Plot bar chart
+        bars = ax2.bar(np.arange(n_images), sorted_scores, color='skyblue')
+        ax2.set_title('Outlier Scores (Higher score = more different from other images)')
+        ax2.set_xlabel('Image Index')
+        ax2.set_ylabel('Outlier Score')
         
         # Add labels if image_paths is provided
         if image_paths:
-            axes[1].set_xticks(np.arange(n_images))
-            axes[1].set_xticklabels(np.arange(n_images), rotation=90)
+            ax2.set_xticks(np.arange(n_images))
+            short_labels = [f"{i+1}: {os.path.basename(image_paths[sorted_indices[i]])[:10]}" 
+                           for i in range(n_images)]
+            ax2.set_xticklabels(short_labels, rotation=45, ha='right', fontsize=8)
         
-        plt.tight_layout()
+        # Adjust layout
+        fig.tight_layout()
         
-        # Convert matplotlib figure to a Tkinter-compatible image
+        # Convert to image
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=100)
+        canvas.print_png(buf)
         buf.seek(0)
         
         # Close the figure to free memory
         plt.close(fig)
         
-        # Convert to PIL image and then to ImageTk
+        # Convert to PIL image
         pil_img = Image.open(buf)
-        
         return pil_img
     
     def visualize_differences(self, img1, img2):
@@ -191,41 +225,165 @@ class ImageComparison:
         if img2.shape[2] != 3:
             img2 = cv2.cvtColor(img2, cv2.COLOR_GRAY2RGB)
         
-        # Resize images to match
+        # Store original dimensions for reference
+        orig_h1, orig_w1 = img1.shape[:2]
+        orig_h2, orig_w2 = img2.shape[:2]
+        
+        # Resize images to match the smaller dimensions for comparison
         if img1.shape[:2] != img2.shape[:2]:
-            img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]), interpolation=cv2.INTER_AREA)
+            # Determine which image is smaller
+            if orig_h1 * orig_w1 < orig_h2 * orig_w2:
+                target_size = (orig_w1, orig_h1)
+                img2 = cv2.resize(img2, target_size, interpolation=cv2.INTER_AREA)
+            else:
+                target_size = (orig_w2, orig_h2)
+                img1 = cv2.resize(img1, target_size, interpolation=cv2.INTER_AREA)
+        
+        # Get final dimensions
+        h, w = img1.shape[:2]
         
         # Calculate absolute difference
         diff = cv2.absdiff(img1, img2)
         
-        # Enhance difference for visibility
-        # Convert to HSV and increase saturation
-        diff_hsv = cv2.cvtColor(diff, cv2.COLOR_RGB2HSV)
-        diff_hsv[:, :, 1] = diff_hsv[:, :, 1] * 2  # Increase saturation
-        diff_enhanced = cv2.cvtColor(diff_hsv, cv2.COLOR_HSV2RGB)
+        # Create a colored version of the difference (green highlights differences)
+        diff_enhanced = np.zeros_like(diff)
+        # Enhance green channel where differences are significant
+        threshold = 30  # Threshold to consider a difference significant
+        diff_mask = cv2.cvtColor(diff, cv2.COLOR_RGB2GRAY) > threshold
+        diff_enhanced[diff_mask, 1] = 255  # Set green channel to max where differences are significant
         
-        # Create heatmap version
+        # Create a heatmap version
         diff_gray = cv2.cvtColor(diff, cv2.COLOR_RGB2GRAY)
+        # Apply CLAHE to enhance contrast in the difference image
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        diff_gray = clahe.apply(diff_gray)
+        # Apply color map
         diff_heatmap = cv2.applyColorMap(diff_gray, cv2.COLORMAP_JET)
         diff_heatmap = cv2.cvtColor(diff_heatmap, cv2.COLOR_BGR2RGB)  # Convert to RGB
         
-        # Create a side-by-side comparison
-        h, w = img1.shape[:2]
-        comparison = np.zeros((h, w*4, 3), dtype=np.uint8)
+        # Create a side-by-side comparison with labels
+        # Add padding between images
+        padding = 10
         
-        # First image
-        comparison[:, 0:w] = img1
+        # Create a larger canvas with padding
+        comparison = np.zeros((h + 30, w*4 + padding*3, 3), dtype=np.uint8)
+        comparison.fill(240)  # Light gray background
         
-        # Second image
-        comparison[:, w:w*2] = img2
+        # Labels for the views
+        labels = ["Original 1", "Original 2", "Difference", "Heatmap"]
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.8
+        font_color = (0, 0, 0)  # Black
+        font_thickness = 2
         
-        # Difference
-        comparison[:, w*2:w*3] = diff_enhanced
-        
-        # Heatmap
-        comparison[:, w*3:w*4] = diff_heatmap
+        # Draw labels and images
+        for i, (label, img) in enumerate(zip(labels, [img1, img2, diff_enhanced, diff_heatmap])):
+            # Calculate position
+            x_offset = i * (w + padding)
+            
+            # Add label
+            label_size = cv2.getTextSize(label, font, font_scale, font_thickness)[0]
+            label_x = x_offset + (w - label_size[0]) // 2
+            cv2.putText(comparison, label, (label_x, 25), font, font_scale, font_color, font_thickness)
+            
+            # Add image
+            comparison[30:30+h, x_offset:x_offset+w] = img
+            
+            # Add grid line (vertical separator)
+            if i < 3:
+                line_x = x_offset + w + padding // 2
+                cv2.line(comparison, (line_x, 0), (line_x, h+30), (180, 180, 180), 1)
         
         return comparison
+    
+    def generate_detailed_report(self, img1, img2, filename1, filename2):
+        """
+        Generate a detailed report comparing two images.
+        
+        Args:
+            img1: First image (numpy array)
+            img2: Second image (numpy array)
+            filename1: Name of first image
+            filename2: Name of second image
+            
+        Returns:
+            PIL.Image: Report as a PIL image
+        """
+        # Ensure images are in RGB
+        if img1.shape[2] != 3:
+            img1 = cv2.cvtColor(img1, cv2.COLOR_GRAY2RGB)
+        if img2.shape[2] != 3:
+            img2 = cv2.cvtColor(img2, cv2.COLOR_GRAY2RGB)
+        
+        # Resize if necessary
+        if img1.shape[:2] != img2.shape[:2]:
+            h1, w1 = img1.shape[:2]
+            h2, w2 = img2.shape[:2]
+            # Resize the larger image to match the smaller
+            if h1*w1 > h2*w2:
+                img1 = cv2.resize(img1, (w2, h2), interpolation=cv2.INTER_AREA)
+            else:
+                img2 = cv2.resize(img2, (w1, h1), interpolation=cv2.INTER_AREA)
+        
+        # Get dimensions
+        h, w = img1.shape[:2]
+        
+        # Calculate metrics
+        metrics_text = (
+            f"Similarity Metrics:\n\n"
+            f"• Histogram Correlation:\n"
+            f"  - Red: {metrics['correlation']['red']:.4f}\n"
+            f"  - Green: {metrics['correlation']['green']:.4f}\n"
+            f"  - Blue: {metrics['correlation']['blue']:.4f}\n"
+            f"  - Average: {metrics['correlation']['avg']:.4f}\n\n"
+            f"• Structural Similarity (SSIM):\n"
+            f"  - Red: {metrics['ssim']['red']:.4f}\n"
+            f"  - Green: {metrics['ssim']['green']:.4f}\n"
+            f"  - Blue: {metrics['ssim']['blue']:.4f}\n"
+            f"  - Average: {metrics['ssim']['avg']:.4f}\n\n"
+            f"• Mean Squared Error: {metrics['mse']:.2f}\n"
+            f"  (Lower values indicate higher similarity)"
+        )
+        
+        ax6.text(0, 0.95, metrics_text, va='top', fontsize=10)
+        
+        # Summary and interpretation
+        ax7 = fig.add_subplot(gs[3, :])
+        ax7.axis('off')
+        
+        # Interpret the results
+        if metrics['correlation']['avg'] > 0.9 and metrics['ssim']['avg'] > 0.9:
+            interpretation = "The images are VERY SIMILAR with only minor differences."
+        elif metrics['correlation']['avg'] > 0.8 and metrics['ssim']['avg'] > 0.8:
+            interpretation = "The images are SIMILAR with some noticeable differences."
+        elif metrics['correlation']['avg'] > 0.6 and metrics['ssim']['avg'] > 0.6:
+            interpretation = "The images have MODERATE differences."
+        else:
+            interpretation = "The images are SIGNIFICANTLY DIFFERENT."
+        
+        summary_text = (
+            f"Summary: {interpretation}\n\n"
+            f"• Histogram Correlation: {metrics['correlation']['avg']:.4f} (1.0 = identical, -1.0 = inverse)\n"
+            f"• SSIM: {metrics['ssim']['avg']:.4f} (1.0 = identical, 0.0 = no similarity)\n"
+            f"• Image Dimensions: {w}x{h} pixels"
+        )
+        
+        ax7.text(0.5, 0.5, summary_text, va='center', ha='center', fontsize=12, 
+                bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgray', alpha=0.2))
+        
+        # Convert to image
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
+        buf = io.BytesIO()
+        canvas.print_png(buf)
+        buf.seek(0)
+        
+        # Close the figure to free memory
+        plt.close(fig)
+        
+        # Convert to PIL image
+        pil_img = Image.open(buf)
+        return pil_img
     
     def _compute_distance_matrix(self, images, comparison_func):
         """
@@ -418,3 +576,147 @@ class ImageComparison:
         normalized_mse = min(1.0, mse / 10000.0)
         
         return normalized_mse
+    
+    def find_outliers(self, image_paths, threshold=0.25, method="histogram_correlation"):
+        """
+        Find outlier images in a set based on their average dissimilarity.
+        
+        Args:
+            image_paths: List of paths to images
+            threshold: Outlier threshold (higher = more restrictive)
+            method: Comparison method to use
+            
+        Returns:
+            dict: Results with outlier paths and scores
+        """
+        # Compare all images
+        result = self.compare_images(image_paths, method=method)
+        
+        if not result.get("success", False):
+            return {
+                "success": False,
+                "message": result.get("message", "Comparison failed")
+            }
+        
+        # Get outlier scores and threshold
+        outlier_scores = result.get("outlier_scores", [])
+        
+        # Calculate adaptive threshold if needed
+        if threshold is None or threshold <= 0:
+            # Use mean + 1.5 * std as a typical outlier threshold
+            mean_score = np.mean(outlier_scores)
+            std_score = np.std(outlier_scores)
+            threshold = mean_score + 1.5 * std_score
+        
+        # Find outliers
+        outlier_indices = [i for i, score in enumerate(outlier_scores) if score > threshold]
+        outlier_paths = [result["paths"][i] for i in outlier_indices]
+        outlier_scores_filtered = [outlier_scores[i] for i in outlier_indices]
+        
+        # Sort by score (descending)
+        sorted_indices = np.argsort(outlier_scores_filtered)[::-1]
+        sorted_paths = [outlier_paths[i] for i in sorted_indices]
+        sorted_scores = [outlier_scores_filtered[i] for i in sorted_indices]
+        
+        return {
+            "success": True,
+            "message": f"Found {len(sorted_paths)} outliers using threshold {threshold:.4f}",
+            "outlier_paths": sorted_paths,
+            "outlier_scores": sorted_scores,
+            "threshold": threshold,
+            "comparison_method": method
+        } = {}
+        
+        # Histogram comparison
+        hist1_b = cv2.calcHist([img1], [0], None, [256], [0, 256])
+        hist1_g = cv2.calcHist([img1], [1], None, [256], [0, 256])
+        hist1_r = cv2.calcHist([img1], [2], None, [256], [0, 256])
+        
+        hist2_b = cv2.calcHist([img2], [0], None, [256], [0, 256])
+        hist2_g = cv2.calcHist([img2], [1], None, [256], [0, 256])
+        hist2_r = cv2.calcHist([img2], [2], None, [256], [0, 256])
+        
+        # Normalize histograms
+        cv2.normalize(hist1_b, hist1_b, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist1_g, hist1_g, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist1_r, hist1_r, 0, 1.0, cv2.NORM_MINMAX)
+        
+        cv2.normalize(hist2_b, hist2_b, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist2_g, hist2_g, 0, 1.0, cv2.NORM_MINMAX)
+        cv2.normalize(hist2_r, hist2_r, 0, 1.0, cv2.NORM_MINMAX)
+        
+        # Calculate correlation
+        metrics['correlation'] = {}
+        metrics['correlation']['blue'] = cv2.compareHist(hist1_b, hist2_b, cv2.HISTCMP_CORREL)
+        metrics['correlation']['green'] = cv2.compareHist(hist1_g, hist2_g, cv2.HISTCMP_CORREL)
+        metrics['correlation']['red'] = cv2.compareHist(hist1_r, hist2_r, cv2.HISTCMP_CORREL)
+        metrics['correlation']['avg'] = (metrics['correlation']['blue'] + 
+                                      metrics['correlation']['green'] + 
+                                      metrics['correlation']['red']) / 3.0
+        
+        # Calculate SSIM
+        metrics['ssim'] = {}
+        for i, color in enumerate(['blue', 'green', 'red']):
+            metrics['ssim'][color] = ssim(img1[:,:,i], img2[:,:,i], data_range=255)
+        metrics['ssim']['avg'] = np.mean(list(metrics['ssim'].values())[:3])  # Average of RGB
+        
+        # Calculate MSE
+        metrics['mse'] = np.mean((img1.astype(np.float32) - img2.astype(np.float32)) ** 2)
+        
+        # Create detailed report figure
+        fig = Figure(figsize=(10, 12), dpi=100)
+        
+        # Add title
+        fig.suptitle(f"Detailed Image Comparison Report", fontsize=16)
+        
+        # Create a grid layout
+        gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 1, 0.5], width_ratios=[1, 1], hspace=0.4, wspace=0.3)
+        
+        # Image previews
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax1.imshow(img1)
+        ax1.set_title(f"Image 1: {filename1}")
+        ax1.axis('off')
+        
+        ax2 = fig.add_subplot(gs[0, 1])
+        ax2.imshow(img2)
+        ax2.set_title(f"Image 2: {filename2}")
+        ax2.axis('off')
+        
+        # Difference visualizations
+        diff = cv2.absdiff(img1, img2)
+        diff_gray = cv2.cvtColor(diff, cv2.COLOR_RGB2GRAY)
+        diff_heatmap = cv2.applyColorMap(diff_gray, cv2.COLORMAP_JET)
+        diff_heatmap = cv2.cvtColor(diff_heatmap, cv2.COLOR_BGR2RGB)
+        
+        ax3 = fig.add_subplot(gs[1, 0])
+        ax3.imshow(diff)
+        ax3.set_title("Absolute Difference")
+        ax3.axis('off')
+        
+        ax4 = fig.add_subplot(gs[1, 1])
+        ax4.imshow(diff_heatmap)
+        ax4.set_title("Difference Heatmap")
+        ax4.axis('off')
+        
+        # Histogram comparisons
+        ax5 = fig.add_subplot(gs[2, 0])
+        
+        # Plot the histograms
+        colors = ['blue', 'green', 'red']
+        for i, color_name in enumerate(colors):
+            ax5.plot(cv2.normalize(hist1_r if i == 2 else hist1_g if i == 1 else hist1_b, None, 0, 1, cv2.NORM_MINMAX), 
+                    color=color_name, linestyle='-', alpha=0.7, label=f"Image 1 {color_name}")
+            ax5.plot(cv2.normalize(hist2_r if i == 2 else hist2_g if i == 1 else hist2_b, None, 0, 1, cv2.NORM_MINMAX), 
+                    color=color_name, linestyle='--', alpha=0.7, label=f"Image 2 {color_name}")
+        
+        ax5.set_title("Color Histograms Comparison")
+        ax5.set_xlabel("Pixel Value")
+        ax5.set_ylabel("Normalized Frequency")
+        ax5.legend(loc='upper right', fontsize='x-small')
+        
+        # Metrics summary
+        ax6 = fig.add_subplot(gs[2, 1])
+        ax6.axis('off')
+        
+        metrics
