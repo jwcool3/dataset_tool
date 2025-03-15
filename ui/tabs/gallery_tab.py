@@ -848,6 +848,11 @@ class GalleryTab:
         if not self.images_data:
             return
         
+        # Store current state before deletion
+        current_image_index = self.current_image_index
+        current_view_mode = self.view_mode.get()
+        current_version_index = self.current_version_index if hasattr(self, 'current_version_index') else 0
+        
         selected_paths = []
         for check, image_info in self.selected_labels:
             if image_info['select_var'].get():
@@ -885,3 +890,13 @@ class GalleryTab:
         
         # Refresh gallery
         self.load_gallery()
+        
+        # Restore state as closely as possible
+        if self.images_data:
+            # Ensure index is within bounds
+            self.current_image_index = min(current_image_index, len(self.images_data) - 1)
+            self.current_version_index = current_version_index
+            self.view_mode.set(current_view_mode)
+            
+            # Restore the appropriate view
+            self._switch_view_mode()

@@ -86,11 +86,16 @@ class InputOutputTab:
         directory = filedialog.askdirectory()
         if directory:
             self.parent.input_dir.set(directory)
+            
+            # Auto-fill output directory with the input directory
+            if not self.parent.output_dir.get():
+                self.parent.output_dir.set(directory)
+                
             # Try to load preview images
             self._load_preview_images()
             # Enable appropriate processing options based on content
             self._enable_appropriate_options(directory)
-    
+            
     def _browse_output_dir(self):
         """Browse for an output directory."""
         directory = filedialog.askdirectory()
