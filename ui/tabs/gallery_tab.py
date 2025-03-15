@@ -93,6 +93,11 @@ class GalleryTab:
                        value="overview", variable=self.view_mode, 
                        command=self._switch_view_mode).pack(side=tk.LEFT, padx=5)
         
+        # Add a new radio button for the large preview mode
+        ttk.Radiobutton(self.view_mode_frame, text="Large Preview Mode", 
+                       value="large", variable=self.view_mode,
+                       command=self._switch_view_mode).pack(side=tk.LEFT, padx=5)
+        
         # Create a paned window for dynamic resizing
         self.gallery_paned = ttk.PanedWindow(self.gallery_outer_frame, orient=tk.VERTICAL)
         self.gallery_paned.pack(fill=tk.BOTH, expand=True)
@@ -119,6 +124,14 @@ class GalleryTab:
         
         # Bind mousewheel scrolling
         self.gallery_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        
+        # State variables for large preview mode
+        self.current_version_index = 0  # Index in the current versions list
+        self.large_preview_img = None   # Store reference to large preview image
+        
+        # Bind keyboard navigation for large preview mode
+        self.frame.bind("<Left>", self._prev_version_large_preview)
+        self.frame.bind("<Right>", self._next_version_large_preview)
     
     def _on_frame_configure(self, event):
         """Update scroll region when the inner frame changes size."""
@@ -486,14 +499,195 @@ class GalleryTab:
         self._show_current_image()
     
     def _switch_view_mode(self):
-        """Switch between single image view and gallery overview."""
+        """Switch between viewing modes."""
         if self.view_mode.get() == "single":
             # Switch to single image view
             if hasattr(self, 'current_image_index'):
                 self._show_current_image()
-        else:
+        elif self.view_mode.get() == "overview":
             # Switch to gallery overview
             self._show_gallery_overview()
+        elif self.view_mode.get() == "large":
+            # Switch to large preview mode
+            self._show_large_preview()
+    
+    def _show_large_preview(self):
+        """Display a large preview of one image at a time with navigation controls."""
+        if not self.images_data:
+            return
+        
+        # Clear existing gallery
+        for widget in self.gallery_content.winfo_children():
+            widget.destroy()
+        
+        # Reset image references
+        self.thumbnails = []
+        
+        # Get current image data
+        image_data = self.images_data[self.current_image_index]
+        filename = image_data['filename']
+        versions = image_data['versions']
+        
+        # Filter to only source images (not masks)
+        source_versions = [v for v in versions if not v['is_mask']]
+        
+        if not source_versions:
+            self.info_label.config(text="No source images available for large preview.")
+            return
+        
+        # If this is the first time showing large preview, use first version
+        if not hasattr(self, 'current_version_index') or self.current_version_index >= len(source_versions):
+            self.current_version_index = 0
+        
+        # Get the current version to display
+        current_version = source_versions[self.current_version_index]
+        
+        # Update info label
+        version_count = f"{self.current_version_index + 1}/{len(source_versions)}"
+        self.info_label.config(text=f"Viewing {filename} - Version {version_count} from {current_version['subdir']}")
+        
+        # Create title
+        title_frame = ttk.Frame(self.gallery_content)
+        title_frame.pack(fill=tk.X, pady=(10, 5))
+        
+        title_label = ttk.Label(title_frame, text=f"Image: {filename}", font=("Helvetica", 12, "bold"))
+        title_label.pack()
+        
+        # Create navigation controls above the image
+        nav_frame = ttk.Frame(self.gallery_content)
+        nav_frame.pack(fill=tk.X, pady=5)
+        
+        prev_version_btn = ttk.Button(nav_frame, text="← Previous Version", 
+                                     command=self._prev_version_large_preview)
+        prev_version_btn.pack(side=tk.LEFT, padx=5)
+        
+        version_counter = ttk.Label(nav_frame, text=f"Version {version_count}")
+        version_counter.pack(side=tk.LEFT, padx=10)
+        
+        next_version_btn = ttk.Button(nav_frame, text="Next Version →", 
+                                     command=self._next_version_large_preview)
+        next_version_btn.pack(side=tk.LEFT, padx=5)
+        
+        folder_label = ttk.Label(nav_frame, text=f"Folder: {current_version['subdir']}", 
+                               font=("Helvetica", 10, "bold"))
+        folder_label.pack(side=tk.RIGHT, padx=10)
+        
+        # Create a frame for the large image
+        image_frame = ttk.LabelFrame(self.gallery_content, text="Large Preview")
+        image_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Load and display the image at a larger size
+        try:
+            # Load the image
+            img = cv2.imread(current_version['path'])
+            if img is None:
+                raise ValueError(f"Failed to load image: {current_version['path']}")
+            
+            # Convert to RGB
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # Get original dimensions
+            orig_height, orig_width = img_rgb.shape[:2]
+            
+            # Calculate available space for the image display
+            canvas_width = self.gallery_canvas.winfo_width() - 40  # Subtract padding
+            canvas_height = self.gallery_canvas.winfo_height() - 200  # Subtract space for controls
+            
+            # Ensure we have reasonable minimum dimensions
+            display_width = max(800, canvas_width)
+            display_height = max(600, canvas_height)
+            
+            # Calculate scaling to fit the image in the available space while preserving aspect ratio
+            scale = min(display_width / orig_width, display_height / orig_height)
+            new_w, new_h = int(orig_width * scale), int(orig_height * scale)
+            
+            # Only resize if needed
+            if orig_width > display_width or orig_height > display_height:
+                display_img = cv2.resize(img_rgb, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+            else:
+                display_img = img_rgb
+                new_w, new_h = orig_width, orig_height
+            
+            # Convert to PIL and ImageTk
+            pil_img = Image.fromarray(display_img)
+            tk_img = ImageTk.PhotoImage(pil_img)
+            
+            # Store reference to prevent garbage collection
+            self.large_preview_img = tk_img
+            
+            # Create a label for the image
+            img_label = ttk.Label(image_frame, image=tk_img)
+            img_label.pack(pady=10, padx=10)
+            
+            # Add dimension info below the image
+            info_text = f"Original dimensions: {orig_width}x{orig_height}"
+            if orig_width != new_w or orig_height != new_h:
+                info_text += f" (Displayed at: {new_w}x{new_h})"
+                
+            info_label = ttk.Label(image_frame, text=info_text)
+            info_label.pack(pady=5)
+            
+            # Add path info
+            path_label = ttk.Label(image_frame, 
+                                 text=f"Path: {current_version['path']}", 
+                                 font=("Helvetica", 8))
+            path_label.pack(pady=5)
+            
+            # Add selection control
+            select_frame = ttk.Frame(image_frame)
+            select_frame.pack(pady=10)
+            
+            var = tk.BooleanVar(value=False)
+            current_version['select_var'] = var  # Store reference for deletion
+            
+            select_check = ttk.Checkbutton(select_frame, 
+                                         text="Select for deletion", 
+                                         variable=var)
+            select_check.pack()
+            
+        except Exception as e:
+            error_msg = f"Error displaying image: {str(e)}"
+            print(error_msg)
+            error_label = ttk.Label(image_frame, text=error_msg)
+            error_label.pack(pady=20)
+    
+    def _prev_version_large_preview(self, event=None):
+        """Show the previous version in large preview mode."""
+        if not hasattr(self, 'current_version_index') or not self.images_data:
+            return
+            
+        # Get source versions
+        image_data = self.images_data[self.current_image_index]
+        source_versions = [v for v in image_data['versions'] if not v['is_mask']]
+        
+        if not source_versions:
+            return
+            
+        # Decrement index with wraparound
+        self.current_version_index = (self.current_version_index - 1) % len(source_versions)
+        
+        # Refresh the view if in large preview mode
+        if self.view_mode.get() == "large":
+            self._show_large_preview()
+    
+    def _next_version_large_preview(self, event=None):
+        """Show the next version in large preview mode."""
+        if not hasattr(self, 'current_version_index') or not self.images_data:
+            return
+            
+        # Get source versions
+        image_data = self.images_data[self.current_image_index]
+        source_versions = [v for v in image_data['versions'] if not v['is_mask']]
+        
+        if not source_versions:
+            return
+            
+        # Increment index with wraparound
+        self.current_version_index = (self.current_version_index + 1) % len(source_versions)
+        
+        # Refresh the view if in large preview mode
+        if self.view_mode.get() == "large":
+            self._show_large_preview()
 
     def _show_gallery_overview(self):
         """Display a gallery overview of all image groups."""
@@ -612,10 +806,13 @@ class GalleryTab:
             error_label.pack()
             
     def _view_image_from_overview(self, index):
-        """Switch to single image view for the selected index."""
+        """Switch to image view for the selected index."""
         self.current_image_index = index
-        self.view_mode.set("single")
-        self._show_current_image()
+        self.current_version_index = 0  # Reset version index
+        
+        # We'll use the large preview mode by default when clicking from overview
+        self.view_mode.set("large")
+        self._show_large_preview()
         self._update_counter()
     
     def _toggle_mask_view(self):
