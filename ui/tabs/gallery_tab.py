@@ -274,23 +274,37 @@ class GalleryTab:
         sources_frame = ttk.LabelFrame(self.gallery_content, text="Source Images")
         sources_frame.pack(fill=tk.BOTH, expand=True, pady=10, padx=5)
         
-        # Calculate how many columns based on available width
-        window_width = self.parent.root.winfo_width()
-        # Use 250px as approximate width per thumbnail
-        num_cols = max(1, min(6, window_width // 250))
+        # Get available width and calculate number of columns
+        window_width = self.gallery_canvas.winfo_width()
         
-        # Create a frame for the grid that will expand
+        # Calculate ideal thumbnail size based on window width
+        # We want to fill the area while maintaining some margins
+        padding_per_item = 30  # Total horizontal padding per thumbnail cell
+        
+        # Number of columns: try to fit at least 2, at most 5
+        num_cols = min(5, max(2, len(source_versions)))
+        
+        # Calculate optimal thumbnail width to fill space
+        optimal_width = (window_width - (padding_per_item * num_cols)) // num_cols
+        
+        # Create frame for the grid
         grid_outer_frame = ttk.Frame(sources_frame)
         grid_outer_frame.pack(fill=tk.BOTH, expand=True, pady=5, padx=5)
         
         grid_frame = ttk.Frame(grid_outer_frame)
-        grid_frame.pack(pady=5, padx=5, anchor=tk.CENTER)
+        grid_frame.pack(fill=tk.BOTH, expand=True, pady=5, padx=5)
+        
+        # Make grid cells expandable
+        for i in range(num_cols):
+            grid_frame.columnconfigure(i, weight=1)
         
         # Display source images in a responsive grid layout
         for i, version in enumerate(source_versions):
             col = i % num_cols
             row = i // num_cols
-            self._add_image_to_grid(grid_frame, version, row, col)
+            
+            # Pass optimal thumbnail size based on available space
+            self._add_image_to_grid(grid_frame, version, row, col, optimal_width)
         
         # Add mask toggle if masks exist
         if mask_versions:
@@ -313,11 +327,8 @@ class GalleryTab:
             
             # Store the mask version for later use
             self.current_mask_version = mask_versions[0] if mask_versions else None
-            
-        # Bind window resize event to update the layout
-        self.parent.root.bind("<Configure>", self._update_layout)
     
-    def _add_image_to_grid(self, parent_frame, image_info, row, col):
+    def _add_image_to_grid(self, parent_frame, image_info, row, col, optimal_size=None):
         """Add an image thumbnail to the grid."""
         # Create a frame for this image
         version_frame = ttk.Frame(parent_frame, padding=5)
@@ -334,16 +345,21 @@ class GalleryTab:
             # Convert to RGB for PIL
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
-            # Get thumbnail size based on window size
-            window_width = self.parent.root.winfo_width()
-            if window_width < 800:
-                max_size = 160
-            elif window_width < 1200:
-                max_size = 200
+            # Get appropriate thumbnail size
+            if optimal_size:
+                # Use the provided optimal size
+                max_size = optimal_size
             else:
-                max_size = 240
+                # Calculate based on window width if not provided
+                window_width = self.gallery_canvas.winfo_width()
+                if window_width < 800:
+                    max_size = 180
+                elif window_width < 1200:
+                    max_size = 240
+                else:
+                    max_size = 300
             
-            # Resize for thumbnail
+            # Resize for thumbnail while preserving aspect ratio
             h, w = img_rgb.shape[:2]
             scale = min(max_size / w, max_size / h)
             new_w, new_h = int(w * scale), int(h * scale)
@@ -358,11 +374,11 @@ class GalleryTab:
             
             # Create a frame with a border to highlight the image
             img_frame = ttk.Frame(version_frame, borderwidth=2, relief="solid")
-            img_frame.pack(pady=(0, 5))
+            img_frame.pack(pady=(0, 5), fill=tk.BOTH, expand=True)
             
             # Display image
             img_label = ttk.Label(img_frame, image=tk_img)
-            img_label.pack()
+            img_label.pack(fill=tk.BOTH, expand=True)
             img_label.bind("<Button-1>", lambda e, path=image_info['path']: self._toggle_selection(e.widget))
             
             # Add image info labels in a compact format
@@ -484,24 +500,37 @@ class GalleryTab:
         title_label = ttk.Label(title_frame, text="Gallery Overview", font=("Helvetica", 14, "bold"))
         title_label.pack()
         
-        # Create a frame for the gallery grid
+        # Create a scalable frame for the gallery grid
         overview_frame = ttk.Frame(self.gallery_content)
         overview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Calculate how many columns based on screen width
-        screen_width = self.parent.root.winfo_screenwidth()
-        num_cols = max(3, min(6, screen_width // 250))  # Between 3 and 6 columns
+        # Calculate optimal grid layout based on canvas width
+        canvas_width = self.gallery_canvas.winfo_width()
+        
+        # Calculate thumbnail size and columns
+        padding_per_item = 25  # Total horizontal padding per thumbnail
+        
+        # Min 2 columns, max based on width (1 column per 200px of width)
+        num_cols = max(2, min(6, canvas_width // 220))
+        
+        # Calculate optimal thumbnail size to fill space
+        optimal_width = (canvas_width - (padding_per_item * num_cols)) // num_cols
+        optimal_width = max(160, min(300, optimal_width))  # Constrain between 160-300px
+        
+        # Configure the grid columns to be equal
+        for i in range(num_cols):
+            overview_frame.columnconfigure(i, weight=1)
         
         # Add each image group as a thumbnail
         for i, image_group in enumerate(self.images_data):
             row, col = divmod(i, num_cols)
-            self._add_overview_thumbnail(overview_frame, image_group, i, row, col)
+            self._add_overview_thumbnail(overview_frame, image_group, i, row, col, optimal_width)
     
-    def _add_overview_thumbnail(self, parent_frame, image_group, index, row, col):
+    def _add_overview_thumbnail(self, parent_frame, image_group, index, row, col, optimal_width=180):
         """Add a thumbnail for the overview gallery."""
         # Create frame for this thumbnail
         thumb_frame = ttk.Frame(parent_frame, padding=5)
-        thumb_frame.grid(row=row, column=col, padx=10, pady=10)
+        thumb_frame.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
         
         # Get a representative image (first source image)
         source_images = [v for v in image_group['versions'] if not v['is_mask']]
@@ -520,9 +549,8 @@ class GalleryTab:
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
             # Create thumbnail
-            max_size = 180
             h, w = img_rgb.shape[:2]
-            scale = min(max_size / w, max_size / h)
+            scale = min(optimal_width / w, optimal_width / h)
             new_w, new_h = int(w * scale), int(h * scale)
             thumbnail = cv2.resize(img_rgb, (new_w, new_h))
             
@@ -533,10 +561,10 @@ class GalleryTab:
             
             # Display image with a border to indicate selection
             img_frame = ttk.Frame(thumb_frame, borderwidth=2, relief="solid")
-            img_frame.pack(pady=(0, 5))
+            img_frame.pack(pady=(0, 5), fill=tk.BOTH, expand=True)
             
             img_label = ttk.Label(img_frame, image=tk_img)
-            img_label.pack()
+            img_label.pack(fill=tk.BOTH, expand=True)
             
             # Make clickable to view this image
             img_label.bind("<Button-1>", lambda e, idx=index: self._view_image_from_overview(idx))
