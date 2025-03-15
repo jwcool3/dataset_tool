@@ -42,7 +42,14 @@ class MainWindow:
         
         # Create the notebook and tabs
         self._create_notebook()
-    
+
+        # Initialize image comparison integration
+        self._init_image_comparison()
+
+        # Initialize outlier detection - ADD THIS LINE
+        self._init_outlier_detection()
+
+
     def _init_variables(self):
         """Initialize all Tkinter variables used in the application."""
         # Directory paths
@@ -164,6 +171,15 @@ class MainWindow:
         if help_menu:
             help_menu.add_separator()
             help_menu.add_command(label="Image Comparison Help", command=self._show_comparison_help)
+
+    def _init_outlier_detection(self):
+        """Initialize outlier detection functionality."""
+        # Import here to avoid circular imports
+        from utils.outlier_detection import integrate_outlier_detection
+        
+        # Integrate outlier detection features
+        integrate_outlier_detection(self)
+
 
     def _show_comparison_help(self):
         """Show help information about image comparison."""
