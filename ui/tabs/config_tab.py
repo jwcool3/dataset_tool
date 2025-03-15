@@ -101,6 +101,18 @@ class ConfigTab:
         # Set initial state of the resolution controls
         self._toggle_resolution_controls()
     
+
+        # Source images directory - make it very clear what this is
+        source_frame = ttk.LabelFrame(reinsertion_frame, text="Source (Original Uncropped) Images", padding=5)
+        source_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(source_frame, text="Select the directory containing original uncropped images:").pack(anchor=tk.W, padx=5, pady=5)
+
+        source_dir_frame = ttk.Frame(source_frame)
+        source_dir_frame.pack(fill=tk.X, pady=5)
+        ttk.Entry(source_dir_frame, textvariable=self.parent.source_images_dir, width=40).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        ttk.Button(source_dir_frame, text="Browse...", command=self._browse_source_dir).pack(side=tk.RIGHT, padx=5)
+    
     def _create_mask_video_config(self):
         """Create the mask video options section."""
         mask_video_frame = ttk.LabelFrame(self.frame, text="Mask Video Options", padding="10")

@@ -29,8 +29,14 @@ class InputOutputTab:
         io_frame = ttk.LabelFrame(self.frame, text="Directory Selection", padding="10")
         io_frame.pack(fill=tk.X, pady=5)
         
-        # Input directory
-        ttk.Label(io_frame, text="Input Directory:").grid(column=0, row=0, sticky=tk.W)
+        # Input directory (clarify this is for cropped images when reinsertion is selected)
+        input_label_text = "Input Directory:"
+        if self.parent.reinsert_crops_option.get():
+            input_label_text = "Input Directory (Cropped Images):"
+        
+        self.input_dir_label = ttk.Label(io_frame, text=input_label_text)
+        self.input_dir_label.grid(column=0, row=0, sticky=tk.W)
+        
         ttk.Entry(io_frame, textvariable=self.parent.input_dir, width=50).grid(column=1, row=0, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_input_dir).grid(column=2, row=0, padx=5)
         
@@ -39,6 +45,16 @@ class InputOutputTab:
         ttk.Entry(io_frame, textvariable=self.parent.output_dir, width=50).grid(column=1, row=1, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_output_dir).grid(column=2, row=1, padx=5)
         
+        # Add a method to update the label when the reinsertion option changes
+        def update_input_label(*args):
+            if self.parent.reinsert_crops_option.get():
+                self.input_dir_label.config(text="Input Directory (Cropped Images):")
+            else:
+                self.input_dir_label.config(text="Input Directory:")
+        
+        # Register a trace on the reinsertion option
+        self.parent.reinsert_crops_option.trace_add("write", update_input_label)
+
         # Preview button
         ttk.Button(io_frame, text="Preview Processing", 
                   command=self._preview_processing).grid(column=3, row=0, padx=5, pady=5)
@@ -219,3 +235,32 @@ class InputOutputTab:
                     variable=self.parent.debug_mode).grid(
             column=0, row=rows, columnspan=cols, sticky=tk.W, padx=10, pady=5
         )
+
+        def on_reinsert_toggle():
+            """Called when the reinsertion option is toggled"""
+            if self.parent.reinsert_crops_option.get():
+                # Show a hint about the input directory
+                if not hasattr(self, 'reinsert_hint_label'):
+                    self.reinsert_hint_label = ttk.Label(
+                        pipeline_frame, 
+                        text="Note: Input Directory = Cropped Images, Source Directory = Original Images", 
+                        foreground="blue"
+                    )
+                    self.reinsert_hint_label.grid(
+                        column=0, row=4, columnspan=3, sticky=tk.W, padx=20, pady=5
+                    )
+            elif hasattr(self, 'reinsert_hint_label'):
+                # Hide the hint
+                self.reinsert_hint_label.grid_forget()
+
+        # Add a command to the reinsert checkbox
+        for i, (text, var) in enumerate(processing_options):
+            if text == "Reinsert cropped images":
+                reinsert_idx = i
+                break
+                
+        # Find the reinsert checkbutton widget
+        for widget in pipeline_frame.winfo_children():
+            if isinstance(widget, ttk.Checkbutton) and widget.grid_info()['row'] == reinsert_idx % 3 and widget.grid_info()['column'] == reinsert_idx // 3:
+                widget.configure(command=on_reinsert_toggle)
+                break
