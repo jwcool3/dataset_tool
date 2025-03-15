@@ -102,8 +102,20 @@ class MainWindow:
         self.resize_images = tk.BooleanVar(value=False)
         self.organize_files = tk.BooleanVar(value=False)
         self.convert_to_video = tk.BooleanVar(value=False)
+        self.square_pad_images = tk.BooleanVar(value=False)
+        self.reinsert_crops_option = tk.BooleanVar(value=False)  # Add new option
         self.debug_mode = tk.BooleanVar(value=False)
-        
+
+
+        # Crop reinsertion options
+        self.original_images_dir = tk.StringVar()
+        self.selected_original_image = tk.StringVar()
+        self.crop_x_position = tk.IntVar(value=0)
+        self.crop_y_position = tk.IntVar(value=0)
+        self.crop_width = tk.IntVar(value=0)
+        self.crop_height = tk.IntVar(value=0)
+        self.reinsert_padding = tk.IntVar(value=0)
+
         # Preview image storage
         self.preview_image = None
         self.preview_mask = None

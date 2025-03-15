@@ -199,6 +199,23 @@ class InputOutputTab:
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
-            ("Reinsert cropped images", self.parent.reinsert_crops_option)  # Add new option
+            ("Reinsert cropped images", self.parent.reinsert_crops_option)  # New option
         ]
         
+        # Calculate layout - 3 rows, dynamic columns
+        rows = 3
+        cols = (len(processing_options) + rows - 1) // rows  # Ceiling division
+        
+        # Create grid of options
+        for i, (text, var) in enumerate(processing_options):
+            row = i % rows
+            col = i // rows
+            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
+                column=col, row=row, sticky=tk.W, padx=10, pady=2
+            )
+        
+        # Debug mode checkbox (separate for visibility)
+        ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
+                    variable=self.parent.debug_mode).grid(
+            column=0, row=rows, columnspan=cols, sticky=tk.W, padx=10, pady=5
+        )
