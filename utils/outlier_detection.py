@@ -77,7 +77,7 @@ class OutlierGroupDetector:
         self.current_outlier_group_index = 0
         
         return self.outlier_groups
-    
+        
     def _analyze_group(self, group_index, group_name, image_paths, method):
         """
         Analyze a single group for outliers.
@@ -125,7 +125,7 @@ class OutlierGroupDetector:
         
         # Sort outliers by score (descending)
         outliers.sort(key=lambda x: x['score'], reverse=True)
-        
+                
         # Create group result only if outliers found
         if outliers:
             return {
