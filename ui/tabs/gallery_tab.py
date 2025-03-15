@@ -176,22 +176,31 @@ class GalleryTab:
             
             all_images[subdir] = image_files
         
-        # Group images by filename across directories
+        # Group images by filename across directories (base name without extension)
         image_groups = {}
         for subdir, images in all_images.items():
             for img_info in images:
-                filename = img_info['filename']
-                if filename not in image_groups:
-                    image_groups[filename] = []
-                image_groups[filename].append(img_info)
+                # Strip extension to group by base filename
+                base_filename = os.path.splitext(img_info['filename'])[0]
+                
+                if base_filename not in image_groups:
+                    image_groups[base_filename] = []
+                image_groups[base_filename].append(img_info)
         
-        # Filter out images that don't appear in multiple directories
-        for filename, img_group in image_groups.items():
-            # Only count unique subdirectories, not masks
-            subdirs_with_this_image = set(img['subdir'] for img in img_group)
-            if len(subdirs_with_this_image) > 1:
+        # Filter and process image groups
+        for base_filename, img_group in image_groups.items():
+            # Separate source images and masks
+            source_images = [img for img in img_group if not img['is_mask']]
+            
+            # Only include images that appear in multiple directories
+            source_subdirs = set(img['subdir'] for img in source_images)
+            
+            if len(source_subdirs) > 1:
+                # Get the common display filename
+                display_name = base_filename + os.path.splitext(source_images[0]['filename'])[1] if source_images else base_filename
+                
                 self.images_data.append({
-                    'filename': filename,
+                    'filename': display_name,
                     'versions': img_group
                 })
         
@@ -238,32 +247,44 @@ class GalleryTab:
         title_label = ttk.Label(title_frame, text=f"Image: {filename}", font=("Helvetica", 12, "bold"))
         title_label.pack()
         
-        # Group versions by subdirectory
-        versions_by_subdir = {}
-        for version in versions:
-            subdir = version['subdir']
-            if subdir not in versions_by_subdir:
-                versions_by_subdir[subdir] = []
-            versions_by_subdir[subdir].append(version)
+        # Filter out masks and source images
+        source_versions = [v for v in versions if not v['is_mask']]
+        mask_versions = [v for v in versions if v['is_mask']]
         
-        # Display each version grouped by subdirectory
-        row = 0
-        for subdir, version_list in versions_by_subdir.items():
-            # Create subdirectory frame
-            subdir_frame = ttk.LabelFrame(self.gallery_content, text=f"Folder: {subdir}")
-            subdir_frame.pack(fill=tk.X, pady=10, padx=5)
+        # Display source images in a grid
+        sources_frame = ttk.LabelFrame(self.gallery_content, text="Source Images")
+        sources_frame.pack(fill=tk.X, pady=10, padx=5)
+        
+        grid_frame = ttk.Frame(sources_frame)
+        grid_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Display source images in a grid layout
+        for i, version in enumerate(source_versions):
+            col = i % 3  # 3 images per row
+            row = i // 3
+            self._add_image_to_grid(grid_frame, version, row, col)
+        
+        # Add mask toggle if masks exist
+        if mask_versions:
+            mask_control_frame = ttk.Frame(self.gallery_content)
+            mask_control_frame.pack(fill=tk.X, pady=5, padx=5)
             
-            # Create a grid to display images
-            grid_frame = ttk.Frame(subdir_frame)
-            grid_frame.pack(fill=tk.X, pady=5, padx=5)
+            # Create variable for mask toggle
+            self.show_mask_var = tk.BooleanVar(value=False)
             
-            # Display each image in this subdirectory
-            col = 0
-            for version in version_list:
-                self._add_image_to_grid(grid_frame, version, row, col)
-                col += 1
+            # Create toggle button
+            mask_toggle = ttk.Checkbutton(mask_control_frame, 
+                                         text="Show Associated Mask", 
+                                         variable=self.show_mask_var,
+                                         command=self._toggle_mask_view)
+            mask_toggle.pack(side=tk.LEFT, padx=5)
             
-            row += 1
+            # Create frame for mask (initially empty)
+            self.mask_frame = ttk.LabelFrame(self.gallery_content, text="Mask")
+            self.mask_frame.pack(fill=tk.X, pady=10, padx=5, expand=False)
+            
+            # Store the mask version for later use
+            self.current_mask_version = mask_versions[0] if mask_versions else None
     
     def _add_image_to_grid(self, parent_frame, image_info, row, col):
         """Add an image thumbnail to the grid."""
@@ -308,8 +329,14 @@ class GalleryTab:
             info_label = ttk.Label(version_frame, text=info_text)
             info_label.pack()
             
-            # Add path label
-            path_label = ttk.Label(version_frame, text=image_info['path'], font=("Helvetica", 7))
+            # Add folder label
+            folder_label = ttk.Label(version_frame, text=f"Folder: {image_info['subdir']}")
+            folder_label.pack()
+            
+            # Show shorter path instead of full path
+            short_path = os.path.basename(os.path.dirname(image_info['path']))
+            path_label = ttk.Label(version_frame, text=f"{short_path}/{os.path.basename(image_info['path'])}", 
+                                  font=("Helvetica", 7))
             path_label.pack()
             self.version_labels.append(path_label)
             
@@ -351,6 +378,23 @@ class GalleryTab:
         self.current_image_index = (self.current_image_index - 1) % len(self.images_data)
         self._update_counter()
         self._show_current_image()
+    
+    def _toggle_mask_view(self):
+        """Toggle display of the mask image."""
+        if not hasattr(self, 'current_mask_version') or not self.current_mask_version:
+            return
+        
+        # Clear the mask frame
+        for widget in self.mask_frame.winfo_children():
+            widget.destroy()
+        
+        # If toggled on, display the mask
+        if self.show_mask_var.get() and self.current_mask_version:
+            mask_grid = ttk.Frame(self.mask_frame)
+            mask_grid.pack(fill=tk.X, pady=5, padx=5)
+            
+            # Add the mask image to the grid
+            self._add_image_to_grid(mask_grid, self.current_mask_version, 0, 0)
     
     def _update_counter(self):
         """Update the image counter label."""
