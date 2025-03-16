@@ -339,6 +339,8 @@ class MainWindow:
         """Show the usage guide dialog."""
         UsageGuideDialog(self.root)
     
+# Update to the start_processing method in ui/main_window.py
+
     def start_processing(self):
         """Start the processing pipeline in a separate thread."""
         if not self.input_dir.get() or not os.path.isdir(self.input_dir.get()):
@@ -357,12 +359,19 @@ class MainWindow:
                 messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
                 return
         
-        # Check if any processing steps are selected
+        # Check if any processing steps are selected - INCLUDE reinsert_crops_option
         if not any([self.extract_frames.get(), self.crop_mask_regions.get(), 
                 self.square_pad_images.get(), self.resize_images.get(), 
-                self.organize_files.get(), self.convert_to_video.get()]):
+                self.organize_files.get(), self.convert_to_video.get(),
+                self.reinsert_crops_option.get()]):  # Add reinsert_crops_option here
             messagebox.showerror("Error", "Please select at least one processing step.")
             return
+        
+        # Additional check for reinsert_crops_option
+        if self.reinsert_crops_option.get():
+            if not self.source_images_dir.get() or not os.path.isdir(self.source_images_dir.get()):
+                messagebox.showerror("Error", "For image reinsertion, please select a valid source images directory in the Config tab.")
+                return
         
         # Get confirmation before starting processing
         if not self._confirm_processing():
@@ -382,7 +391,8 @@ class MainWindow:
         
         # Check progress periodically
         self.root.after(100, self._check_progress)
-    
+# Update to the _confirm_processing method in ui/main_window.py
+
     def _confirm_processing(self):
         """Show a confirmation dialog with processing settings."""
         steps_selected = []
@@ -401,6 +411,8 @@ class MainWindow:
             steps_selected.append(f"- Organize files (pattern: {self.naming_pattern.get()})")
         if self.convert_to_video.get():
             steps_selected.append(f"- Convert to video (fps: {self.video_fps.get()})")
+        if self.reinsert_crops_option.get():
+            steps_selected.append(f"- Reinsert cropped images (source dir: {os.path.basename(self.source_images_dir.get())})")
         
         confirmation_message = f"Ready to process with the following steps:\n\n" + "\n".join(steps_selected)
         confirmation_message += f"\n\nInput: {self.input_dir.get()}\nOutput: {self.output_dir.get()}"

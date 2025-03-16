@@ -24,13 +24,16 @@ class InputOutputTab:
         self._create_directory_section()
         self._create_pipeline_section()
     
+    # Update to the _create_directory_section in ui/tabs/input_output_tab.py
+
     def _create_directory_section(self):
         """Create the directory selection section."""
         io_frame = ttk.LabelFrame(self.frame, text="Directory Selection", padding="10")
         io_frame.pack(fill=tk.X, pady=5)
         
-        # Input directory (always labeled the same)
-        ttk.Label(io_frame, text="Input Directory:").grid(column=0, row=0, sticky=tk.W)
+        # Input directory with dynamic label
+        self.input_dir_label = ttk.Label(io_frame, text="Input Directory:")
+        self.input_dir_label.grid(column=0, row=0, sticky=tk.W)
         ttk.Entry(io_frame, textvariable=self.parent.input_dir, width=50).grid(column=1, row=0, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_input_dir).grid(column=2, row=0, padx=5)
         
@@ -39,34 +42,35 @@ class InputOutputTab:
         ttk.Entry(io_frame, textvariable=self.parent.output_dir, width=50).grid(column=1, row=1, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_output_dir).grid(column=2, row=1, padx=5)
         
-        # Create a frame for the reinsertion note, initially hidden
-        self.reinsertion_note_frame = ttk.Frame(io_frame, padding=5)
-        self.reinsertion_note_frame.grid(column=0, row=2, columnspan=3, sticky=tk.W, pady=5)
-        self.reinsertion_note_frame.grid_remove()  # Initially hidden
-        
-        # Add the note in a colored label
-        style = ttk.Style()
-        style.configure("Info.TLabel", foreground="blue")
+        # Create the reinsertion note frame
+        self.reinsertion_note_frame = ttk.Frame(io_frame, padding=(0, 5, 0, 0))
+        self.reinsertion_note_frame.grid(column=0, row=2, columnspan=3, sticky=tk.W)
         self.reinsertion_note = ttk.Label(
             self.reinsertion_note_frame,
-            text="For Image Reinsertion: Input Directory = Cropped Images, Source Directory (in Config tab) = Original Images",
-            style="Info.TLabel", 
-            wraplength=500
+            text="Note: For Image Reinsertion, Input Directory = Cropped Images. Configure Source Directory in the Config tab.",
+            foreground="blue",
+            wraplength=600
         )
         self.reinsertion_note.pack(anchor=tk.W)
-        # Add a method to update the label when the reinsertion option changes
-        def update_input_label(*args):
+        
+        # Initialize to hidden
+        self.reinsertion_note_frame.grid_remove()
+        
+        # Register callback to update when reinsert option changes
+        def update_reinsert_ui(*args):
             if self.parent.reinsert_crops_option.get():
                 self.input_dir_label.config(text="Input Directory (Cropped Images):")
+                self.reinsertion_note_frame.grid()
             else:
                 self.input_dir_label.config(text="Input Directory:")
+                self.reinsertion_note_frame.grid_remove()
         
-        # Register a trace on the reinsertion option
-        self.parent.reinsert_crops_option.trace_add("write", update_input_label)
-
+        # Add the trace
+        self.parent.reinsert_crops_option.trace_add("write", update_reinsert_ui)
+        
         # Preview button
         ttk.Button(io_frame, text="Preview Processing", 
-                  command=self._preview_processing).grid(column=3, row=0, padx=5, pady=5)
+                command=self._preview_processing).grid(column=3, row=0, padx=5, pady=5)
         
         # Process and Cancel buttons
         self.process_button = ttk.Button(io_frame, text="Start Processing", 
@@ -74,9 +78,8 @@ class InputOutputTab:
         self.process_button.grid(column=3, row=1, padx=5, pady=5)
         
         self.cancel_button = ttk.Button(io_frame, text="Cancel", 
-                                       command=self.parent.cancel_processing, state=tk.DISABLED)
+                                    command=self.parent.cancel_processing, state=tk.DISABLED)
         self.cancel_button.grid(column=4, row=1, padx=5, pady=5)
-    
     def _create_pipeline_section(self):
         """Create the processing pipeline section with checkboxes."""
         pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")

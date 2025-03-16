@@ -204,7 +204,8 @@ class CropReinserter:
         
         elif match_method == "metadata":
             # Check for a metadata JSON file with the same base name
-            metadata_path = os.path.dirname(cropped_filename) + ".json"
+            # We need the full path of a JSON file with the same basename
+            metadata_path = os.path.join(os.path.dirname(self.app.input_dir.get()), f"{cropped_basename}.json")
             if os.path.exists(metadata_path):
                 try:
                     with open(metadata_path, 'r') as f:
