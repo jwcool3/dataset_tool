@@ -4,7 +4,7 @@ Contains all the configuration options for the processing pipeline.
 """
 
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk
 
 class ConfigTab:
     """Tab for configuring processing options."""
@@ -17,23 +17,7 @@ class ConfigTab:
             parent: Parent window containing shared variables and functions
         """
         self.parent = parent
-        
-        # Create a canvas with scrollbar for scrolling
-        self.canvas = tk.Canvas(parent.notebook)
-        self.scrollbar = ttk.Scrollbar(parent.notebook, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        # Create a frame inside the canvas that will contain all config options
-        self.frame = ttk.Frame(self.canvas, padding="10")
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
-        
-        # Pack the scrollbar and canvas
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-        
-        # Configure the canvas to update the scrollregion when the frame changes size
-        self.frame.bind("<Configure>", self._on_frame_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.frame = ttk.Frame(parent.notebook, padding="10")
         
         # Initialize attributes that will be set later
         self.width_spinbox = None
@@ -51,17 +35,7 @@ class ConfigTab:
         self._create_conditional_resize()
         self._create_square_padding()
         self._create_portrait_crop()
-        self._create_crop_reinsertion()
-        self._create_mask_expand_section()  # Make sure this is called
-    
-    def _on_frame_configure(self, event):
-        """Update the scrollregion when the frame size changes."""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-    
-    def _on_canvas_configure(self, event):
-        """Resize the frame when the canvas is resized."""
-        width = event.width
-        self.canvas.itemconfig(self.canvas_window, width=width)
+        self._create_crop_reinsertion()  # Add this line to create the reinsertion section
     
     def _create_general_config(self):
         """Create the general configuration options section."""
@@ -128,6 +102,9 @@ class ConfigTab:
         # Set initial state of the resolution controls
         self._toggle_resolution_controls()
     
+
+
+    
     def _create_mask_video_config(self):
         """Create the mask video options section."""
         mask_video_frame = ttk.LabelFrame(self.frame, text="Mask Video Options", padding="10")
@@ -154,7 +131,54 @@ class ConfigTab:
             text="This will extract frames from the mask video and copy them to the masks subfolder of each source video.",
             wraplength=600
         ).grid(column=0, row=2, columnspan=3, sticky=tk.W, padx=5, pady=5)
+        
+        # Initialize all UI states - do this at the end after all UI components are created
+        self.root_after_id = self.frame.after(100, self._initialize_ui_states)
     
+
+    def _create_mask_expand_section(self):
+        """Create the mask expansion options section."""
+        expand_frame = ttk.LabelFrame(self.frame, text="Mask Expansion Options", padding="10")
+        expand_frame.pack(fill=tk.X, pady=5)
+        
+        # Iterations control
+        ttk.Label(expand_frame, text="Dilation Iterations:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
+        iterations_spinbox = ttk.Spinbox(
+            expand_frame, 
+            from_=1, 
+            to=50, 
+            increment=1, 
+            textvariable=self.parent.mask_expand_iterations, 
+            width=5
+        )
+        iterations_spinbox.grid(column=1, row=0, padx=5, sticky=tk.W)
+        
+        # Kernel size control
+        ttk.Label(expand_frame, text="Kernel Size:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+        kernel_spinbox = ttk.Spinbox(
+            expand_frame, 
+            from_=3, 
+            to=21, 
+            increment=2,  # Only odd numbers make sense for kernel size
+            textvariable=self.parent.mask_expand_kernel_size, 
+            width=5
+        )
+        kernel_spinbox.grid(column=1, row=1, padx=5, sticky=tk.W)
+        
+        # Preserve directory structure option
+        ttk.Checkbutton(
+            expand_frame, 
+            text="Preserve directory structure", 
+            variable=self.parent.mask_expand_preserve_structure
+        ).grid(column=0, row=2, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Help text
+        help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
+                    "Kernel size controls the shape of the expansion (odd numbers only).")
+        ttk.Label(expand_frame, text=help_text, wraplength=600).grid(
+            column=0, row=3, columnspan=3, sticky=tk.W, padx=5, pady=5)
+
+
     def _create_conditional_resize(self):
         """Create the conditional resize options section."""
         resize_frame = ttk.LabelFrame(self.frame, text="Conditional Resize Options", padding="10")
@@ -264,6 +288,91 @@ class ConfigTab:
             wraplength=600
         ).grid(column=0, row=2, columnspan=3, sticky=tk.W, padx=5, pady=5)
     
+    def _initialize_ui_states(self):
+        """Initialize all UI states after all UI components have been created."""
+        self._toggle_resolution_controls()
+        self._toggle_mask_video_controls()
+        self._toggle_conditional_resize_controls()
+        self._toggle_square_padding_controls()
+        self._toggle_portrait_crop_controls()
+    
+    def _toggle_resolution_controls(self):
+        """Enable or disable resolution controls based on use_source_resolution checkbox."""
+        if not hasattr(self, 'width_spinbox') or not hasattr(self, 'height_spinbox'):
+            # These attributes might not exist yet during initialization
+            return
+            
+        if self.parent.use_source_resolution.get():
+            self.width_spinbox.configure(state="disabled")
+            self.height_spinbox.configure(state="disabled")
+        else:
+            self.width_spinbox.configure(state="normal")
+            self.height_spinbox.configure(state="normal")
+    
+    def _toggle_mask_video_controls(self):
+        """Enable or disable mask video controls based on the checkbox state."""
+        if not hasattr(self, 'mask_video_entry') or not hasattr(self, 'mask_video_button'):
+            # These attributes might not exist yet during initialization
+            return
+            
+        if self.parent.use_mask_video.get():
+            self.mask_video_entry.configure(state="normal")
+            self.mask_video_button.configure(state="normal")
+        else:
+            self.mask_video_entry.configure(state="disabled")
+            self.mask_video_button.configure(state="disabled")
+    
+    def _toggle_conditional_resize_controls(self):
+        """Enable or disable conditional resize controls based on checkbox state."""
+        if not hasattr(self, 'max_width_spinbox') or not hasattr(self, 'max_height_spinbox'):
+            # These attributes might not exist yet during initialization
+            return
+            
+        if self.parent.resize_if_larger.get():
+            self.max_width_spinbox.configure(state="normal")
+            self.max_height_spinbox.configure(state="normal")
+        else:
+            self.max_width_spinbox.configure(state="disabled")
+            self.max_height_spinbox.configure(state="disabled")
+    
+    def _toggle_square_padding_controls(self):
+        """Enable or disable square padding target size controls."""
+        if not hasattr(self, 'square_target_spinbox'):
+            # This attribute might not exist yet during initialization
+            return
+            
+        if self.parent.use_source_resolution_padding.get():
+            self.square_target_spinbox.configure(state="disabled")
+        else:
+            self.square_target_spinbox.configure(state="normal")
+    
+    def _toggle_portrait_crop_controls(self):
+        """Enable or disable portrait crop controls based on checkbox state."""
+        # Find and update the crop position combobox
+        for widget in self.frame.winfo_children():
+            if isinstance(widget, ttk.LabelFrame) and widget.cget("text") == "Portrait Photo Handling":
+                for child in widget.winfo_children():
+                    if isinstance(child, ttk.Combobox):
+                        if self.parent.portrait_crop_enabled.get():
+                            child.configure(state="readonly")
+                        else:
+                            child.configure(state="disabled")
+                # At least one matching frame was found
+                return
+                
+        # If we're here, the needed widgets might not be created yet
+    
+    def _browse_mask_video(self):
+        """Browse for a mask video file."""
+        from tkinter import filedialog
+        filetypes = [
+            ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv"),
+            ("All files", "*.*")
+        ]
+        filepath = filedialog.askopenfilename(filetypes=filetypes, title="Select Mask Video")
+        if filepath:
+            self.parent.mask_video_path.set(filepath)
+
     def _create_crop_reinsertion(self):
         """Create the crop reinsertion options section."""
         # Create the main frame for crop reinsertion options
@@ -357,132 +466,7 @@ class ConfigTab:
             wraplength=600
         )
         help_text.pack(fill=tk.X, pady=10)
-    
-    def _create_mask_expand_section(self):
-        """Create the mask expansion options section."""
-        expand_frame = ttk.LabelFrame(self.frame, text="Mask Expansion Options", padding="10")
-        expand_frame.pack(fill=tk.X, pady=5)
-        
-        # Iterations control
-        ttk.Label(expand_frame, text="Dilation Iterations:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
-        iterations_spinbox = ttk.Spinbox(
-            expand_frame, 
-            from_=1, 
-            to=50, 
-            increment=1, 
-            textvariable=self.parent.mask_expand_iterations, 
-            width=5
-        )
-        iterations_spinbox.grid(column=1, row=0, padx=5, sticky=tk.W)
-        
-        # Kernel size control
-        ttk.Label(expand_frame, text="Kernel Size:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
-        kernel_spinbox = ttk.Spinbox(
-            expand_frame, 
-            from_=3, 
-            to=21, 
-            increment=2,  # Only odd numbers make sense for kernel size
-            textvariable=self.parent.mask_expand_kernel_size, 
-            width=5
-        )
-        kernel_spinbox.grid(column=1, row=1, padx=5, sticky=tk.W)
-        
-        # Preserve directory structure option
-        ttk.Checkbutton(
-            expand_frame, 
-            text="Preserve directory structure", 
-            variable=self.parent.mask_expand_preserve_structure
-        ).grid(column=0, row=2, columnspan=2, sticky=tk.W, padx=5, pady=5)
-        
-        # Help text
-        help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
-                    "Kernel size controls the shape of the expansion (odd numbers only).")
-        ttk.Label(expand_frame, text=help_text, wraplength=600).grid(
-            column=0, row=3, columnspan=3, sticky=tk.W, padx=5, pady=5)
-    
-    def _initialize_ui_states(self):
-        """Initialize all UI states after all UI components have been created."""
-        self._toggle_resolution_controls()
-        self._toggle_mask_video_controls()
-        self._toggle_conditional_resize_controls()
-        self._toggle_square_padding_controls()
-        self._toggle_portrait_crop_controls()
-    
-    def _toggle_resolution_controls(self):
-        """Enable or disable resolution controls based on use_source_resolution checkbox."""
-        if not hasattr(self, 'width_spinbox') or not hasattr(self, 'height_spinbox'):
-            # These attributes might not exist yet during initialization
-            return
-            
-        if self.parent.use_source_resolution.get():
-            self.width_spinbox.configure(state="disabled")
-            self.height_spinbox.configure(state="disabled")
-        else:
-            self.width_spinbox.configure(state="normal")
-            self.height_spinbox.configure(state="normal")
-    
-    def _toggle_mask_video_controls(self):
-        """Enable or disable mask video controls based on the checkbox state."""
-        if not hasattr(self, 'mask_video_entry') or not hasattr(self, 'mask_video_button'):
-            # These attributes might not exist yet during initialization
-            return
-            
-        if self.parent.use_mask_video.get():
-            self.mask_video_entry.configure(state="normal")
-            self.mask_video_button.configure(state="normal")
-        else:
-            self.mask_video_entry.configure(state="disabled")
-            self.mask_video_button.configure(state="disabled")
-    
-    def _toggle_conditional_resize_controls(self):
-        """Enable or disable conditional resize controls based on checkbox state."""
-        if not hasattr(self, 'max_width_spinbox') or not hasattr(self, 'max_height_spinbox'):
-            # These attributes might not exist yet during initialization
-            return
-            
-        if self.parent.resize_if_larger.get():
-            self.max_width_spinbox.configure(state="normal")
-            self.max_height_spinbox.configure(state="normal")
-        else:
-            self.max_width_spinbox.configure(state="disabled")
-            self.max_height_spinbox.configure(state="disabled")
-    
-    def _toggle_square_padding_controls(self):
-        """Enable or disable square padding target size controls."""
-        if not hasattr(self, 'square_target_spinbox'):
-            # This attribute might not exist yet during initialization
-            return
-            
-        if self.parent.use_source_resolution_padding.get():
-            self.square_target_spinbox.configure(state="disabled")
-        else:
-            self.square_target_spinbox.configure(state="normal")
-    
-    def _toggle_portrait_crop_controls(self):
-        """Enable or disable portrait crop controls based on checkbox state."""
-        # Find and update the crop position combobox
-        for widget in self.frame.winfo_children():
-            if isinstance(widget, ttk.LabelFrame) and widget.cget("text") == "Portrait Photo Handling":
-                for child in widget.winfo_children():
-                    if isinstance(child, ttk.Combobox):
-                        if self.parent.portrait_crop_enabled.get():
-                            child.configure(state="readonly")
-                        else:
-                            child.configure(state="disabled")
-                # At least one matching frame was found
-                return
-    
-    def _browse_mask_video(self):
-        """Browse for a mask video file."""
-        from tkinter import filedialog
-        filetypes = [
-            ("Video files", "*.mp4 *.avi *.mov *.mkv *.wmv"),
-            ("All files", "*.*")
-        ]
-        filepath = filedialog.askopenfilename(filetypes=filetypes, title="Select Mask Video")
-        if filepath:
-            self.parent.mask_video_path.set(filepath)
-    
+
     def _browse_source_dir(self):
         """Browse for the source images directory."""
         from tkinter import filedialog
@@ -490,28 +474,20 @@ class ConfigTab:
         if directory:
             self.parent.source_images_dir.set(directory)
 
-    def _bind_mousewheel(self, widget):
-        """Bind mousewheel to scroll the canvas."""
-        def _on_mousewheel(event):
-            widget.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        # Bind for Windows/macOS
-        widget.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        # Bind for Linux
-        widget.bind_all("<Button-4>", lambda e: widget.yview_scroll(-1, "units"))
-        widget.bind_all("<Button-5>", lambda e: widget.yview_scroll(1, "units"))
-        
-        # Unbind when the mouse leaves the widget to avoid scrolling other canvases
-        def _unbind_mousewheel(e):
-            widget.unbind_all("<MouseWheel>")
-            widget.unbind_all("<Button-4>")
-            widget.unbind_all("<Button-5>")
-        
-        def _rebind_mousewheel(e):
-            widget.bind_all("<MouseWheel>", _on_mousewheel)
-            widget.bind_all("<Button-4>", lambda e: widget.yview_scroll(-1, "units"))
-            widget.bind_all("<Button-5>", lambda e: widget.yview_scroll(1, "units"))
-        
-        widget.bind("<Leave>", _unbind_mousewheel)
-        widget.bind("<Enter>", _rebind_mousewheel)
+    def _browse_original_dir(self):
+        """Browse for original images directory."""
+        from tkinter import filedialog
+        directory = filedialog.askdirectory()
+        if directory:
+            self.parent.original_images_dir.set(directory)
+
+    def _browse_original_image(self):
+        """Browse for original image file."""
+        from tkinter import filedialog
+        filetypes = [
+            ("Image files", "*.jpg *.jpeg *.png"),
+            ("All files", "*.*")
+        ]
+        filepath = filedialog.askopenfilename(filetypes=filetypes, title="Select Original Image")
+        if filepath:
+            self.parent.selected_original_image.set(filepath)

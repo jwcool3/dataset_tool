@@ -5,7 +5,7 @@ Contains directory selection and processing pipeline options.
 
 import os
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog
 
 class InputOutputTab:
     """Tab for input/output directory selection and pipeline configuration."""
@@ -18,52 +18,14 @@ class InputOutputTab:
             parent: Parent window containing shared variables and functions
         """
         self.parent = parent
-        
-        # Create a canvas with scrollbar for scrolling
-        self.canvas = tk.Canvas(parent.notebook)
-        self.scrollbar = ttk.Scrollbar(parent.notebook, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        # Create a frame inside the canvas
-        self.frame = ttk.Frame(self.canvas, padding="10")
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
-        
-        # Pack the scrollbar and canvas
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-        
-        # Configure the canvas to update the scrollregion when the frame changes size
-        self.frame.bind("<Configure>", self._on_frame_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-        
-        # Bind mousewheel scrolling
-        self._bind_mousewheel(self.canvas)
+        self.frame = ttk.Frame(parent.notebook, padding="10")
         
         # Create the UI components
         self._create_directory_section()
         self._create_pipeline_section()
     
-    def _on_frame_configure(self, event):
-        """Update the scrollregion when the frame size changes."""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-    
-    def _on_canvas_configure(self, event):
-        """Resize the frame when the canvas is resized."""
-        width = event.width
-        self.canvas.itemconfig(self.canvas_window, width=width)
-    
-    def _bind_mousewheel(self, widget):
-        """Bind mousewheel to scroll the canvas."""
-        def _on_mousewheel(event):
-            widget.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        # Bind for Windows/macOS
-        widget.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        # Bind for Linux
-        widget.bind_all("<Button-4>", lambda e: widget.yview_scroll(-1, "units"))
-        widget.bind_all("<Button-5>", lambda e: widget.yview_scroll(1, "units"))
-    
+    # Update to the _create_directory_section in ui/tabs/input_output_tab.py
+
     def _create_directory_section(self):
         """Create the directory selection section."""
         io_frame = ttk.LabelFrame(self.frame, text="Directory Selection", padding="10")
@@ -118,23 +80,23 @@ class InputOutputTab:
         self.cancel_button = ttk.Button(io_frame, text="Cancel", 
                                     command=self.parent.cancel_processing, state=tk.DISABLED)
         self.cancel_button.grid(column=4, row=1, padx=5, pady=5)
-    
     def _create_pipeline_section(self):
         """Create the processing pipeline section with checkboxes."""
         pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
         pipeline_frame.pack(fill=tk.X, pady=5)
         
         # Processing options with improved layout
+        # Update the processing_options list in the _create_pipeline_section method
         processing_options = [
             ("Extract frames from videos", self.parent.extract_frames),
             ("Detect and crop mask regions", self.parent.crop_mask_regions),
-            ("Expand mask regions", self.parent.expand_masks),  # Make sure this line is included
+            ("Expand mask regions", self.parent.expand_masks),  # Add this line
             ("Resize images and masks", self.parent.resize_images),
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
             ("Reinsert cropped images", self.parent.reinsert_crops_option)
-        ]   
+        ]
         
         # Create 2 columns of options
         for i, (text, var) in enumerate(processing_options):
@@ -149,15 +111,25 @@ class InputOutputTab:
                        variable=self.parent.debug_mode).grid(
             column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
+    
+        # Add command to show/hide reinsertion note when the checkbox is toggled
+        def on_reinsertion_toggle():
+            if self.parent.reinsert_crops_option.get():
+                self.reinsertion_note_frame.grid()  # Show the note
+            else:
+                self.reinsertion_note_frame.grid_remove()  # Hide the note
         
-        # Add section for pipeline help/hint
-        hint_frame = ttk.Frame(self.frame, padding="10")
-        hint_frame.pack(fill=tk.X, pady=5)
-        
-        hint_text = "Hint: The processing pipeline executes steps in the order shown above. " + \
-                   "Output from each step will be used as input for the next step."
-        hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
-        hint_label.pack(anchor=tk.W)
+        # Create checkboxes for each option
+        for i, (text, var) in enumerate(processing_options):
+            row = i % 3
+            col = i // 3
+            cb = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
+            cb.grid(column=col, row=row, sticky=tk.W, padx=10, pady=2)
+            
+            # Add special handling for reinsertion option
+            if text == "Reinsert cropped images":
+                cb.config(command=on_reinsertion_toggle)
+
     
     def _browse_input_dir(self):
         """Browse for an input directory."""
@@ -230,22 +202,18 @@ class InputOutputTab:
             self.parent.crop_mask_regions.set(True)
             self.parent.resize_images.set(True)
             self.parent.organize_files.set(True)
-            # Enable mask expansion by default if we have mask pairs
-            self.parent.expand_masks.set(True)
         else:
             # If no mask pairs but we have videos, enable resize and organize
             if has_videos:
                 self.parent.resize_images.set(True)
                 self.parent.organize_files.set(True)
-            # Disable mask expansion if we have no masks
-            self.parent.expand_masks.set(False)
         
         # Update status
         self.parent.status_label.config(text=f"Found: {'videos, ' if has_videos else ''}{'image-mask pairs' if has_image_mask_pairs else 'no image-mask pairs'}")
     
     def _load_preview_images(self):
         """Load sample images for preview."""
-        # Use image_utils to find and load a sample image and mask
+        # This functionality will be initialized here and completed in later stages
         from utils.image_utils import load_image_with_mask
         
         input_dir = self.parent.input_dir.get()
@@ -253,18 +221,80 @@ class InputOutputTab:
         
         if image_path:
             self.parent.preview_tab.load_preview(image_path, mask_path)
-        else:
-            self.parent.status_label.config(text="No suitable images found for preview")
     
     def _preview_processing(self):
         """Preview the processing that would be applied."""
         # Select the Preview tab to show results
         self.parent.notebook.select(2)  # Index of the Preview tab
         
-        # Check if we have an image to preview
+        # The actual preview will be implemented later
+        # This just changes to the preview tab for now
         if self.parent.preview_image is None:
-            messagebox.showinfo("Preview", "Please select an input directory with images first.")
+            tk.messagebox.showinfo("Preview", "Please select an input directory with images first.")
             return
         
-        # Generate the preview
         self.parent.preview_tab.generate_preview()
+
+
+    def _create_pipeline_section(self):
+        """Create the processing pipeline section with checkboxes."""
+        pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
+        pipeline_frame.pack(fill=tk.X, pady=5)
+        
+        # Processing options with improved layout
+        processing_options = [
+            ("Extract frames from videos", self.parent.extract_frames),
+            ("Detect and crop mask regions", self.parent.crop_mask_regions),
+            ("Resize images and masks", self.parent.resize_images),
+            ("Organize and rename files", self.parent.organize_files),
+            ("Convert images to video", self.parent.convert_to_video),
+            ("Add padding to make images square", self.parent.square_pad_images),
+            ("Reinsert cropped images", self.parent.reinsert_crops_option)  # New option
+        ]
+        
+        # Calculate layout - 3 rows, dynamic columns
+        rows = 3
+        cols = (len(processing_options) + rows - 1) // rows  # Ceiling division
+        
+        # Create grid of options
+        for i, (text, var) in enumerate(processing_options):
+            row = i % rows
+            col = i // rows
+            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
+                column=col, row=row, sticky=tk.W, padx=10, pady=2
+            )
+        
+        # Debug mode checkbox (separate for visibility)
+        ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
+                    variable=self.parent.debug_mode).grid(
+            column=0, row=rows, columnspan=cols, sticky=tk.W, padx=10, pady=5
+        )
+
+        def on_reinsert_toggle():
+            """Called when the reinsertion option is toggled"""
+            if self.parent.reinsert_crops_option.get():
+                # Show a hint about the input directory
+                if not hasattr(self, 'reinsert_hint_label'):
+                    self.reinsert_hint_label = ttk.Label(
+                        pipeline_frame, 
+                        text="Note: Input Directory = Cropped Images, Source Directory = Original Images", 
+                        foreground="blue"
+                    )
+                    self.reinsert_hint_label.grid(
+                        column=0, row=4, columnspan=3, sticky=tk.W, padx=20, pady=5
+                    )
+            elif hasattr(self, 'reinsert_hint_label'):
+                # Hide the hint
+                self.reinsert_hint_label.grid_forget()
+
+        # Add a command to the reinsert checkbox
+        for i, (text, var) in enumerate(processing_options):
+            if text == "Reinsert cropped images":
+                reinsert_idx = i
+                break
+                
+        # Find the reinsert checkbutton widget
+        for widget in pipeline_frame.winfo_children():
+            if isinstance(widget, ttk.Checkbutton) and widget.grid_info()['row'] == reinsert_idx % 3 and widget.grid_info()['column'] == reinsert_idx // 3:
+                widget.configure(command=on_reinsert_toggle)
+                break

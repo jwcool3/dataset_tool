@@ -1,6 +1,6 @@
 """
 Gallery Tab for Dataset Preparation Tool
-Contains scrollbar for viewing and comparing multiple versions of images.
+Displays multiple versions of images from different subfolders for comparison.
 """
 
 import os
@@ -22,23 +22,7 @@ class GalleryTab:
             parent: Parent window containing shared variables and functions
         """
         self.parent = parent
-        
-        # Create a canvas with scrollbar for scrolling
-        self.canvas = tk.Canvas(parent.notebook)
-        self.scrollbar = ttk.Scrollbar(parent.notebook, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        # Create a frame inside the canvas
-        self.frame = ttk.Frame(self.canvas, padding="10")
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
-        
-        # Pack the scrollbar and canvas
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-        
-        # Configure the canvas to update the scrollregion when the frame changes size
-        self.frame.bind("<Configure>", self._on_frame_configure)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.frame = ttk.Frame(parent.notebook, padding="10")
         
         # State variables
         self.current_image_index = 0
@@ -51,15 +35,6 @@ class GalleryTab:
         # Create the UI components
         self._create_control_section()
         self._create_gallery_section()
-    
-    def _on_frame_configure(self, event):
-        """Update the scrollregion when the frame size changes."""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-    
-    def _on_canvas_configure(self, event):
-        """Resize the frame when the canvas is resized."""
-        width = event.width
-        self.canvas.itemconfig(self.canvas_window, width=width)
     
     def _create_control_section(self):
         """Create the control panel for the gallery view."""

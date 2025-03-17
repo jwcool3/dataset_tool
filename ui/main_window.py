@@ -104,7 +104,9 @@ class MainWindow:
         self.organize_files = tk.BooleanVar(value=False)
         self.convert_to_video = tk.BooleanVar(value=False)
         self.square_pad_images = tk.BooleanVar(value=False)
+        self.reinsert_crops_option = tk.BooleanVar(value=False)  # Make sure this exists
         self.debug_mode = tk.BooleanVar(value=False)
+
 
         # Crop reinsertion options
         self.reinsert_crops_option = tk.BooleanVar(value=False)
@@ -122,6 +124,7 @@ class MainWindow:
         self.mask_expand_iterations = tk.IntVar(value=5)
         self.mask_expand_kernel_size = tk.IntVar(value=3)
         self.mask_expand_preserve_structure = tk.BooleanVar(value=True)
+
 
         # Preview image storage
         self.preview_image = None
@@ -434,8 +437,7 @@ class MainWindow:
             from processors.file_organizer import FileOrganizer
             from processors.video_converter import VideoConverter
             from processors.square_padder import SquarePadder
-            from processors.crop_reinserter import CropReinserter
-            from processors.mask_expander import MaskExpander  # Add new import
+            from processors.crop_reinserter import CropReinserter  # Add new import
             
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
@@ -444,8 +446,10 @@ class MainWindow:
             file_organizer = FileOrganizer(self)
             video_converter = VideoConverter(self)
             square_padder = SquarePadder(self)
-            crop_reinserter = CropReinserter(self)
-            mask_expander = MaskExpander(self)  # Add new instance
+            crop_reinserter = CropReinserter(self)  # Add new instance
+                        # Initialize processor instances
+            mask_expander = MaskExpander(self)
+
 
             # Define pipeline steps in order
             pipeline_steps = []
@@ -453,8 +457,6 @@ class MainWindow:
                 pipeline_steps.append(("extract_frames", frame_extractor.extract_frames))
             if self.crop_mask_regions.get():
                 pipeline_steps.append(("crop_mask_regions", mask_processor.process_masks))
-            if self.expand_masks.get():
-                pipeline_steps.append(("expand_masks", mask_expander.expand_masks))  # Add new step
             if self.square_pad_images.get():
                 pipeline_steps.append(("square_pad_images", square_padder.add_square_padding))
             if self.resize_images.get():
@@ -464,8 +466,9 @@ class MainWindow:
             if self.convert_to_video.get():
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
             if self.reinsert_crops_option.get():
-                pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))
-                
+                pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))  # Add new step
+            if self.expand_masks.get():
+                pipeline_steps.append(("expand_masks", mask_expander.expand_masks))
             # Calculate progress per step
             if pipeline_steps:
                 progress_per_step = 100 / len(pipeline_steps)
@@ -481,8 +484,8 @@ class MainWindow:
                 "resized": os.path.join(self.output_dir.get(), "resized"),
                 "organized": os.path.join(self.output_dir.get(), "organized"),
                 "videos": os.path.join(self.output_dir.get(), "videos"),
-                "reinserted": os.path.join(self.output_dir.get(), "reinserted"),
-                "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks")  # Add new directory
+                "reinserted": os.path.join(self.output_dir.get(), "reinserted"),  # Add new directory
+                "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks")
             }
             
             # Keep track of which directory to use as input for each step
