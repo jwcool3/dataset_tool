@@ -40,6 +40,10 @@ class MaskExpander:
         iterations = self.app.mask_expand_iterations.get()
         kernel_size = self.app.mask_expand_kernel_size.get()
         
+        # Log start of processing
+        self.app.status_label.config(text=f"Starting mask expansion with iterations={iterations}, kernel_size={kernel_size}...")
+        print(f"Starting mask expansion from {input_dir} to {expanded_output_dir}")
+        
         # Determine if we're processing videos or images
         video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv']
         image_extensions = ['.png', '.jpg', '.jpeg']
@@ -50,6 +54,7 @@ class MaskExpander:
         # First check for videos
         for ext in video_extensions:
             mask_files.extend(glob.glob(os.path.join(input_dir, f"*{ext}")))
+            
             # Also check in masks subdirectory if it exists
             masks_dir = os.path.join(input_dir, "masks")
             if os.path.isdir(masks_dir):
@@ -58,6 +63,7 @@ class MaskExpander:
         # Then check for images
         for ext in image_extensions:
             mask_files.extend(glob.glob(os.path.join(input_dir, f"*{ext}")))
+            
             # Also check in masks subdirectory if it exists
             masks_dir = os.path.join(input_dir, "masks")
             if os.path.isdir(masks_dir):
@@ -72,14 +78,13 @@ class MaskExpander:
                         mask_files.extend(glob.glob(os.path.join(mask_dir_path, f"*{ext}")))
         
         if not mask_files:
-            self.app.status_label.config(text="No mask files found.")
+            self.app.status_label.config(text="No mask files found to expand.")
             return False
         
-        # Create subdirectory for images if needed
+        # Create subdirectory for images and videos
         images_output_dir = os.path.join(expanded_output_dir, "images")
         os.makedirs(images_output_dir, exist_ok=True)
         
-        # Create subdirectory for videos if needed
         videos_output_dir = os.path.join(expanded_output_dir, "videos")
         os.makedirs(videos_output_dir, exist_ok=True)
         
@@ -88,6 +93,9 @@ class MaskExpander:
         processed_count = 0
         video_count = 0
         image_count = 0
+        
+        self.app.status_label.config(text=f"Found {total_files} mask files to process...")
+        print(f"Found {total_files} mask files to process")
         
         # Create kernel for dilation
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
@@ -116,7 +124,7 @@ class MaskExpander:
                 
                 if success:
                     processed_count += 1
-                
+            
             except Exception as e:
                 self.app.status_label.config(text=f"Error processing {os.path.basename(mask_path)}: {str(e)}")
                 print(f"Error in expand_masks: {str(e)}")
@@ -130,7 +138,7 @@ class MaskExpander:
             
             # Update status periodically
             if idx % 5 == 0 or idx == total_files - 1:
-                self.app.status_label.config(text=f"Processed {idx+1}/{total_files} mask files")
+                self.app.status_label.config(text=f"Processed {idx+1}/{total_files} mask files ({image_count} images, {video_count} videos)")
                 self.app.root.update_idletasks()
         
         # Copy directory structure if requested
@@ -138,7 +146,7 @@ class MaskExpander:
             self._copy_directory_structure(input_dir, expanded_output_dir)
         
         # Final status update
-        self.app.status_label.config(text=f"Mask expansion completed. Processed {processed_count} files ({image_count} images, {video_count} videos).")
+        self.app.status_label.config(text=f"Mask expansion completed: {processed_count} files processed ({image_count} images, {video_count} videos)")
         self.app.progress_bar['value'] = 100
         return processed_count > 0
     

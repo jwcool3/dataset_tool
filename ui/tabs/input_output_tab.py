@@ -90,35 +90,24 @@ class InputOutputTab:
         processing_options = [
             ("Extract frames from videos", self.parent.extract_frames),
             ("Detect and crop mask regions", self.parent.crop_mask_regions),
-            ("Expand mask regions", self.parent.expand_masks),  # Make sure this line is included
+            ("Expand mask regions", self.parent.expand_masks),  # Ensure this exists
             ("Resize images and masks", self.parent.resize_images),
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
             ("Reinsert cropped images", self.parent.reinsert_crops_option)
-        ]   
+        ]
         
-        # Use separate loops for each row to ensure predictable layout
-        # First row
-        for i in range(min(3, len(processing_options))):
-            text, var = processing_options[i]
-            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
-                column=i, row=0, sticky=tk.W, padx=10, pady=2
-            )
-        
-        # Second row
-        for i in range(3, min(6, len(processing_options))):
-            text, var = processing_options[i]
-            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
-                column=i-3, row=1, sticky=tk.W, padx=10, pady=2
-            )
-        
-        # Third row
-        for i in range(6, min(9, len(processing_options))):
-            text, var = processing_options[i]
-            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
-                column=i-6, row=2, sticky=tk.W, padx=10, pady=2
-            )
+        # Use a cleaner approach with fewer loops
+        for i, (text, var) in enumerate(processing_options):
+            row = i % 3  # 3 options per row
+            col = i // 3
+            checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
+            checkbutton.grid(column=col, row=row, sticky=tk.W, padx=10, pady=5)
+            
+            # Highlight the mask expansion option to make it more noticeable
+            if text == "Expand mask regions":
+                checkbutton.configure(style="Accent.TCheckbutton")
         
         # Debug mode checkbox (separate for visibility)
         ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
@@ -126,12 +115,14 @@ class InputOutputTab:
             column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
         
-        # Add section for pipeline help/hint
+        # Add hint about standalone processing
         hint_frame = ttk.Frame(self.frame, padding="10")
         hint_frame.pack(fill=tk.X, pady=5)
         
-        hint_text = "Hint: The processing pipeline executes steps in the order shown above. " + \
-                "Output from each step will be used as input for the next step."
+        hint_text = ("Hint: The processing pipeline executes steps in the order shown above. " + 
+                    "Each step can be run individually or as part of a sequence. " +
+                    "For example, you can select only 'Expand mask regions' to process just the masks.")
+        
         hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
         hint_label.pack(anchor=tk.W)
     # ...existing code...

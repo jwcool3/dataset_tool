@@ -408,6 +408,8 @@ class MainWindow:
             steps_selected.append(f"- Extract frames (at {self.frame_rate.get()} fps)")
         if self.crop_mask_regions.get():
             steps_selected.append(f"- Crop mask regions (padding: {self.fill_ratio.get()}%)")
+        if self.expand_masks.get():
+            steps_selected.append(f"- Expand mask regions (iterations: {self.mask_expand_iterations.get()}, kernel size: {self.mask_expand_kernel_size.get()})")
         if self.square_pad_images.get():
             steps_selected.append(f"- Add padding to make images square (color: {self.padding_color.get()})")
         if self.resize_images.get():
@@ -422,12 +424,17 @@ class MainWindow:
         if self.reinsert_crops_option.get():
             steps_selected.append(f"- Reinsert cropped images (source dir: {os.path.basename(self.source_images_dir.get())})")
         
-        confirmation_message = f"Ready to process with the following steps:\n\n" + "\n".join(steps_selected)
-        confirmation_message += f"\n\nInput: {self.input_dir.get()}\nOutput: {self.output_dir.get()}"
+        # Check if only mask expansion is selected
+        if len(steps_selected) == 1 and self.expand_masks.get():
+            confirmation_message = f"You are running Mask Expansion as a standalone process.\n\n"
+            confirmation_message += steps_selected[0] + "\n\n"
+            confirmation_message += f"Input: {self.input_dir.get()}\nOutput: {os.path.join(self.output_dir.get(), 'expanded_masks')}"
+        else:
+            confirmation_message = f"Ready to process with the following steps:\n\n" + "\n".join(steps_selected)
+            confirmation_message += f"\n\nInput: {self.input_dir.get()}\nOutput: {self.output_dir.get()}"
         
         return messagebox.askyesno("Confirm Processing", confirmation_message)
     
-    # ...existing code...
     def _process_data_thread(self):
         """Processing thread implementation."""
         try:
@@ -439,19 +446,19 @@ class MainWindow:
             from processors.video_converter import VideoConverter
             from processors.square_padder import SquarePadder
             from processors.crop_reinserter import CropReinserter
-            from processors.mask_expander import MaskExpander  # Add new import
+            from processors.mask_expander import MaskExpander
             
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
             mask_processor = MaskProcessor(self)
-            mask_expander = MaskExpander(self)  # Initialize early
             image_resizer = ImageResizer(self)
             file_organizer = FileOrganizer(self)
             video_converter = VideoConverter(self)
             square_padder = SquarePadder(self)
             crop_reinserter = CropReinserter(self)
-
-            # Define pipeline steps in order (make mask_expand a high priority)
+            mask_expander = MaskExpander(self)
+            
+            # Define pipeline steps in order
             pipeline_steps = []
             if self.extract_frames.get():
                 pipeline_steps.append(("extract_frames", frame_extractor.extract_frames))
@@ -473,25 +480,17 @@ class MainWindow:
             # Print the pipeline for debugging
             print("Processing pipeline steps:", [step[0] for step in pipeline_steps])
             
-            # Rest of the method remains the same...
-    # ...existing code...
-            # Calculate progress per step
-            if pipeline_steps:
-                progress_per_step = 100 / len(pipeline_steps)
-            else:
-                progress_per_step = 0
-                
             # Dictionary to track all directories created during processing
             output_directories = {
                 "original": self.input_dir.get(),
                 "frames": os.path.join(self.output_dir.get(), "frames"),
                 "cropped": os.path.join(self.output_dir.get(), "cropped"),
+                "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks"),
                 "square_padded": os.path.join(self.output_dir.get(), "square_padded"),
                 "resized": os.path.join(self.output_dir.get(), "resized"),
                 "organized": os.path.join(self.output_dir.get(), "organized"),
                 "videos": os.path.join(self.output_dir.get(), "videos"),
-                "reinserted": os.path.join(self.output_dir.get(), "reinserted"),  # Add new directory
-                "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks")
+                "reinserted": os.path.join(self.output_dir.get(), "reinserted")
             }
             
             # Keep track of which directory to use as input for each step
@@ -499,6 +498,7 @@ class MainWindow:
             
             # Processing progress tracking
             current_progress = 0
+            progress_per_step = 100 / len(pipeline_steps) if pipeline_steps else 0
             
             # Execute each step in the pipeline
             for step_index, (step_name, step_func) in enumerate(pipeline_steps):
@@ -506,11 +506,17 @@ class MainWindow:
                     break
                 
                 self.status_label.config(text=f"Starting step {step_index+1}/{len(pipeline_steps)}: {step_name}")
+                print(f"Processing: {step_name} using input directory: {current_input}")
                 self.root.update_idletasks()
                 
                 try:
-                    # Execute the current step
-                    success = step_func(current_input, self.output_dir.get())
+                    # Special handling for expand_masks if it's the only step selected
+                    if step_name == "expand_masks" and len(pipeline_steps) == 1:
+                        self.status_label.config(text="Processing mask expansion as a standalone step...")
+                        success = step_func(current_input, self.output_dir.get())
+                    else:
+                        # Execute the current step normally
+                        success = step_func(current_input, self.output_dir.get())
                     
                     # If successful, update the input directory for the next step
                     if success:
@@ -519,6 +525,8 @@ class MainWindow:
                             current_input = output_directories["frames"]
                         elif step_name == "crop_mask_regions" and os.path.exists(output_directories["cropped"]):
                             current_input = output_directories["cropped"]
+                        elif step_name == "expand_masks" and os.path.exists(output_directories["expanded_masks"]):
+                            current_input = output_directories["expanded_masks"]
                         elif step_name == "square_pad_images" and os.path.exists(output_directories["square_padded"]):
                             current_input = output_directories["square_padded"]
                         elif step_name == "resize_images" and os.path.exists(output_directories["resized"]):
@@ -526,16 +534,13 @@ class MainWindow:
                         elif step_name == "organize_files" and os.path.exists(output_directories["organized"]):
                             current_input = output_directories["organized"]
                         
-                        self.status_label.config(text=f"Completed step: {step_name}. Using output directory for next step.")
+                        self.status_label.config(text=f"Completed step: {step_name}. Using {current_input} for next step.")
                     else:
-                        # If the step failed, continue with the same input directory
                         self.status_label.config(text=f"Warning: Step {step_name} did not produce expected output. Continuing with same input.")
-                
+                    
                 except Exception as e:
                     error_msg = f"Error during {step_name} step: {str(e)}"
                     self.status_label.config(text=error_msg)
-                    from tkinter import messagebox
-                    messagebox.showerror("Processing Error", error_msg)
                     import traceback
                     print(error_msg)
                     print(traceback.format_exc())
@@ -545,19 +550,18 @@ class MainWindow:
                 self.progress_bar['value'] = min(current_progress, 100)
                 self.root.update_idletasks()
             
-            # Processing completed successfully
-            if self.processing:  # Only show success if not cancelled
+            # Processing completed
+            if self.processing:
                 self.status_label.config(text="Processing completed successfully.")
                 from tkinter import messagebox
-                messagebox.showinfo("Success", "Dataset preparation completed successfully.")
+                messagebox.showinfo("Success", "Processing completed successfully.")
         
         except Exception as e:
-            self.status_label.config(text=f"Error: {str(e)}")
-            from tkinter import messagebox
-            messagebox.showerror("Error", f"An error occurred: {str(e)}")
-            # Log the full error with traceback
+            # Handle any unexpected errors
+            error_msg = f"Unexpected error: {str(e)}"
+            self.status_label.config(text=error_msg)
             import traceback
-            print(f"Error during processing: {str(e)}")
+            print(error_msg)
             print(traceback.format_exc())
         
         finally:
