@@ -9,9 +9,6 @@ from tkinter import ttk, filedialog
 class ConfigTab:
     """Tab for configuring processing options."""
     
-class ConfigTab:
-    """Tab for configuring processing options."""
-    
     def __init__(self, parent):
         """
         Initialize the configuration tab.
@@ -19,9 +16,6 @@ class ConfigTab:
         Args:
             parent: Parent window containing shared variables and functions
         """
-        # Store the parent reference
-        self.parent = parent
-        
         # Create the main frame that will be added to the notebook
         self.frame = ttk.Frame(parent.notebook)
         
@@ -59,7 +53,7 @@ class ConfigTab:
         self._create_square_padding()
         self._create_portrait_crop()
         self._create_crop_reinsertion()
-        self._create_mask_expand_section()
+        self._create_mask_expand_section()  # Make sure this is called
     
     def _on_frame_configure(self, event):
         """Update the scrollregion when the frame size changes."""
