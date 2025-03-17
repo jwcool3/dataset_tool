@@ -81,69 +81,11 @@ class InputOutputTab:
                                     command=self.parent.cancel_processing, state=tk.DISABLED)
         self.cancel_button.grid(column=4, row=1, padx=5, pady=5)
 # ...existing code...
-    def _create_pipeline_section(self):
-        """Create the processing pipeline section with checkboxes."""
-        pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
-        pipeline_frame.pack(fill=tk.X, pady=5)
-        
-        # Processing options with improved layout
-        processing_options = [
-            ("Extract frames from videos", self.parent.extract_frames),
-            ("Detect and crop mask regions", self.parent.crop_mask_regions),
-            ("Expand mask regions", self.parent.expand_masks),  # Ensure this exists
-            ("Resize images and masks", self.parent.resize_images),
-            ("Organize and rename files", self.parent.organize_files),
-            ("Convert images to video", self.parent.convert_to_video),
-            ("Add padding to make images square", self.parent.square_pad_images),
-            ("Reinsert cropped images", self.parent.reinsert_crops_option)
-        ]
-        
-        # Use a cleaner approach with fewer loops
-        for i, (text, var) in enumerate(processing_options):
-            row = i % 3  # 3 options per row
-            col = i // 3
-            checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
-            checkbutton.grid(column=col, row=row, sticky=tk.W, padx=10, pady=5)
-            
-            # Highlight the mask expansion option to make it more noticeable
-            if text == "Expand mask regions":
-                checkbutton.configure(style="Accent.TCheckbutton")
-        
-        # Debug mode checkbox (separate for visibility)
-        ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
-                    variable=self.parent.debug_mode).grid(
-            column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
-        )
-        
-        # Add hint about standalone processing
-        hint_frame = ttk.Frame(self.frame, padding="10")
-        hint_frame.pack(fill=tk.X, pady=5)
-        
-        hint_text = ("Hint: The processing pipeline executes steps in the order shown above. " + 
-                    "Each step can be run individually or as part of a sequence. " +
-                    "For example, you can select only 'Expand mask regions' to process just the masks.")
-        
-        hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
-        hint_label.pack(anchor=tk.W)
+
     # ...existing code...
     
-        # Add command to show/hide reinsertion note when the checkbox is toggled
-        def on_reinsertion_toggle():
-            if self.parent.reinsert_crops_option.get():
-                self.reinsertion_note_frame.grid()  # Show the note
-            else:
-                self.reinsertion_note_frame.grid_remove()  # Hide the note
-        
-        # Create checkboxes for each option
-        for i, (text, var) in enumerate(processing_options):
-            row = i % 3
-            col = i // 3
-            cb = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
-            cb.grid(column=col, row=row, sticky=tk.W, padx=10, pady=2)
-            
-            # Add special handling for reinsertion option
-            if text == "Reinsert cropped images":
-                cb.config(command=on_reinsertion_toggle)
+
+
 
     
     def _browse_input_dir(self):
@@ -260,30 +202,41 @@ class InputOutputTab:
         processing_options = [
             ("Extract frames from videos", self.parent.extract_frames),
             ("Detect and crop mask regions", self.parent.crop_mask_regions),
+            ("Expand mask regions", self.parent.expand_masks),  # Ensure this exists
             ("Resize images and masks", self.parent.resize_images),
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
-            ("Reinsert cropped images", self.parent.reinsert_crops_option)  # New option
+            ("Reinsert cropped images", self.parent.reinsert_crops_option)
         ]
         
-        # Calculate layout - 3 rows, dynamic columns
-        rows = 3
-        cols = (len(processing_options) + rows - 1) // rows  # Ceiling division
-        
-        # Create grid of options
+        # Use a cleaner approach with fewer loops
         for i, (text, var) in enumerate(processing_options):
-            row = i % rows
-            col = i // rows
-            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
-                column=col, row=row, sticky=tk.W, padx=10, pady=2
-            )
+            row = i % 3  # 3 options per row
+            col = i // 3
+            checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
+            checkbutton.grid(column=col, row=row, sticky=tk.W, padx=10, pady=5)
+            
+            # Highlight the mask expansion option to make it more noticeable
+            if text == "Expand mask regions":
+                checkbutton.configure(style="Accent.TCheckbutton")
         
         # Debug mode checkbox (separate for visibility)
         ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
                     variable=self.parent.debug_mode).grid(
-            column=0, row=rows, columnspan=cols, sticky=tk.W, padx=10, pady=5
+            column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
+        
+        # Add hint about standalone processing
+        hint_frame = ttk.Frame(self.frame, padding="10")
+        hint_frame.pack(fill=tk.X, pady=5)
+        
+        hint_text = ("Hint: The processing pipeline executes steps in the order shown above. " + 
+                    "Each step can be run individually or as part of a sequence. " +
+                    "For example, you can select only 'Expand mask regions' to process just the masks.")
+        
+        hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
+        hint_label.pack(anchor=tk.W)
 
         def on_reinsert_toggle():
             """Called when the reinsertion option is toggled"""
