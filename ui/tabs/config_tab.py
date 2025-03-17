@@ -16,24 +16,23 @@ class ConfigTab:
         Args:
             parent: Parent window containing shared variables and functions
         """
-        # Create the main frame that will be added to the notebook
-        self.frame = ttk.Frame(parent.notebook)
+        self.parent = parent
         
-        # Create a canvas and scrollbar inside this main frame
-        self.canvas = tk.Canvas(self.frame)
-        self.scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
+        # Create a canvas with scrollbar for scrolling
+        self.canvas = tk.Canvas(parent.notebook)
+        self.scrollbar = ttk.Scrollbar(parent.notebook, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
-        # Pack the scrollbar and canvas within the main frame
+        # Create a frame inside the canvas that will contain all config options
+        self.frame = ttk.Frame(self.canvas, padding="10")
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
+        
+        # Pack the scrollbar and canvas
         self.scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Create a content frame inside the canvas for actual content
-        self.content_frame = ttk.Frame(self.canvas, padding="10")
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
-        
-        # Configure the canvas to update the scrollregion
-        self.content_frame.bind("<Configure>", self._on_frame_configure)
+        # Configure the canvas to update the scrollregion when the frame changes size
+        self.frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         
         # Initialize attributes that will be set later
