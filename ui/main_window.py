@@ -61,6 +61,8 @@ class MainWindow:
         self._init_outlier_detection()
 
 
+# Update this method in ui/main_window.py
+
     def _init_variables(self):
         """Initialize all Tkinter variables used in the application."""
         # Directory paths
@@ -107,9 +109,10 @@ class MainWindow:
         self.reinsert_crops_option = tk.BooleanVar(value=False)  # Make sure this exists
         self.debug_mode = tk.BooleanVar(value=False)
 
+        # Make sure expand_masks variable is defined here
+        self.expand_masks = tk.BooleanVar(value=False)
 
         # Crop reinsertion options
-        self.reinsert_crops_option = tk.BooleanVar(value=False)
         self.source_images_dir = tk.StringVar()
         self.reinsert_match_method = tk.StringVar(value="name_prefix")
         self.reinsert_padding = tk.IntVar(value=10)  # Default padding percent
@@ -120,11 +123,9 @@ class MainWindow:
         self.reinsert_height = tk.IntVar(value=0)
 
         # Mask expansion options
-        self.expand_masks = tk.BooleanVar(value=False)
         self.mask_expand_iterations = tk.IntVar(value=5)
         self.mask_expand_kernel_size = tk.IntVar(value=3)
         self.mask_expand_preserve_structure = tk.BooleanVar(value=True)
-
 
         # Preview image storage
         self.preview_image = None
