@@ -19,25 +19,25 @@ class InputOutputTab:
         """
         self.parent = parent
         
-        # Create a main frame that will be added to the notebook
-        self.frame = ttk.Frame(parent.notebook, padding="10")
-        
-        # Create a canvas with scrollbar inside the main frame
-        self.canvas = tk.Canvas(self.frame)
-        self.scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
+        # Create a canvas with scrollbar for scrolling
+        self.canvas = tk.Canvas(parent.notebook)
+        self.scrollbar = ttk.Scrollbar(parent.notebook, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
-        # Create a frame inside the canvas for content
-        self.content_frame = ttk.Frame(self.canvas)
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
+        # Create a frame inside the canvas
+        self.frame = ttk.Frame(self.canvas, padding="10")
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.frame, anchor="nw")
         
-        # Pack the scrollbar and canvas within the main frame
+        # Pack the scrollbar and canvas
         self.scrollbar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Configure the canvas to update the scrollregion
-        self.content_frame.bind("<Configure>", self._on_frame_configure)
+        # Configure the canvas to update the scrollregion when the frame changes size
+        self.frame.bind("<Configure>", self._on_frame_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+        
+        # Bind mousewheel scrolling
+        self._bind_mousewheel(self.canvas)
         
         # Create the UI components
         self._create_directory_section()
