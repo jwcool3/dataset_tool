@@ -14,6 +14,7 @@ from ui.tabs.preview_tab import PreviewTab
 from ui.tabs.gallery_tab import GalleryTab 
 from ui.dialogs import AboutDialog, UsageGuideDialog
 from utils.config_manager import ConfigManager
+from processors.mask_expander import MaskExpander
 
 class MainWindow:
     """Main window class that sets up the UI and connects functionality."""
@@ -117,6 +118,13 @@ class MainWindow:
         self.reinsert_y = tk.IntVar(value=0)
         self.reinsert_width = tk.IntVar(value=0)
         self.reinsert_height = tk.IntVar(value=0)
+
+        # Mask expansion options
+        self.expand_masks = tk.BooleanVar(value=False)
+        self.mask_expand_iterations = tk.IntVar(value=5)
+        self.mask_expand_kernel_size = tk.IntVar(value=3)
+        self.mask_expand_preserve_structure = tk.BooleanVar(value=True)
+
 
         # Preview image storage
         self.preview_image = None
@@ -439,7 +447,10 @@ class MainWindow:
             video_converter = VideoConverter(self)
             square_padder = SquarePadder(self)
             crop_reinserter = CropReinserter(self)  # Add new instance
-            
+                        # Initialize processor instances
+            mask_expander = MaskExpander(self)
+
+
             # Define pipeline steps in order
             pipeline_steps = []
             if self.extract_frames.get():
@@ -456,6 +467,8 @@ class MainWindow:
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
             if self.reinsert_crops_option.get():
                 pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))  # Add new step
+            if self.expand_masks.get():
+                pipeline_steps.append(("expand_masks", mask_expander.expand_masks))
             # Calculate progress per step
             if pipeline_steps:
                 progress_per_step = 100 / len(pipeline_steps)
@@ -471,7 +484,8 @@ class MainWindow:
                 "resized": os.path.join(self.output_dir.get(), "resized"),
                 "organized": os.path.join(self.output_dir.get(), "organized"),
                 "videos": os.path.join(self.output_dir.get(), "videos"),
-                "reinserted": os.path.join(self.output_dir.get(), "reinserted")  # Add new directory
+                "reinserted": os.path.join(self.output_dir.get(), "reinserted"),  # Add new directory
+                "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks")
             }
             
             # Keep track of which directory to use as input for each step

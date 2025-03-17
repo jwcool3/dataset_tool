@@ -135,6 +135,50 @@ class ConfigTab:
         # Initialize all UI states - do this at the end after all UI components are created
         self.root_after_id = self.frame.after(100, self._initialize_ui_states)
     
+
+    def _create_mask_expand_section(self):
+        """Create the mask expansion options section."""
+        expand_frame = ttk.LabelFrame(self.frame, text="Mask Expansion Options", padding="10")
+        expand_frame.pack(fill=tk.X, pady=5)
+        
+        # Iterations control
+        ttk.Label(expand_frame, text="Dilation Iterations:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
+        iterations_spinbox = ttk.Spinbox(
+            expand_frame, 
+            from_=1, 
+            to=50, 
+            increment=1, 
+            textvariable=self.parent.mask_expand_iterations, 
+            width=5
+        )
+        iterations_spinbox.grid(column=1, row=0, padx=5, sticky=tk.W)
+        
+        # Kernel size control
+        ttk.Label(expand_frame, text="Kernel Size:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+        kernel_spinbox = ttk.Spinbox(
+            expand_frame, 
+            from_=3, 
+            to=21, 
+            increment=2,  # Only odd numbers make sense for kernel size
+            textvariable=self.parent.mask_expand_kernel_size, 
+            width=5
+        )
+        kernel_spinbox.grid(column=1, row=1, padx=5, sticky=tk.W)
+        
+        # Preserve directory structure option
+        ttk.Checkbutton(
+            expand_frame, 
+            text="Preserve directory structure", 
+            variable=self.parent.mask_expand_preserve_structure
+        ).grid(column=0, row=2, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Help text
+        help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
+                    "Kernel size controls the shape of the expansion (odd numbers only).")
+        ttk.Label(expand_frame, text=help_text, wraplength=600).grid(
+            column=0, row=3, columnspan=3, sticky=tk.W, padx=5, pady=5)
+
+
     def _create_conditional_resize(self):
         """Create the conditional resize options section."""
         resize_frame = ttk.LabelFrame(self.frame, text="Conditional Resize Options", padding="10")

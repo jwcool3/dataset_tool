@@ -86,13 +86,16 @@ class InputOutputTab:
         pipeline_frame.pack(fill=tk.X, pady=5)
         
         # Processing options with improved layout
+        # Update the processing_options list in the _create_pipeline_section method
         processing_options = [
             ("Extract frames from videos", self.parent.extract_frames),
             ("Detect and crop mask regions", self.parent.crop_mask_regions),
+            ("Expand mask regions", self.parent.expand_masks),  # Add this line
             ("Resize images and masks", self.parent.resize_images),
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
-            ("Add padding to make images square", self.parent.square_pad_images)
+            ("Add padding to make images square", self.parent.square_pad_images),
+            ("Reinsert cropped images", self.parent.reinsert_crops_option)
         ]
         
         # Create 2 columns of options
