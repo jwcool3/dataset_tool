@@ -427,6 +427,7 @@ class MainWindow:
         
         return messagebox.askyesno("Confirm Processing", confirmation_message)
     
+    # ...existing code...
     def _process_data_thread(self):
         """Processing thread implementation."""
         try:
@@ -437,26 +438,27 @@ class MainWindow:
             from processors.file_organizer import FileOrganizer
             from processors.video_converter import VideoConverter
             from processors.square_padder import SquarePadder
-            from processors.crop_reinserter import CropReinserter  # Add new import
+            from processors.crop_reinserter import CropReinserter
+            from processors.mask_expander import MaskExpander  # Add new import
             
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
             mask_processor = MaskProcessor(self)
+            mask_expander = MaskExpander(self)  # Initialize early
             image_resizer = ImageResizer(self)
             file_organizer = FileOrganizer(self)
             video_converter = VideoConverter(self)
             square_padder = SquarePadder(self)
-            crop_reinserter = CropReinserter(self)  # Add new instance
-                        # Initialize processor instances
-            mask_expander = MaskExpander(self)
+            crop_reinserter = CropReinserter(self)
 
-
-            # Define pipeline steps in order
+            # Define pipeline steps in order (make mask_expand a high priority)
             pipeline_steps = []
             if self.extract_frames.get():
                 pipeline_steps.append(("extract_frames", frame_extractor.extract_frames))
             if self.crop_mask_regions.get():
                 pipeline_steps.append(("crop_mask_regions", mask_processor.process_masks))
+            if self.expand_masks.get():
+                pipeline_steps.append(("expand_masks", mask_expander.expand_masks))
             if self.square_pad_images.get():
                 pipeline_steps.append(("square_pad_images", square_padder.add_square_padding))
             if self.resize_images.get():
@@ -466,9 +468,13 @@ class MainWindow:
             if self.convert_to_video.get():
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
             if self.reinsert_crops_option.get():
-                pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))  # Add new step
-            if self.expand_masks.get():
-                pipeline_steps.append(("expand_masks", mask_expander.expand_masks))
+                pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))
+            
+            # Print the pipeline for debugging
+            print("Processing pipeline steps:", [step[0] for step in pipeline_steps])
+            
+            # Rest of the method remains the same...
+    # ...existing code...
             # Calculate progress per step
             if pipeline_steps:
                 progress_per_step = 100 / len(pipeline_steps)

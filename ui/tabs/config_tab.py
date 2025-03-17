@@ -9,6 +9,7 @@ from tkinter import ttk
 class ConfigTab:
     """Tab for configuring processing options."""
     
+# ...existing code...
     def __init__(self, parent):
         """
         Initialize the configuration tab.
@@ -16,8 +17,28 @@ class ConfigTab:
         Args:
             parent: Parent window containing shared variables and functions
         """
+        # Store the parent reference
         self.parent = parent
-        self.frame = ttk.Frame(parent.notebook, padding="10")
+        
+        # Create the main frame that will be added to the notebook
+        self.frame = ttk.Frame(parent.notebook)
+        
+        # Create a canvas and scrollbar inside this main frame
+        self.canvas = tk.Canvas(self.frame)
+        self.scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        # Pack the scrollbar and canvas within the main frame
+        self.scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        
+        # Create a content frame inside the canvas for actual content
+        self.content_frame = ttk.Frame(self.canvas, padding="10")
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
+        
+        # Configure the canvas to update the scrollregion
+        self.content_frame.bind("<Configure>", self._on_frame_configure)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
         
         # Initialize attributes that will be set later
         self.width_spinbox = None
@@ -32,10 +53,18 @@ class ConfigTab:
         # Create the UI components for each configuration section
         self._create_general_config()
         self._create_mask_video_config()
+        
+        # Add this mask expansion section early in the tab order for visibility
+        self._create_mask_expand_section()
+        
         self._create_conditional_resize()
         self._create_square_padding()
         self._create_portrait_crop()
-        self._create_crop_reinsertion()  # Add this line to create the reinsertion section
+        self._create_crop_reinsertion()
+        
+        # Bind mousewheel scrolling for better usability
+        self._bind_mousewheel(self.canvas)
+    # ...existing code...
     
     def _create_general_config(self):
         """Create the general configuration options section."""
@@ -136,13 +165,36 @@ class ConfigTab:
         self.root_after_id = self.frame.after(100, self._initialize_ui_states)
     
 
+    def _on_frame_configure(self, event):
+        """Update the scrollregion of the canvas when the frame is resized."""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    def _on_canvas_configure(self, event):
+        """Update the canvas window to match the frame size."""
+        self.canvas.itemconfigure(self.canvas_window, width=event.width)
+    def _bind_mousewheel(self, widget):
+        """Bind mousewheel scrolling to the canvas."""
+        widget.bind_all("<MouseWheel>", lambda event: widget.yview_scroll(int(-1*(event.delta/120)), "units"))
+        widget.bind_all("<Button-4>", lambda event: widget.yview_scroll(-1, "units"))
+        widget.bind_all("<Button-5>", lambda event: widget.yview_scroll(1, "units"))
+
+
+
+
+# ...existing code...
     def _create_mask_expand_section(self):
         """Create the mask expansion options section."""
-        expand_frame = ttk.LabelFrame(self.frame, text="Mask Expansion Options", padding="10")
+        print("Creating mask expansion section")  # Debug print
+        
+        # Important: Use content_frame instead of frame for consistent layout
+        expand_frame = ttk.LabelFrame(self.content_frame, text="Mask Expansion Options", padding="10")
         expand_frame.pack(fill=tk.X, pady=5)
         
+        # Make the label more eye-catching
+        header_label = ttk.Label(expand_frame, text="Mask Expansion Settings", font=("Helvetica", 10, "bold"))
+        header_label.grid(column=0, row=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 10))
+        
         # Iterations control
-        ttk.Label(expand_frame, text="Dilation Iterations:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(expand_frame, text="Dilation Iterations:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
         iterations_spinbox = ttk.Spinbox(
             expand_frame, 
             from_=1, 
@@ -151,10 +203,10 @@ class ConfigTab:
             textvariable=self.parent.mask_expand_iterations, 
             width=5
         )
-        iterations_spinbox.grid(column=1, row=0, padx=5, sticky=tk.W)
+        iterations_spinbox.grid(column=1, row=1, padx=5, sticky=tk.W)
         
         # Kernel size control
-        ttk.Label(expand_frame, text="Kernel Size:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(expand_frame, text="Kernel Size:").grid(column=0, row=2, sticky=tk.W, padx=5, pady=5)
         kernel_spinbox = ttk.Spinbox(
             expand_frame, 
             from_=3, 
@@ -163,22 +215,23 @@ class ConfigTab:
             textvariable=self.parent.mask_expand_kernel_size, 
             width=5
         )
-        kernel_spinbox.grid(column=1, row=1, padx=5, sticky=tk.W)
+        kernel_spinbox.grid(column=1, row=2, padx=5, sticky=tk.W)
         
         # Preserve directory structure option
         ttk.Checkbutton(
             expand_frame, 
             text="Preserve directory structure", 
             variable=self.parent.mask_expand_preserve_structure
-        ).grid(column=0, row=2, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        ).grid(column=0, row=3, columnspan=2, sticky=tk.W, padx=5, pady=5)
         
-        # Help text
+        # Help text with more visible styling
+        help_frame = ttk.Frame(expand_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
+        help_frame.grid(column=0, row=4, columnspan=3, sticky=tk.W+tk.E, padx=5, pady=10)
+        
         help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
                     "Kernel size controls the shape of the expansion (odd numbers only).")
-        ttk.Label(expand_frame, text=help_text, wraplength=600).grid(
-            column=0, row=3, columnspan=3, sticky=tk.W, padx=5, pady=5)
-
-
+        ttk.Label(help_frame, text=help_text, wraplength=600).pack(padx=5, pady=5)
+    # ...existing code...
     def _create_conditional_resize(self):
         """Create the conditional resize options section."""
         resize_frame = ttk.LabelFrame(self.frame, text="Conditional Resize Options", padding="10")

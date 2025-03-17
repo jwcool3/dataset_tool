@@ -80,37 +80,61 @@ class InputOutputTab:
         self.cancel_button = ttk.Button(io_frame, text="Cancel", 
                                     command=self.parent.cancel_processing, state=tk.DISABLED)
         self.cancel_button.grid(column=4, row=1, padx=5, pady=5)
+# ...existing code...
     def _create_pipeline_section(self):
         """Create the processing pipeline section with checkboxes."""
         pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
         pipeline_frame.pack(fill=tk.X, pady=5)
         
         # Processing options with improved layout
-        # Update the processing_options list in the _create_pipeline_section method
         processing_options = [
             ("Extract frames from videos", self.parent.extract_frames),
             ("Detect and crop mask regions", self.parent.crop_mask_regions),
-            ("Expand mask regions", self.parent.expand_masks),  # Add this line
+            ("Expand mask regions", self.parent.expand_masks),  # Make sure this line is included
             ("Resize images and masks", self.parent.resize_images),
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
             ("Reinsert cropped images", self.parent.reinsert_crops_option)
-        ]
+        ]   
         
-        # Create 2 columns of options
-        for i, (text, var) in enumerate(processing_options):
-            row = i % 3
-            col = i // 3
+        # Use separate loops for each row to ensure predictable layout
+        # First row
+        for i in range(min(3, len(processing_options))):
+            text, var = processing_options[i]
             ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
-                column=col, row=row, sticky=tk.W, padx=10, pady=2
+                column=i, row=0, sticky=tk.W, padx=10, pady=2
+            )
+        
+        # Second row
+        for i in range(3, min(6, len(processing_options))):
+            text, var = processing_options[i]
+            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
+                column=i-3, row=1, sticky=tk.W, padx=10, pady=2
+            )
+        
+        # Third row
+        for i in range(6, min(9, len(processing_options))):
+            text, var = processing_options[i]
+            ttk.Checkbutton(pipeline_frame, text=text, variable=var).grid(
+                column=i-6, row=2, sticky=tk.W, padx=10, pady=2
             )
         
         # Debug mode checkbox (separate for visibility)
         ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
-                       variable=self.parent.debug_mode).grid(
+                    variable=self.parent.debug_mode).grid(
             column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
+        
+        # Add section for pipeline help/hint
+        hint_frame = ttk.Frame(self.frame, padding="10")
+        hint_frame.pack(fill=tk.X, pady=5)
+        
+        hint_text = "Hint: The processing pipeline executes steps in the order shown above. " + \
+                "Output from each step will be used as input for the next step."
+        hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
+        hint_label.pack(anchor=tk.W)
+    # ...existing code...
     
         # Add command to show/hide reinsertion note when the checkbox is toggled
         def on_reinsertion_toggle():
