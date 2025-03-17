@@ -350,6 +350,8 @@ class MainWindow:
     
 # Update to the start_processing method in ui/main_window.py
 
+# Update this method in MainWindow class to include the expand_masks option in the validation check
+
     def start_processing(self):
         """Start the processing pipeline in a separate thread."""
         if not self.input_dir.get() or not os.path.isdir(self.input_dir.get()):
@@ -368,13 +370,25 @@ class MainWindow:
                 messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
                 return
         
-        # Check if any processing steps are selected - INCLUDE reinsert_crops_option
+        # Check if any processing steps are selected - INCLUDE expand_masks
         if not any([self.extract_frames.get(), self.crop_mask_regions.get(), 
+                self.expand_masks.get(),  # Make sure this line is included
                 self.square_pad_images.get(), self.resize_images.get(), 
                 self.organize_files.get(), self.convert_to_video.get(),
-                self.reinsert_crops_option.get()]):  # Add reinsert_crops_option here
+                self.reinsert_crops_option.get()]):
             messagebox.showerror("Error", "Please select at least one processing step.")
             return
+        
+        # Add debugging print to see which steps are selected
+        print("Selected processing steps:")
+        print(f"- Extract frames: {self.extract_frames.get()}")
+        print(f"- Crop mask regions: {self.crop_mask_regions.get()}")
+        print(f"- Expand mask regions: {self.expand_masks.get()}")  # Debug print
+        print(f"- Square pad images: {self.square_pad_images.get()}")
+        print(f"- Resize images: {self.resize_images.get()}")
+        print(f"- Organize files: {self.organize_files.get()}")
+        print(f"- Convert to video: {self.convert_to_video.get()}")
+        print(f"- Reinsert crops: {self.reinsert_crops_option.get()}")
         
         # Additional check for reinsert_crops_option
         if self.reinsert_crops_option.get():
