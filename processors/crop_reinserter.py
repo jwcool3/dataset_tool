@@ -22,24 +22,31 @@ class CropReinserter:
         self.app = app
     
     def reinsert_crops(self, input_dir, output_dir):
+        """
+        Reinsert cropped images back into their original images.
+        """
         # Create output directory for reinserted images
         reinsert_output_dir = os.path.join(output_dir, "reinserted")
         os.makedirs(reinsert_output_dir, exist_ok=True)
         
-        # Find all cropped images (excluding files in any masks subdirectories)
+        # Output debug information
+        print(f"Reinsertion: Input (Cropped) Dir: {input_dir}")
+        print(f"Reinsertion: Source (Original) Dir: {self.app.source_images_dir.get()}")
+        print(f"Reinsertion: Output Dir: {reinsert_output_dir}")
+        
+        # Find all cropped images
         cropped_images = []
-        for root, dirs, files in os.walk(input_dir):
+        for root, _, files in os.walk(input_dir):
             # Skip if this is a 'masks' directory
             if os.path.basename(root).lower() == "masks":
+                print(f"Skipping masks directory: {root}")
                 continue
                 
             for file in files:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                     cropped_images.append(os.path.join(root, file))
         
-        if not cropped_images:
-            self.app.status_label.config(text="No cropped images found.")
-            return False
+        print(f"Found {len(cropped_images)} cropped images to process")
         
         # Get source directory (original images)
         source_dir = self.app.source_images_dir.get()
@@ -121,19 +128,43 @@ class CropReinserter:
                 
                 # Place the cropped image back into the source
                 # Ensure coordinates are within bounds
+                # Place the cropped image back into the source
+                # Ensure coordinates are within bounds
                 x_end = min(x_pos + insert_width, source_width)
                 y_end = min(y_pos + insert_height, source_height)
                 insert_width = x_end - x_pos
                 insert_height = y_end - y_pos
-                
-                result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
-                
-                # Save the reinserted image
-                output_path = os.path.join(reinsert_output_dir, f"reinserted_{cropped_filename}")
-                cv2.imwrite(output_path, result_img)
-                
-                processed_count += 1
-                
+
+                # DEBUG - Show dimensions before insertion
+                print(f"Insertion region: ({x_pos},{y_pos}) to ({x_end},{y_end})")
+                print(f"Final insert dimensions: {insert_width}x{insert_height}")
+                print(f"Resized crop dimensions: {resized_crop.shape}")
+
+                # CRITICAL CHECK - Make sure we're not replacing the entire image
+                if x_pos == 0 and y_pos == 0 and insert_width == source_width and insert_height == source_height:
+                    print("WARNING: Insertion would replace entire image. Using center positioning instead.")
+                    # Calculate a more reasonable position (center with 20% of image size)
+                    center_width = min(source_width // 2, crop_width)
+                    center_height = min(source_height // 2, crop_height)
+                    x_pos = (source_width - center_width) // 2
+                    y_pos = (source_height - center_height) // 2
+                    x_end = x_pos + center_width
+                    y_end = y_pos + center_height
+                    insert_width = center_width
+                    insert_height = center_height
+                    # Resize crop to fit this region
+                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), interpolation=cv2.INTER_LANCZOS4)
+                    print(f"New insertion region: ({x_pos},{y_pos}) to ({x_end},{y_end})")
+
+                try:
+                    # Actually perform the insertion
+                    result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
+                    
+                    # For debugging, also save a before/after comparison
+                    comparison = np.hstack((source_img, result_img))
+                    cv2.imwrite(os.path.join(reinsert_output_dir, f"comparison_{os.path.basename(cropped_filename)}"), comparison)
+                except Exception as e:
+                    print(f"ERROR during insertion: {str(e)}")
             except Exception as e:
                 self.app.status_label.config(text=f"Error processing {cropped_filename}: {str(e)}")
                 print(f"Error in reinsert_crops: {str(e)}")
@@ -169,6 +200,11 @@ class CropReinserter:
         Returns:
             str: Filename of the matching source image, or None if not found
         """
+        print(f"Trying to match: {cropped_basename} using method: {match_method}")
+        print(f"Available source images: {list(source_images.keys())[:5]}...")
+        
+        result = None
+        
         if match_method == "name_prefix":
             # Remove prefix (anything before first underscore)
             parts = cropped_basename.split('_', 1)
@@ -178,7 +214,8 @@ class CropReinserter:
                 for source_name in source_images:
                     source_basename = os.path.splitext(source_name)[0]
                     if source_basename == source_base:
-                        return source_name
+                        result = source_name
+                        break
         
         elif match_method == "name_suffix":
             # Remove suffix (anything after last underscore)
@@ -189,7 +226,8 @@ class CropReinserter:
                 for source_name in source_images:
                     source_basename = os.path.splitext(source_name)[0]
                     if source_basename == source_base:
-                        return source_name
+                        result = source_name
+                        break
         
         elif match_method == "metadata":
             # Check for a metadata JSON file with the same base name
@@ -200,7 +238,7 @@ class CropReinserter:
                     with open(metadata_path, 'r') as f:
                         metadata = json.load(f)
                     if 'source_image' in metadata:
-                        return metadata['source_image']
+                        result = metadata['source_image']
                 except Exception as e:
                     print(f"Error reading metadata: {str(e)}")
         
@@ -213,21 +251,34 @@ class CropReinserter:
                 for source_name in source_images:
                     source_numbers = re.findall(r'\d+', os.path.splitext(source_name)[0])
                     if source_numbers and source_numbers[-1] == number:
-                        return source_name
+                        result = source_name
+                        break
         
         # Fall back to exact match
-        for source_name in source_images:
-            source_basename = os.path.splitext(source_name)[0]
-            if source_basename == cropped_basename:
-                return source_name
+        if not result:
+            for source_name in source_images:
+                source_basename = os.path.splitext(source_name)[0]
+                if source_basename == cropped_basename:
+                    result = source_name
+                    break
         
         # If all else fails, try to find a source image that contains the cropped basename
-        for source_name in source_images:
-            source_basename = os.path.splitext(source_name)[0]
-            if cropped_basename in source_basename or source_basename in cropped_basename:
-                return source_name
+        if not result:
+            for source_name in source_images:
+                source_basename = os.path.splitext(source_name)[0]
+                if cropped_basename in source_basename or source_basename in cropped_basename:
+                    result = source_name
+                    break
+
+        # Before returning, print the result
+        if result:
+            print(f"Match found: {result}")
+        else:
+            print(f"No match found for {cropped_basename}")
         
-        return None
+        return result
+    
+
     
     def _calculate_insertion_position(self, source_img, cropped_img, padding_percent):
         """
@@ -244,12 +295,16 @@ class CropReinserter:
         source_height, source_width = source_img.shape[:2]
         crop_height, crop_width = cropped_img.shape[:2]
         
+        print(f"Source dimensions: {source_width}x{source_height}")
+        print(f"Crop dimensions: {crop_width}x{crop_height}")
+
         # Two approaches, depending on whether we're using auto-detection or fixed position
         if self.app.use_center_position.get():
             # Center the cropped image in the source image
             x_pos = (source_width - crop_width) // 2
             y_pos = (source_height - crop_height) // 2
-            return x_pos, y_pos, crop_width, crop_height
+            insert_width = crop_width
+            insert_height = crop_height
         else:
             # Use fixed position
             x_pos = self.app.reinsert_x.get()
@@ -257,9 +312,14 @@ class CropReinserter:
             
             # If dimensions are specified, use them
             if self.app.reinsert_width.get() > 0 and self.app.reinsert_height.get() > 0:
-                width = self.app.reinsert_width.get()
-                height = self.app.reinsert_height.get()
-                return x_pos, y_pos, width, height
+                insert_width = self.app.reinsert_width.get()
+                insert_height = self.app.reinsert_height.get()
             else:
                 # Otherwise use crop dimensions
-                return x_pos, y_pos, crop_width, crop_height
+                insert_width = crop_width
+                insert_height = crop_height
+
+        # Before returning, print the calculated position
+        print(f"Calculated insertion: x={x_pos}, y={y_pos}, w={insert_width}, h={insert_height}")
+        
+        return x_pos, y_pos, insert_width, insert_height
