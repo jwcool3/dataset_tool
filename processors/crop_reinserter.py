@@ -128,12 +128,71 @@ class CropReinserter:
                 
                 # Place the cropped image back into the source
                 # Ensure coordinates are within bounds
-                # Place the cropped image back into the source
-                # Ensure coordinates are within bounds
                 x_end = min(x_pos + insert_width, source_width)
                 y_end = min(y_pos + insert_height, source_height)
                 insert_width = x_end - x_pos
                 insert_height = y_end - y_pos
+
+                # Resize cropped image if needed
+                if crop_width != insert_width or crop_height != insert_height:
+                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
+                                        interpolation=cv2.INTER_LANCZOS4)
+                else:
+                    resized_crop = cropped_img
+
+                # Find if there's a corresponding mask for this cropped image
+                mask_path = None
+                cropped_filename = os.path.basename(cropped_path)
+                cropped_dir = os.path.dirname(cropped_path)
+
+                # Check if there's a masks directory in the same directory as the cropped image
+                masks_dir = os.path.join(cropped_dir, "masks")
+                if os.path.isdir(masks_dir):
+                    # Try with the same filename
+                    potential_mask = os.path.join(masks_dir, cropped_filename)
+                    if os.path.exists(potential_mask):
+                        mask_path = potential_mask
+                    else:
+                        # Try with different extensions
+                        base_name = os.path.splitext(cropped_filename)[0]
+                        for ext in ['.png', '.jpg', '.jpeg']:
+                            potential_mask = os.path.join(masks_dir, base_name + ext)
+                            if os.path.exists(potential_mask):
+                                mask_path = potential_mask
+                                break
+
+                # Debug output
+                if mask_path:
+                    print(f"Found corresponding mask: {mask_path}")
+                else:
+                    print(f"No mask found for {cropped_filename}")
+
+
+                # Create a mask for blending (if available)
+                blend_mask = None
+                if mask_path and os.path.exists(mask_path):
+                    blend_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    if blend_mask is not None:
+                        # Resize the mask to match the insertion dimensions
+                        blend_mask = cv2.resize(blend_mask, (insert_width, insert_height), 
+                                            interpolation=cv2.INTER_NEAREST)
+                        # Normalize to 0-1 range for blending
+                        blend_mask = blend_mask.astype(float) / 255.0
+
+                # Create a copy of the source image to modify
+                result_img = source_img.copy()
+
+                # Insert the cropped image with blending if mask is available
+                if blend_mask is not None:
+                    # Extract the region where we'll insert
+                    roi = result_img[y_pos:y_end, x_pos:x_end]
+                    
+                    # Use the mask to blend the cropped image with the source
+                    for c in range(3):  # For each color channel
+                        roi[:,:,c] = roi[:,:,c] * (1 - blend_mask) + resized_crop[:,:,c] * blend_mask
+                else:
+                    # Simple insertion without blending
+                    result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
 
                 # DEBUG - Show dimensions before insertion
                 print(f"Insertion region: ({x_pos},{y_pos}) to ({x_end},{y_end})")
@@ -295,16 +354,62 @@ class CropReinserter:
         source_height, source_width = source_img.shape[:2]
         crop_height, crop_width = cropped_img.shape[:2]
         
-        print(f"Source dimensions: {source_width}x{source_height}")
-        print(f"Crop dimensions: {crop_width}x{crop_height}")
-
+        # For mask-based crops, we need to try to find the best matching position
         # Two approaches, depending on whether we're using auto-detection or fixed position
         if self.app.use_center_position.get():
-            # Center the cropped image in the source image
+            # Use template matching to find the most likely position of the crop in the source
+            # Convert images to grayscale for template matching
+            source_gray = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+            crop_gray = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2GRAY) if len(cropped_img.shape) == 3 else cropped_img
+            
+            # Resize the crop to various sizes and try to find the best match
+            best_match_val = -1
+            best_match_loc = (0, 0)
+            best_match_size = (crop_width, crop_height)
+            
+            # Try different scales to account for any resizing that might have happened
+            scales = [0.8, 0.9, 1.0, 1.1, 1.2]
+            
+            for scale in scales:
+                w = int(crop_width * scale)
+                h = int(crop_height * scale)
+                
+                # Skip if resized template is too large
+                if w > source_width or h > source_height:
+                    continue
+                    
+                # Resize the cropped image
+                resized_crop = cv2.resize(crop_gray, (w, h), interpolation=cv2.INTER_AREA)
+                
+                # Apply template matching
+                try:
+                    result = cv2.matchTemplate(source_gray, resized_crop, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                    
+                    # If this is the best match so far, remember it
+                    if max_val > best_match_val:
+                        best_match_val = max_val
+                        best_match_loc = max_loc
+                        best_match_size = (w, h)
+                        
+                    # Print debug info
+                    print(f"Scale {scale}: Match value = {max_val:.4f}, Location = {max_loc}, Size = {w}x{h}")
+                except Exception as e:
+                    print(f"Error during template matching at scale {scale}: {str(e)}")
+            
+            print(f"Best match: value = {best_match_val:.4f}, location = {best_match_loc}, size = {best_match_size}")
+            
+            # If we found a good match, use that position
+            if best_match_val > 0.2:  # Threshold for a reasonable match
+                x_pos, y_pos = best_match_loc
+                insert_width, insert_height = best_match_size
+                return x_pos, y_pos, insert_width, insert_height
+            
+            # Fall back to centered position if no good match
+            print("No good template match found, using center position")
             x_pos = (source_width - crop_width) // 2
             y_pos = (source_height - crop_height) // 2
-            insert_width = crop_width
-            insert_height = crop_height
+            return x_pos, y_pos, crop_width, crop_height
         else:
             # Use fixed position
             x_pos = self.app.reinsert_x.get()
@@ -312,14 +417,9 @@ class CropReinserter:
             
             # If dimensions are specified, use them
             if self.app.reinsert_width.get() > 0 and self.app.reinsert_height.get() > 0:
-                insert_width = self.app.reinsert_width.get()
-                insert_height = self.app.reinsert_height.get()
+                width = self.app.reinsert_width.get()
+                height = self.app.reinsert_height.get()
+                return x_pos, y_pos, width, height
             else:
                 # Otherwise use crop dimensions
-                insert_width = crop_width
-                insert_height = crop_height
-
-        # Before returning, print the calculated position
-        print(f"Calculated insertion: x={x_pos}, y={y_pos}, w={insert_width}, h={insert_height}")
-        
-        return x_pos, y_pos, insert_width, insert_height
+                return x_pos, y_pos, crop_width, crop_height
