@@ -231,7 +231,7 @@ class ConfigTab:
         help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
                     "Kernel size controls the shape of the expansion (odd numbers only).")
         ttk.Label(help_frame, text=help_text, wraplength=600).pack(padx=5, pady=5)
-    # ...existing code...
+
     def _create_conditional_resize(self):
         """Create the conditional resize options section."""
         resize_frame = ttk.LabelFrame(self.frame, text="Conditional Resize Options", padding="10")
@@ -433,92 +433,28 @@ class ConfigTab:
         reinsertion_frame.pack(fill=tk.X, pady=5)
         
         # Source images directory - make it very clear what this is
-        source_frame = ttk.LabelFrame(reinsertion_frame, text="Source (Original Uncropped) Images", padding=5)
+        source_frame = ttk.LabelFrame(reinsertion_frame, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(source_frame, text="Select the directory containing original uncropped images:").pack(anchor=tk.W, padx=5, pady=5)
+        ttk.Label(source_frame, 
+                text="Select the directory containing the ORIGINAL UNCROPPED images:",
+                font=("Helvetica", 9, "bold")).pack(anchor=tk.W, padx=5, pady=5)
 
         source_dir_frame = ttk.Frame(source_frame)
         source_dir_frame.pack(fill=tk.X, pady=5)
         ttk.Entry(source_dir_frame, textvariable=self.parent.source_images_dir, width=40).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         ttk.Button(source_dir_frame, text="Browse...", command=self._browse_source_dir).pack(side=tk.RIGHT, padx=5)
         
-        # Create a separator
-        ttk.Separator(reinsertion_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        # Add a direct clarification about Input Directory
+        input_reminder = ttk.Frame(reinsertion_frame, padding=5, relief="groove")
+        input_reminder.pack(fill=tk.X, pady=10)
         
-        # Matching method section
-        match_frame = ttk.Frame(reinsertion_frame)
-        match_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(input_reminder, 
+                text="IMPORTANT: The Input Directory (set in the Input/Output tab) should contain your CROPPED images.",
+                foreground="blue",
+                font=("Helvetica", 9, "bold"),
+                wraplength=600).pack(pady=5)
         
-        ttk.Label(match_frame, text="Match Source Images By:").pack(side=tk.LEFT, padx=5)
-        match_combo = ttk.Combobox(match_frame, textvariable=self.parent.reinsert_match_method, width=15)
-        match_combo['values'] = ["name_prefix", "name_suffix", "numeric_match", "metadata", "exact_match"]
-        match_combo.current(0)  # Default to name_prefix
-        match_combo.pack(side=tk.LEFT, padx=5)
-        
-        # Add reinsertion padding control
-        padding_frame = ttk.Frame(reinsertion_frame)
-        padding_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(padding_frame, text="Padding Percentage:").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(padding_frame, from_=0, to=100, textvariable=self.parent.reinsert_padding, width=5).pack(side=tk.LEFT, padx=5)
-        ttk.Label(padding_frame, text="%").pack(side=tk.LEFT)
-        
-        # Add option to use automatic center positioning
-        pos_frame = ttk.Frame(reinsertion_frame)
-        pos_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Checkbutton(pos_frame, text="Auto-center cropped image", variable=self.parent.use_center_position).pack(side=tk.LEFT, padx=5)
-        
-        # Add manual position controls
-        manual_frame = ttk.LabelFrame(reinsertion_frame, text="Manual Position (if auto-center is disabled)", padding=5)
-        manual_frame.pack(fill=tk.X, pady=5)
-        
-        # Create a grid for position parameters
-        ttk.Label(manual_frame, text="X Position:").grid(column=0, row=0, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_x, width=6).grid(
-            column=1, row=0, sticky=tk.W, padx=5, pady=2)
-        
-        ttk.Label(manual_frame, text="Y Position:").grid(column=2, row=0, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_y, width=6).grid(
-            column=3, row=0, sticky=tk.W, padx=5, pady=2)
-        
-        ttk.Label(manual_frame, text="Width:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_width, width=6).grid(
-            column=1, row=1, sticky=tk.W, padx=5, pady=2)
-        
-        ttk.Label(manual_frame, text="Height:").grid(column=2, row=1, sticky=tk.W, padx=5, pady=2)
-        ttk.Spinbox(manual_frame, from_=0, to=10000, textvariable=self.parent.reinsert_height, width=6).grid(
-            column=3, row=1, sticky=tk.W, padx=5, pady=2)
-        
-        # Store references to spinboxes for enabling/disabling
-        self.position_spinboxes = []
-        for child in manual_frame.winfo_children():
-            if isinstance(child, ttk.Spinbox):
-                self.position_spinboxes.append(child)
-        
-        # Enable/disable manual position controls based on auto-center checkbox
-        def toggle_manual_controls(*args):
-            state = "disabled" if self.parent.use_center_position.get() else "normal"
-            for spinbox in self.position_spinboxes:
-                spinbox.configure(state=state)
-        
-        # Register callback
-        self.parent.use_center_position.trace_add("write", toggle_manual_controls)
-        
-        # Call once to initialize
-        toggle_manual_controls()
-        
-        # Help text - make the folder distinction crystal clear
-        help_text = ttk.Label(
-            reinsertion_frame, 
-            text="This feature reinserts cropped images back into their original source images.\n\n" +
-                "INPUT DIRECTORY: The folder containing your cropped images (set in Input/Output tab)\n" +
-                "SOURCE DIRECTORY: The folder containing original uncropped images (selected above)\n\n" +
-                "The padding percentage should match what was used during the initial cropping process.",
-            wraplength=600
-        )
-        help_text.pack(fill=tk.X, pady=10)
 
     def _browse_source_dir(self):
         """Browse for the source images directory."""

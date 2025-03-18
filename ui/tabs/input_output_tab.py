@@ -42,50 +42,22 @@ class InputOutputTab:
         ttk.Entry(io_frame, textvariable=self.parent.output_dir, width=50).grid(column=1, row=1, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_output_dir).grid(column=2, row=1, padx=5)
         
-        # Create the reinsertion note frame
-        self.reinsertion_note_frame = ttk.Frame(io_frame, padding=(0, 5, 0, 0))
-        self.reinsertion_note_frame.grid(column=0, row=2, columnspan=3, sticky=tk.W)
+        # Create a much more visible reinsertion instruction frame
+        self.reinsertion_note_frame = ttk.Frame(io_frame, padding=(5, 5, 5, 5), relief="groove", borderwidth=2)
+        self.reinsertion_note_frame.grid(column=0, row=2, columnspan=3, sticky=tk.W+tk.E, pady=10)
+        
         self.reinsertion_note = ttk.Label(
             self.reinsertion_note_frame,
-            text="Note: For Image Reinsertion, Input Directory = Cropped Images. Configure Source Directory in the Config tab.",
-            foreground="blue",
+            text="REINSERTION MODE ACTIVE: Input Directory should contain your CROPPED IMAGES.\n"
+                "Go to the Config tab to set the source directory that contains your ORIGINAL UNCROPPED IMAGES.",
+            foreground="red",
+            font=("Helvetica", 9, "bold"),
             wraplength=600
         )
-        self.reinsertion_note.pack(anchor=tk.W)
+        self.reinsertion_note.pack(anchor=tk.W, pady=5)
         
         # Initialize to hidden
         self.reinsertion_note_frame.grid_remove()
-        
-        # Register callback to update when reinsert option changes
-        def update_reinsert_ui(*args):
-            if self.parent.reinsert_crops_option.get():
-                self.input_dir_label.config(text="Input Directory (Cropped Images):")
-                self.reinsertion_note_frame.grid()
-            else:
-                self.input_dir_label.config(text="Input Directory:")
-                self.reinsertion_note_frame.grid_remove()
-        
-        # Add the trace
-        self.parent.reinsert_crops_option.trace_add("write", update_reinsert_ui)
-        
-        # Preview button
-        ttk.Button(io_frame, text="Preview Processing", 
-                command=self._preview_processing).grid(column=3, row=0, padx=5, pady=5)
-        
-        # Process and Cancel buttons
-        self.process_button = ttk.Button(io_frame, text="Start Processing", 
-                                        command=self.parent.start_processing)
-        self.process_button.grid(column=3, row=1, padx=5, pady=5)
-        
-        self.cancel_button = ttk.Button(io_frame, text="Cancel", 
-                                    command=self.parent.cancel_processing, state=tk.DISABLED)
-        self.cancel_button.grid(column=4, row=1, padx=5, pady=5)
-# ...existing code...
-
-    # ...existing code...
-    
-
-
 
     
     def _browse_input_dir(self):

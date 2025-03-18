@@ -22,23 +22,17 @@ class CropReinserter:
         self.app = app
     
     def reinsert_crops(self, input_dir, output_dir):
-        """
-        Reinsert cropped images back into their original images.
-        
-        Args:
-            input_dir: Input directory containing cropped images
-            output_dir: Output directory for reinserted images
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
         # Create output directory for reinserted images
         reinsert_output_dir = os.path.join(output_dir, "reinserted")
         os.makedirs(reinsert_output_dir, exist_ok=True)
         
-        # Find all cropped images
+        # Find all cropped images (excluding files in any masks subdirectories)
         cropped_images = []
-        for root, _, files in os.walk(input_dir):
+        for root, dirs, files in os.walk(input_dir):
+            # Skip if this is a 'masks' directory
+            if os.path.basename(root).lower() == "masks":
+                continue
+                
             for file in files:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                     cropped_images.append(os.path.join(root, file))
@@ -53,23 +47,18 @@ class CropReinserter:
             self.app.status_label.config(text="Source images directory not set or invalid.")
             return False
         
-        # Cropped images come from the input_dir parameter
-        cropped_dir = input_dir
-        
-        # If source_dir and cropped_dir are the same, show an error
-        if os.path.abspath(source_dir) == os.path.abspath(cropped_dir):
-            self.app.status_label.config(text="Error: Source directory and input directory cannot be the same for reinsertion.")
-            return False
-        
-        # Load all source images
+        # Load all source images (excluding files in any masks subdirectories)
         source_images = {}
-        for file in os.listdir(source_dir):
-            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                source_images[file] = os.path.join(source_dir, file)
+        for root, dirs, files in os.walk(source_dir):
+            # Skip if this is a 'masks' directory
+            if os.path.basename(root).lower() == "masks":
+                continue
+                
+            for file in files:
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    source_images[file] = os.path.join(root, file)
         
-        if not source_images:
-            self.app.status_label.config(text="No source images found.")
-            return False
+        # Rest of the method remains the same...
         
         # Get reinsertion parameters
         padding_percent = self.app.reinsert_padding.get()

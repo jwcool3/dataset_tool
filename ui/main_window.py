@@ -548,6 +548,30 @@ class MainWindow:
                             current_input = output_directories["resized"]
                         elif step_name == "organize_files" and os.path.exists(output_directories["organized"]):
                             current_input = output_directories["organized"]
+                                # Inside the pipeline steps loop
+                        elif step_name == "reinsert_crops":
+                            # Validate that source directories are set correctly
+                            self.status_label.config(text="Validating directories for crop reinsertion...")
+                            
+                            if not self.source_images_dir.get() or not os.path.isdir(self.source_images_dir.get()):
+                                error_msg = "Error: Source images directory not set or invalid for crop reinsertion"
+                                self.status_label.config(text=error_msg)
+                                messagebox.showerror("Directory Error", error_msg)
+                                continue
+                            
+                            # Verify that the input directory has cropped images (not masks)
+                            mask_dir_found = False
+                            for root, dirs, _ in os.walk(current_input):
+                                if "masks" in dirs:
+                                    mask_dir_found = True
+                                    break
+                            
+                            if not mask_dir_found:
+                                self.status_label.config(text="Warning: No 'masks' subdirectory found in input. "
+                                                        "Ensure input contains cropped images, not masks.")
+                                                        
+                            # Now execute crop reinsertion
+                            success = step_func(current_input, self.output_dir.get())
                         
                         self.status_label.config(text=f"Completed step: {step_name}. Using {current_input} for next step.")
                     else:
