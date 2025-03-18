@@ -302,6 +302,25 @@ class MaskProcessor:
             # Don't resize - just use the cropped region as-is
             final_src = cropped_src
             final_mask = cropped_mask
+
+            # Add this code to store crop information for better reinsertion
+            crop_info = {
+                "original_image": os.path.basename(image_path),
+                "crop_x": padded_x,
+                "crop_y": padded_y,
+                "crop_width": padded_width,
+                "crop_height": padded_height,
+                "original_width": src_width,
+                "original_height": src_height
+            }
+
+            # Save crop information in a JSON file
+            import json
+            info_path = os.path.splitext(output_image_path)[0] + "_crop_info.json"
+            with open(info_path, 'w') as f:
+                json.dump(crop_info, f)
+
+
             # Save extra debug images after resizing
             if debug_dir:
                 cv2.imwrite(os.path.join(debug_dir, f"final_resized_{basename}"), final_src)
