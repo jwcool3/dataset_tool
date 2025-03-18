@@ -259,6 +259,57 @@ class MaskProcessor:
             
             padded_bbox = (padded_x, padded_y, padded_width, padded_height)
             
+            # After calculating padded_bbox:
+            padded_x, padded_y, padded_width, padded_height = padded_bbox
+
+            # Calculate the original aspect ratio
+            original_aspect_ratio = src_width / src_height
+
+            # Calculate the current padded crop aspect ratio
+            padded_aspect_ratio = padded_width / padded_height
+
+            # Find the center of the padded region
+            center_x = padded_x + padded_width // 2
+            center_y = padded_y + padded_height // 2
+
+            # Adjust the crop dimensions to maintain the original aspect ratio
+            if padded_aspect_ratio < original_aspect_ratio:
+                # Current crop is too tall, need to increase width
+                new_width = int(padded_height * original_aspect_ratio)
+                new_height = padded_height
+            else:
+                # Current crop is too wide, need to increase height
+                new_width = padded_width
+                new_height = int(padded_width / original_aspect_ratio)
+
+            # Calculate new crop coordinates based on center point
+            new_padded_x = max(0, center_x - new_width // 2)
+            new_padded_y = max(0, center_y - new_height // 2)
+
+            # Ensure the crop stays within the image bounds
+            if new_padded_x + new_width > src_width:
+                new_padded_x = src_width - new_width
+            if new_padded_y + new_height > src_height:
+                new_padded_y = src_height - new_height
+
+            # Make sure we don't go negative due to rounding
+            new_padded_x = max(0, new_padded_x)
+            new_padded_y = max(0, new_padded_y)
+
+            # Update the padded bounding box
+            padded_x = new_padded_x
+            padded_y = new_padded_y
+            padded_width = min(src_width - padded_x, new_width)
+            padded_height = min(src_height - padded_y, new_height)
+
+            padded_bbox = (padded_x, padded_y, padded_width, padded_height)
+
+            # Print debug info
+            print(f"Original aspect ratio: {original_aspect_ratio:.3f}")
+            print(f"Adjusted crop to: x={padded_x}, y={padded_y}, w={padded_width}, h={padded_height}")
+            print(f"New aspect ratio: {padded_width/padded_height:.3f}")
+
+
             # If the padded bbox is already the full image, no processing needed
             if padded_x == 0 and padded_y == 0 and padded_width == src_width and padded_height == src_height:
                 print(f"Padded bbox is already full image for {basename}, no processing needed")
