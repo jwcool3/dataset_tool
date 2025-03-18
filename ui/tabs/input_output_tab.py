@@ -42,7 +42,7 @@ class InputOutputTab:
         ttk.Entry(io_frame, textvariable=self.parent.output_dir, width=50).grid(column=1, row=1, padx=5, sticky=tk.W)
         ttk.Button(io_frame, text="Browse...", command=self._browse_output_dir).grid(column=2, row=1, padx=5)
         
-        # Create a much more visible reinsertion instruction frame
+        # Create the reinsertion note frame
         self.reinsertion_note_frame = ttk.Frame(io_frame, padding=(5, 5, 5, 5), relief="groove", borderwidth=2)
         self.reinsertion_note_frame.grid(column=0, row=2, columnspan=3, sticky=tk.W+tk.E, pady=10)
         
@@ -58,6 +58,19 @@ class InputOutputTab:
         
         # Initialize to hidden
         self.reinsertion_note_frame.grid_remove()
+        
+        # Preview button - MAKE SURE THIS IS INCLUDED
+        ttk.Button(io_frame, text="Preview Processing", 
+                command=self._preview_processing).grid(column=3, row=0, padx=5, pady=5)
+        
+        # Process and Cancel buttons - MAKE SURE THESE ARE INCLUDED
+        self.process_button = ttk.Button(io_frame, text="Start Processing", 
+                                        command=self.parent.start_processing)
+        self.process_button.grid(column=3, row=1, padx=5, pady=5)
+        
+        self.cancel_button = ttk.Button(io_frame, text="Cancel", 
+                                    command=self.parent.cancel_processing, state=tk.DISABLED)
+        self.cancel_button.grid(column=4, row=1, padx=5, pady=5)
 
     
     def _browse_input_dir(self):
