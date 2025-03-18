@@ -332,84 +332,83 @@ class CropReinserter:
     def _calculate_insertion_position(self, source_img, cropped_img, padding_percent):
         """
         Calculate where to insert the cropped image in the source image.
-        
-        Args:
-            source_img: Source image (numpy array)
-            cropped_img: Cropped image (numpy array)
-            padding_percent: Padding percentage used in the original crop
-            
-        Returns:
-            tuple: (x_position, y_position, width, height)
         """
         source_height, source_width = source_img.shape[:2]
         crop_height, crop_width = cropped_img.shape[:2]
         
-        # For mask-based crops, we need to try to find the best matching position
-        # Two approaches, depending on whether we're using auto-detection or fixed position
+        # For automatic positioning, use feature matching
         if self.app.use_center_position.get():
-            # Use template matching to find the most likely position of the crop in the source
-            # Convert images to grayscale for template matching
+            # Convert to grayscale for feature detection
             source_gray = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
             crop_gray = cv2.cvtColor(cropped_img, cv2.COLOR_BGR2GRAY) if len(cropped_img.shape) == 3 else cropped_img
             
-            # Resize the crop to various sizes and try to find the best match
-            best_match_val = -1
-            best_match_loc = (0, 0)
-            best_match_size = (crop_width, crop_height)
-            
-            # Try different scales to account for any resizing that might have happened
-            scales = [0.8, 0.9, 1.0, 1.1, 1.2]
-            
-            for scale in scales:
-                w = int(crop_width * scale)
-                h = int(crop_height * scale)
+            # Try using ORB feature detector and matcher
+            try:
+                # Create ORB detector
+                orb = cv2.ORB_create(nfeatures=500)
                 
-                # Skip if resized template is too large
-                if w > source_width or h > source_height:
-                    continue
-                    
-                # Resize the cropped image
-                resized_crop = cv2.resize(crop_gray, (w, h), interpolation=cv2.INTER_AREA)
+                # Find keypoints and descriptors
+                kp1, des1 = orb.detectAndCompute(source_gray, None)
+                kp2, des2 = orb.detectAndCompute(crop_gray, None)
                 
-                # Apply template matching
-                try:
-                    result = cv2.matchTemplate(source_gray, resized_crop, cv2.TM_CCOEFF_NORMED)
-                    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if des1 is not None and des2 is not None and len(des1) > 0 and len(des2) > 0:
+                    # Create BF matcher
+                    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
                     
-                    # If this is the best match so far, remember it
-                    if max_val > best_match_val:
-                        best_match_val = max_val
-                        best_match_loc = max_loc
-                        best_match_size = (w, h)
+                    # Match descriptors
+                    matches = bf.match(des2, des1)
+                    
+                    # Sort by distance
+                    matches = sorted(matches, key=lambda x: x.distance)
+                    
+                    # Use only good matches (first 10-20)
+                    good_matches = matches[:min(20, len(matches))]
+                    
+                    if len(good_matches) >= 4:  # Need at least 4 points for homography
+                        # Extract points
+                        src_pts = np.float32([kp2[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                        dst_pts = np.float32([kp1[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
                         
-                    # Print debug info
-                    print(f"Scale {scale}: Match value = {max_val:.4f}, Location = {max_loc}, Size = {w}x{h}")
-                except Exception as e:
-                    print(f"Error during template matching at scale {scale}: {str(e)}")
+                        # Find homography
+                        H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                        
+                        if H is not None:
+                            # Get corners of cropped image
+                            h, w = crop_gray.shape
+                            corners = np.float32([[0, 0], [0, h-1], [w-1, h-1], [w-1, 0]]).reshape(-1, 1, 2)
+                            
+                            # Transform corners to source image
+                            transformed = cv2.perspectiveTransform(corners, H)
+                            
+                            # Get bounding box
+                            x_min = max(0, int(np.min(transformed[:, 0, 0])))
+                            y_min = max(0, int(np.min(transformed[:, 0, 1])))
+                            x_max = min(source_width, int(np.max(transformed[:, 0, 0])))
+                            y_max = min(source_height, int(np.max(transformed[:, 0, 1])))
+                            
+                            # Calculate dimensions
+                            width = x_max - x_min
+                            height = y_max - y_min
+                            
+                            # Ensure reasonable dimensions
+                            if width > 20 and height > 20:
+                                return x_min, y_min, width, height
+            except Exception as e:
+                print(f"Feature matching failed: {str(e)}")
             
-            print(f"Best match: value = {best_match_val:.4f}, location = {best_match_loc}, size = {best_match_size}")
-            
-            # If we found a good match, use that position
-            if best_match_val > 0.2:  # Threshold for a reasonable match
-                x_pos, y_pos = best_match_loc
-                insert_width, insert_height = best_match_size
-                return x_pos, y_pos, insert_width, insert_height
-            
-            # Fall back to centered position if no good match
-            print("No good template match found, using center position")
-            x_pos = (source_width - crop_width) // 2
-            y_pos = (source_height - crop_height) // 2
-            return x_pos, y_pos, crop_width, crop_height
-        else:
-            # Use fixed position
-            x_pos = self.app.reinsert_x.get()
-            y_pos = self.app.reinsert_y.get()
-            
-            # If dimensions are specified, use them
-            if self.app.reinsert_width.get() > 0 and self.app.reinsert_height.get() > 0:
-                width = self.app.reinsert_width.get()
-                height = self.app.reinsert_height.get()
-                return x_pos, y_pos, width, height
-            else:
-                # Otherwise use crop dimensions
-                return x_pos, y_pos, crop_width, crop_height
+            # If feature matching fails, fall back to template matching
+            try:
+                # Use template matching as a fallback
+                result = cv2.matchTemplate(source_gray, crop_gray, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                
+                if max_val > 0.3:  # Reasonable threshold
+                    return max_loc[0], max_loc[1], crop_width, crop_height
+            except Exception as e:
+                print(f"Template matching failed: {str(e)}")
+        
+        # Fall back to center positioning
+        x_pos = (source_width - crop_width) // 2
+        y_pos = (source_height - crop_height) // 2
+        
+        return x_pos, y_pos, crop_width, crop_height

@@ -299,11 +299,9 @@ class MaskProcessor:
                 cv2.imwrite(os.path.join(debug_dir, f"cropped_before_resize_{basename}"), cropped_src)
                 cv2.imwrite(os.path.join(debug_dir, f"cropped_mask_before_resize_{basename}"), cropped_mask)
                 
-            # Resize the cropped region to the FULL original dimensions
-            # This ensures we're "zooming in" on the masked region to fill the entire image
-            final_src = cv2.resize(cropped_src, (src_width, src_height), interpolation=cv2.INTER_LANCZOS4)
-            final_mask = cv2.resize(cropped_mask, (src_width, src_height), interpolation=cv2.INTER_NEAREST)
-                
+            # Don't resize - just use the cropped region as-is
+            final_src = cropped_src
+            final_mask = cropped_mask
             # Save extra debug images after resizing
             if debug_dir:
                 cv2.imwrite(os.path.join(debug_dir, f"final_resized_{basename}"), final_src)
