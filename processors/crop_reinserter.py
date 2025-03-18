@@ -84,6 +84,7 @@ class CropReinserter:
             cropped_filename = os.path.basename(cropped_path)
             cropped_basename, cropped_ext = os.path.splitext(cropped_filename)
             
+            # Inside the loop where you process each cropped image
             try:
                 # Match cropped image to source image
                 source_filename = self._match_source_image(cropped_basename, source_images, match_method)
@@ -104,47 +105,10 @@ class CropReinserter:
                     failed_count += 1
                     continue
                 
-                # Get dimensions
-                source_height, source_width = source_img.shape[:2]
-                crop_height, crop_width = cropped_img.shape[:2]
-                
-                # Calculate crop position based on padding percent
-                # This reverses the padding calculation from the mask_processor
-                x_pos, y_pos, insert_width, insert_height = self._calculate_insertion_position(
-                    source_img, 
-                    cropped_img, 
-                    padding_percent
-                )
-                
-                # Create a copy of the source image to modify
-                result_img = source_img.copy()
-                
-                # Resize cropped image if needed to fit calculated dimensions
-                if crop_width != insert_width or crop_height != insert_height:
-                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
-                                           interpolation=cv2.INTER_LANCZOS4)
-                else:
-                    resized_crop = cropped_img
-                
-                # Place the cropped image back into the source
-                # Ensure coordinates are within bounds
-                x_end = min(x_pos + insert_width, source_width)
-                y_end = min(y_pos + insert_height, source_height)
-                insert_width = x_end - x_pos
-                insert_height = y_end - y_pos
-
-                # Resize cropped image if needed
-                if crop_width != insert_width or crop_height != insert_height:
-                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
-                                        interpolation=cv2.INTER_LANCZOS4)
-                else:
-                    resized_crop = cropped_img
-
                 # Find if there's a corresponding mask for this cropped image
                 mask_path = None
-                cropped_filename = os.path.basename(cropped_path)
                 cropped_dir = os.path.dirname(cropped_path)
-
+                
                 # Check if there's a masks directory in the same directory as the cropped image
                 masks_dir = os.path.join(cropped_dir, "masks")
                 if os.path.isdir(masks_dir):
@@ -160,14 +124,34 @@ class CropReinserter:
                             if os.path.exists(potential_mask):
                                 mask_path = potential_mask
                                 break
-
-                # Debug output
-                if mask_path:
-                    print(f"Found corresponding mask: {mask_path}")
+                
+                # Get dimensions
+                source_height, source_width = source_img.shape[:2]
+                crop_height, crop_width = cropped_img.shape[:2]
+                
+                # Calculate crop position based on padding percent
+                x_pos, y_pos, insert_width, insert_height = self._calculate_insertion_position(
+                    source_img, 
+                    cropped_img, 
+                    padding_percent
+                )
+                
+                # Create a copy of the source image to modify
+                result_img = source_img.copy()
+                
+                # Resize cropped image if needed to fit calculated dimensions
+                if crop_width != insert_width or crop_height != insert_height:
+                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
+                                        interpolation=cv2.INTER_LANCZOS4)
                 else:
-                    print(f"No mask found for {cropped_filename}")
-
-
+                    resized_crop = cropped_img
+                
+                # Ensure coordinates are within bounds
+                x_end = min(x_pos + insert_width, source_width)
+                y_end = min(y_pos + insert_height, source_height)
+                insert_width = x_end - x_pos
+                insert_height = y_end - y_pos
+                
                 # Create a mask for blending (if available)
                 blend_mask = None
                 if mask_path and os.path.exists(mask_path):
@@ -178,10 +162,7 @@ class CropReinserter:
                                             interpolation=cv2.INTER_NEAREST)
                         # Normalize to 0-1 range for blending
                         blend_mask = blend_mask.astype(float) / 255.0
-
-                # Create a copy of the source image to modify
-                result_img = source_img.copy()
-
+                
                 # Insert the cropped image with blending if mask is available
                 if blend_mask is not None:
                     # Extract the region where we'll insert
@@ -193,7 +174,16 @@ class CropReinserter:
                 else:
                     # Simple insertion without blending
                     result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
-
+                
+                # Save the reinserted image
+                output_path = os.path.join(reinsert_output_dir, f"reinserted_{cropped_filename}")
+                cv2.imwrite(output_path, result_img)
+                
+                # Also save a comparison image for debugging
+                comparison = np.hstack((source_img, result_img))
+                cv2.imwrite(os.path.join(reinsert_output_dir, f"comparison_{cropped_filename}"), comparison)
+                
+                processed_count += 1
                 # DEBUG - Show dimensions before insertion
                 print(f"Insertion region: ({x_pos},{y_pos}) to ({x_end},{y_end})")
                 print(f"Final insert dimensions: {insert_width}x{insert_height}")
