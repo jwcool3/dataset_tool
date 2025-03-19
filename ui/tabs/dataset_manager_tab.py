@@ -469,7 +469,7 @@ class DatasetManagerTab:
         ttk.Label(min_aspect_frame, text="Minimum Aspect Ratio (w/h):").pack(side=tk.LEFT, padx=5)
         self.min_aspect = tk.DoubleVar(value=0.0)
         min_aspect_spin = ttk.Spinbox(min_aspect_frame, from_=0.0, to=10.0, increment=0.1, 
-                                     textvariable=self.min_aspect, width=10)
+                                    textvariable=self.min_aspect, width=10)
         min_aspect_spin.pack(side=tk.LEFT, padx=5)
         
         # Max aspect ratio
@@ -479,7 +479,7 @@ class DatasetManagerTab:
         ttk.Label(max_aspect_frame, text="Maximum Aspect Ratio (w/h):").pack(side=tk.LEFT, padx=5)
         self.max_aspect = tk.DoubleVar(value=0.0)  # 0 means no limit
         max_aspect_spin = ttk.Spinbox(max_aspect_frame, from_=0.0, to=10.0, increment=0.1, 
-                                     textvariable=self.max_aspect, width=10)
+                                    textvariable=self.max_aspect, width=10)
         max_aspect_spin.pack(side=tk.LEFT, padx=5)
         
         # Output options
@@ -490,21 +490,10 @@ class DatasetManagerTab:
         name_frame = ttk.Frame(output_frame)
         name_frame.pack(fill=tk.X, pady=5)
         
-ttk.Label(name_frame, text="Name for Filtered Dataset:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(name_frame, text="Name for Filtered Dataset:").pack(side=tk.LEFT, padx=5)
         self.filtered_name = tk.StringVar()
         name_entry = ttk.Entry(name_frame, textvariable=self.filtered_name, width=30)
         name_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Button to execute filter
-        action_frame = ttk.Frame(parent)
-        action_frame.pack(fill=tk.X, pady=20)
-        
-        filter_btn = ttk.Button(action_frame, text="Filter Selected Dataset", command=self._filter_dataset)
-        filter_btn.pack(side=tk.LEFT, padx=5)
-        
-        # Status label
-        self.filter_status = ttk.Label(action_frame, text="")
-        self.filter_status.pack(side=tk.LEFT, padx=10)
     
     def _filter_dataset(self):
         """Filter the selected dataset."""
@@ -1057,6 +1046,28 @@ ttk.Label(name_frame, text="Name for Filtered Dataset:").pack(side=tk.LEFT, padx
             if len(type_issues) > 10:
                 ttk.Label(issue_frame, text=f"... and {len(type_issues) - 10} more files").pack(anchor=tk.W, padx=10, pady=2)
     
+
+    def _open_file(self, file_path):
+        """Open a file using the system's default application."""
+        if not os.path.exists(file_path):
+            messagebox.showerror("Error", f"File not found: {file_path}")
+            return
+            
+        # Open the file using platform-specific method
+        import platform
+        import subprocess
+        
+        try:
+            if platform.system() == 'Windows':
+                os.startfile(file_path)
+            elif platform.system() == 'Darwin':  # macOS
+                subprocess.run(['open', file_path], check=True)
+            else:  # Linux
+                subprocess.run(['xdg-open', file_path], check=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open file: {str(e)}")
+
+
     def _display_duplicates(self, duplicate_data):
         """Display duplicate information in the UI."""
         # Create a scrollable frame
@@ -1086,12 +1097,6 @@ ttk.Label(name_frame, text="Name for Filtered Dataset:").pack(side=tk.LEFT, padx
         exact_count = len(duplicate_data.get('exact_duplicates', []))
         similar_count = len(duplicate_data.get('similar_images', []))
         
-        if
-        ttk.Label(summary_frame, text=f"Analyzed {analyzed_count} images for duplicates", font=("Helvetica", 10, "bold")).pack(anchor=tk.W)
-        
-        exact_count = len(duplicate_data.get('exact_duplicates', []))
-        similar_count = len(duplicate_data.get('similar_images', []))
-        
         if exact_count == 0 and similar_count == 0:
             ttk.Label(content, text="No duplicate images found.").pack(anchor=tk.W, padx=20, pady=10)
             return
@@ -1105,39 +1110,39 @@ ttk.Label(name_frame, text="Name for Filtered Dataset:").pack(side=tk.LEFT, padx
             
             # Show each duplicate pair
             for i, dup in enumerate(duplicate_data['exact_duplicates']):
-            if i >= 20:  # Limit to 20 pairs for performance
-                ttk.Label(exact_frame, text=f"... and {exact_count - 20} more duplicate pairs").pack(anchor=tk.W, padx=10, pady=5)
-                break
+                if i >= 20:  # Limit to 20 pairs for performance
+                    ttk.Label(exact_frame, text=f"... and {exact_count - 20} more duplicate pairs").pack(anchor=tk.W, padx=10, pady=5)
+                    break
+                    
+                dup_frame = ttk.Frame(exact_frame)
+                dup_frame.pack(fill=tk.X, pady=5, padx=5)
                 
-            dup_frame = ttk.Frame(exact_frame)
-            dup_frame.pack(fill=tk.X, pady=5, padx=5)
-            
-            # Show original and duplicate file names
-            orig_name = os.path.basename(dup['original'])
-            dup_name = os.path.basename(dup['duplicate'])
-            
-            ttk.Label(dup_frame, text=f"Original: {orig_name}").pack(anchor=tk.W)
-            ttk.Label(dup_frame, text=f"Duplicate: {dup_name}").pack(anchor=tk.W)
-            
-            # Add buttons to view files
-            btn_frame = ttk.Frame(dup_frame)
-            btn_frame.pack(fill=tk.X, pady=5)
-            
-            ttk.Button(
-                btn_frame, 
-                text="View Original", 
-                command=lambda p=dup['original']: self._open_file(p)
-            ).pack(side=tk.LEFT, padx=5)
-            
-            ttk.Button(
-                btn_frame, 
-                text="View Duplicate", 
-                command=lambda p=dup['duplicate']: self._open_file(p)
-            ).pack(side=tk.LEFT, padx=5)
-            
-            # Add separator between pairs
-            if i < exact_count - 1:
-                ttk.Separator(exact_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+                # Show original and duplicate file names
+                orig_name = os.path.basename(dup['original'])
+                dup_name = os.path.basename(dup['duplicate'])
+                
+                ttk.Label(dup_frame, text=f"Original: {orig_name}").pack(anchor=tk.W)
+                ttk.Label(dup_frame, text=f"Duplicate: {dup_name}").pack(anchor=tk.W)
+                
+                # Add buttons to view files
+                btn_frame = ttk.Frame(dup_frame)
+                btn_frame.pack(fill=tk.X, pady=5)
+                
+                ttk.Button(
+                    btn_frame, 
+                    text="View Original", 
+                    command=lambda p=dup['original']: self._open_file(p)
+                ).pack(side=tk.LEFT, padx=5)
+                
+                ttk.Button(
+                    btn_frame, 
+                    text="View Duplicate", 
+                    command=lambda p=dup['duplicate']: self._open_file(p)
+                ).pack(side=tk.LEFT, padx=5)
+                
+                # Add separator between pairs
+                if i < exact_count - 1:
+                    ttk.Separator(exact_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
         
         # Display similar images
         if similar_count > 0:
@@ -1146,45 +1151,45 @@ ttk.Label(name_frame, text="Name for Filtered Dataset:").pack(side=tk.LEFT, padx
             
             # Sort by similarity (highest first)
             similar_images = sorted(
-            duplicate_data['similar_images'],
-            key=lambda x: x['similarity'],
-            reverse=True
+                duplicate_data['similar_images'],
+                key=lambda x: x['similarity'],
+                reverse=True
             )
             
             # Show each similar pair
             for i, sim in enumerate(similar_images):
-            if i >= 20:  # Limit to 20 pairs for performance
-                ttk.Label(similar_frame, text=f"... and {similar_count - 20} more similar pairs").pack(anchor=tk.W, padx=10, pady=5)
-                break
+                if i >= 20:  # Limit to 20 pairs for performance
+                    ttk.Label(similar_frame, text=f"... and {similar_count - 20} more similar pairs").pack(anchor=tk.W, padx=10, pady=5)
+                    break
+                    
+                sim_frame = ttk.Frame(similar_frame)
+                sim_frame.pack(fill=tk.X, pady=5, padx=5)
                 
-            sim_frame = ttk.Frame(similar_frame)
-            sim_frame.pack(fill=tk.X, pady=5, padx=5)
-            
-            # Show files and similarity
-            img1_name = os.path.basename(sim['image1'])
-            img2_name = os.path.basename(sim['image2'])
-            similarity = sim['similarity'] * 100  # Convert to percentage
-            
-            ttk.Label(sim_frame, text=f"Similarity: {similarity:.1f}%").pack(anchor=tk.W)
-            ttk.Label(sim_frame, text=f"Image 1: {img1_name}").pack(anchor=tk.W)
-            ttk.Label(sim_frame, text=f"Image 2: {img2_name}").pack(anchor=tk.W)
-            
-            # Add buttons to view files
-            btn_frame = ttk.Frame(sim_frame)
-            btn_frame.pack(fill=tk.X, pady=5)
-            
-            ttk.Button(
-                btn_frame, 
-                text="View Image 1", 
-                command=lambda p=sim['image1']: self._open_file(p)
-            ).pack(side=tk.LEFT, padx=5)
-            
-            ttk.Button(
-                btn_frame, 
-                text="View Image 2", 
-                command=lambda p=sim['image2']: self._open_file(p)
-            ).pack(side=tk.LEFT, padx=5)
-            
-            # Add separator between pairs
-            if i < similar_count - 1:
-                ttk.Separator(sim_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+                # Show files and similarity
+                img1_name = os.path.basename(sim['image1'])
+                img2_name = os.path.basename(sim['image2'])
+                similarity = sim['similarity'] * 100  # Convert to percentage
+                
+                ttk.Label(sim_frame, text=f"Similarity: {similarity:.1f}%").pack(anchor=tk.W)
+                ttk.Label(sim_frame, text=f"Image 1: {img1_name}").pack(anchor=tk.W)
+                ttk.Label(sim_frame, text=f"Image 2: {img2_name}").pack(anchor=tk.W)
+                
+                # Add buttons to view files
+                btn_frame = ttk.Frame(sim_frame)
+                btn_frame.pack(fill=tk.X, pady=5)
+                
+                ttk.Button(
+                    btn_frame, 
+                    text="View Image 1", 
+                    command=lambda p=sim['image1']: self._open_file(p)
+                ).pack(side=tk.LEFT, padx=5)
+                
+                ttk.Button(
+                    btn_frame, 
+                    text="View Image 2", 
+                    command=lambda p=sim['image2']: self._open_file(p)
+                ).pack(side=tk.LEFT, padx=5)
+                
+                # Add separator between pairs
+                if i < similar_count - 1:
+                    ttk.Separator(similar_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)

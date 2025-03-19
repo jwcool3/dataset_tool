@@ -160,7 +160,7 @@ class DatasetOperations:
         return (train_id, val_id, test_id)
     
     def _split_stratified(self, dataset_id, source_path, train_dir, val_dir, test_dir,
-                         train_ratio, val_ratio, test_ratio):
+                        train_ratio, val_ratio, test_ratio):
         """Perform a stratified split preserving class distribution."""
         # Get all subfolders (assuming they are class folders)
         class_folders = []
@@ -460,8 +460,11 @@ class DatasetOperations:
         # Check file extension
         if 'extension' in criteria:
             ext = os.path.splitext(file_path)[1].lower()
-            if isinstance(criteria['extension'], list):
-                if ext not in criteria['extension']:
+            if criteria['extension'] == "all":
+                # All extensions are allowed, so continue with other checks
+                pass
+            elif isinstance(criteria['extension'], list):
+                if ext not in [e.lower() for e in criteria['extension']]:
                     return False
             elif ext != criteria['extension'].lower():
                 return False
@@ -489,12 +492,12 @@ class DatasetOperations:
                     if 'min_height' in criteria and height < criteria['min_height']:
                         return False
                         
-                    if 'max_width' in criteria and width > criteria['max_width']:
+                    if 'max_width' in criteria and criteria['max_width'] > 0 and width > criteria['max_width']:
                         return False
                         
-                    if 'max_height' in criteria and height > criteria['max_height']:
+                    if 'max_height' in criteria and criteria['max_height'] > 0 and height > criteria['max_height']:
                         return False
-            except:
+            except Exception:
                 # Not an image or error opening it
                 return False
         
@@ -504,14 +507,19 @@ class DatasetOperations:
                 from PIL import Image
                 with Image.open(file_path) as img:
                     width, height = img.size
-                    aspect_ratio = width / height
                     
-                    if 'min_aspect_ratio' in criteria and aspect_ratio < criteria['min_aspect_ratio']:
+                    # Avoid division by zero
+                    if height == 0:
                         return False
                         
-                    if 'max_aspect_ratio' in criteria and aspect_ratio > criteria['max_aspect_ratio']:
+                    aspect_ratio = width / height
+                    
+                    if 'min_aspect_ratio' in criteria and criteria['min_aspect_ratio'] > 0 and aspect_ratio < criteria['min_aspect_ratio']:
                         return False
-            except:
+                        
+                    if 'max_aspect_ratio' in criteria and criteria['max_aspect_ratio'] > 0 and aspect_ratio > criteria['max_aspect_ratio']:
+                        return False
+            except Exception:
                 return False
         
         # All filters passed
@@ -771,35 +779,25 @@ names: []  # class names
                     
                     # Create basic XML structure
                     xml_content = f"""
-<annotation>
-    <folder>JPEGImages</folder>
-    <filename>{image_id}.jpg</filename>
-    <path>{target_path}</path>
-    <source>
-        <database>Unknown</database>
-    </source>
-    <size>
-        <width>{width}</width>
-        <height>{height}</height>
-        <depth>3</depth>
-    </size>
-    <segmented>0</segmented>
-</annotation>
-"""
+    <annotation>
+        <folder>JPEGImages</folder>
+        <filename>{image_id}.jpg</filename>
+        <path>{target_path}</path>
+        <source>
+            <database>Unknown</database>
+        </source>
+        <size>
+            <width>{width}</width>
+            <height>{height}</height>
+            <depth>3</depth>
+        </size>
+        <segmented>0</segmented>
+    </annotation>
+    """
                     with open(xml_path, 'w') as f:
                         f.write(xml_content)
         
         # Create ImageSets files
-        import random
-        random.shuffle(image_ids)
-        
-        # Create train/val/test splits (70/15/15 split)
-        train_size = int(len(image_ids) * 0.7)
-        val_size = int(len(image_ids) * 0.15)
-        
-        train_ids = image
-
-# Create ImageSets files
         import random
         random.shuffle(image_ids)
         
