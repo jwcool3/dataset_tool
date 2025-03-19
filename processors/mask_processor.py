@@ -31,11 +31,9 @@ class MaskProcessor:
         Returns:
             bool: True if successful, False otherwise
         """
-        # Create output directories
+        # Create base output directory
         crop_output_dir = os.path.join(output_dir, "cropped")
         os.makedirs(crop_output_dir, exist_ok=True)
-        crop_masks_dir = os.path.join(crop_output_dir, "masks")
-        os.makedirs(crop_masks_dir, exist_ok=True)
         
         # Create debug directory if debug mode is enabled
         debug_dir = None
@@ -43,8 +41,61 @@ class MaskProcessor:
             debug_dir = os.path.join(output_dir, "debug")
             os.makedirs(debug_dir, exist_ok=True)
         
-        # Find all image and mask pairs
-        image_mask_pairs = self._find_image_mask_pairs(input_dir)
+        # Dictionary to track all processed folders and their corresponding output folders
+        processed_dirs = {}
+        
+        # Find all image and mask pairs, preserving subfolder structure
+        image_mask_pairs = []
+        
+        # Function to find mask-image pairs in a given directory with relative paths
+        def find_pairs_in_directory(directory, relative_path=""):
+            # Check if this directory itself has a 'masks' subfolder
+            mask_dir = os.path.join(directory, "masks")
+            if os.path.isdir(mask_dir):
+                # Create corresponding output directories
+                current_output_dir = os.path.join(crop_output_dir, relative_path)
+                current_mask_output_dir = os.path.join(current_output_dir, "masks")
+                
+                os.makedirs(current_output_dir, exist_ok=True)
+                os.makedirs(current_mask_output_dir, exist_ok=True)
+                
+                # Store this directory mapping
+                processed_dirs[directory] = current_output_dir
+                
+                # Process each image file in this directory
+                for file in os.listdir(directory):
+                    file_path = os.path.join(directory, file)
+                    # Skip subdirectories and only process image files
+                    if os.path.isfile(file_path) and file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        # Check for corresponding mask
+                        mask_path = os.path.join(mask_dir, file)
+                        if os.path.exists(mask_path):
+                            image_mask_pairs.append({
+                                'image_path': file_path,
+                                'mask_path': mask_path,
+                                'output_dir': current_output_dir
+                            })
+                        else:
+                            # Try different extensions
+                            for ext in ['.png', '.jpg', '.jpeg']:
+                                alt_mask_path = os.path.join(mask_dir, os.path.splitext(file)[0] + ext)
+                                if os.path.exists(alt_mask_path):
+                                    image_mask_pairs.append({
+                                        'image_path': file_path,
+                                        'mask_path': alt_mask_path,
+                                        'output_dir': current_output_dir
+                                    })
+                                    break
+            
+            # Now check if any subdirectories need to be processed
+            for item in os.listdir(directory):
+                item_path = os.path.join(directory, item)
+                if os.path.isdir(item_path) and item.lower() != "masks":  # Skip 'masks' directories
+                    new_relative_path = os.path.join(relative_path, item)
+                    find_pairs_in_directory(item_path, new_relative_path)  # Recursive call
+        
+        # Start finding pairs from the input directory
+        find_pairs_in_directory(input_dir)
         
         if not image_mask_pairs:
             self.app.status_label.config(text="No image-mask pairs found.")
@@ -59,14 +110,18 @@ class MaskProcessor:
         min_size = 20  # Minimum bounding box dimension
         
         # Process each pair
-        for idx, (image_path, mask_path) in enumerate(image_mask_pairs):
+        for idx, pair_info in enumerate(image_mask_pairs):
             if not self.app.processing:  # Check if processing was cancelled
                 break
             
+            image_path = pair_info['image_path']
+            mask_path = pair_info['mask_path']
+            current_output_dir = pair_info['output_dir']
+            
             # Get filenames for output
-            output_name = f"{processed_count:04d}.png"
-            output_image_path = os.path.join(crop_output_dir, output_name)
-            output_mask_path = os.path.join(crop_masks_dir, output_name)
+            filename = os.path.basename(image_path)
+            output_image_path = os.path.join(current_output_dir, filename)
+            output_mask_path = os.path.join(current_output_dir, "masks", filename)
             
             # Process the image-mask pair
             success = self._process_image_pair(
@@ -89,7 +144,7 @@ class MaskProcessor:
             self.app.status_label.config(text=f"Processed {idx+1}/{total_pairs} image-mask pairs")
             self.app.root.update_idletasks()
         
-        self.app.status_label.config(text=f"Mask region cropping completed. Processed {processed_count} pairs.")
+        self.app.status_label.config(text=f"Mask region cropping completed. Processed {processed_count} pairs across {len(processed_dirs)} folders.")
         self.app.progress_bar['value'] = 100
         return True
     

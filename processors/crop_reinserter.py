@@ -34,20 +34,32 @@ class CropReinserter:
         print(f"Reinsertion: Source (Original) Dir: {self.app.source_images_dir.get()}")
         print(f"Reinsertion: Output Dir: {reinsert_output_dir}")
         
-        # Find all cropped images
+        # Find all cropped images and respect subfolder structure
         cropped_images = []
+        subfolders = set()
+        
         for root, _, files in os.walk(input_dir):
             # Skip if this is a 'masks' directory
             if os.path.basename(root).lower() == "masks":
                 print(f"Skipping masks directory: {root}")
                 continue
                 
+            # Get the relative path from input_dir to this subfolder
+            rel_path = os.path.relpath(root, input_dir)
+            if rel_path != '.':
+                subfolders.add(rel_path)
+            
+            # Find image files
             for file in files:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                     cropped_images.append(os.path.join(root, file))
+                    
+                    # Also check for metadata JSON file
+                    json_path = os.path.splitext(os.path.join(root, file))[0] + "_crop_info.json"
+                    if os.path.exists(json_path):
+                        print(f"Found metadata for {file}")
         
-        print(f"Found {len(cropped_images)} cropped images to process")
-        
+        print(f"Found {len(cropped_images)} cropped images to process across {len(subfolders) if subfolders else 1} subfolders")
         # Get source directory (original images)
         source_dir = self.app.source_images_dir.get()
         if not source_dir or not os.path.isdir(source_dir):
