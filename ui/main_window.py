@@ -15,7 +15,13 @@ from ui.tabs.gallery_tab import GalleryTab
 from ui.dialogs import AboutDialog, UsageGuideDialog
 from utils.config_manager import ConfigManager
 from processors.mask_expander import MaskExpander
-
+from utils.dataset_manager import (
+    DatasetRegistry, 
+    DatasetExplorer, 
+    DatasetOperations, 
+    DatasetAnalyzer,
+    DatasetManagerTab
+)
 class MainWindow:
     """Main window class that sets up the UI and connects functionality."""
     
@@ -60,7 +66,9 @@ class MainWindow:
         # Initialize outlier detection - ADD THIS LINE
         self._init_outlier_detection()
 
-
+        # Create Dataset Manager Tab
+        self.dataset_manager = DatasetManagerTab(self)
+        self.notebook.add(self.dataset_manager.frame, text="Dataset Manager")
 # Update this method in ui/main_window.py
 
     def _init_variables(self):
@@ -160,7 +168,52 @@ class MainWindow:
         self.menu_bar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self._show_about)
         help_menu.add_command(label="Usage Guide", command=self._show_usage_guide)
+
+        # Add Dataset Manager to Tools menu
+        tools_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.menu_bar.add_cascade(label="Tools", menu=tools_menu)
+        
+        tools_menu.add_command(
+            label="Dataset Manager", 
+            command=lambda: self.notebook.select(self.notebook.index(self.dataset_manager.frame))
+        )
+        
+        # Add integration hooks to other menus/buttons
+        self._add_integration_hooks()
+
     
+
+
+    def _add_integration_hooks(self):
+        # Add button to Input/Output tab
+        add_dataset_btn = ttk.Button(
+            self.input_output_tab.frame, 
+            text="Add to Datasets", 
+            command=self._add_current_directory_to_datasets
+        )
+        add_dataset_btn.pack(side=tk.LEFT, padx=5)
+
+    def _add_current_directory_to_datasets(self):
+        input_dir = self.input_dir.get()
+        if not input_dir or not os.path.isdir(input_dir):
+            messagebox.showerror("Error", "Please select a valid input directory first.")
+            return
+        
+        # Add to dataset registry
+        dataset_id = self.dataset_manager.registry.add_dataset(
+            name=os.path.basename(input_dir),
+            path=input_dir,
+            description="Added from input directory",
+            category="Input"
+        )
+        
+        # Refresh dataset explorer
+        self.dataset_manager.explorer.refresh_datasets()
+        
+        # Switch to Dataset Manager tab
+        self.notebook.select(self.notebook.index(self.dataset_manager.frame))
+
+
     def _run_outlier_detection(self):
         """Run the outlier detection feature."""
         from utils.outlier_detection import OutlierGroupDetector, run_outlier_scan
@@ -578,6 +631,33 @@ class MainWindow:
                     else:
                         self.status_label.config(text=f"Warning: Step {step_name} did not produce expected output. Continuing with same input.")
                     
+                    # Automatically add datasets if auto-add is enabled
+                    if hasattr(self, 'dataset_manager') and getattr(self, 'auto_add_datasets', True):
+                        output_dirs = {
+                            "frames": os.path.join(self.output_dir.get(), "frames"),
+                            "cropped": os.path.join(self.output_dir.get(), "cropped"),
+                            "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks"),
+                            "square_padded": os.path.join(self.output_dir.get(), "square_padded"),
+                            "resized": os.path.join(self.output_dir.get(), "resized"),
+                            "organized": os.path.join(self.output_dir.get(), "organized")
+                        }
+                        
+                        for step_name, dir_path in output_dirs.items():
+                            if os.path.isdir(dir_path) and os.listdir(dir_path):
+                                try:
+                                    self.dataset_manager.registry.add_dataset(
+                                        name=f"{os.path.basename(self.input_dir.get())}_{step_name}",
+                                        path=dir_path,
+                                        description=f"Processed output from {step_name} step",
+                                        category="Processed"
+                                    )
+                                except Exception as e:
+                                    print(f"Failed to add {step_name} dataset: {str(e)}")
+                        
+                        # Refresh the dataset explorer
+                        self.dataset_manager.explorer.refresh_datasets()
+
+
                 except Exception as e:
                     error_msg = f"Error during {step_name} step: {str(e)}"
                     self.status_label.config(text=error_msg)
@@ -627,3 +707,35 @@ class MainWindow:
             # Reset UI state
             self.input_output_tab.process_button.config(state=tk.NORMAL)
             self.input_output_tab.cancel_button.config(state=tk.DISABLED)
+
+
+    def _add_gallery_to_datasets(self):
+        # Check if gallery has images
+        if not hasattr(self, 'gallery_tab') or not self.gallery_tab.images_data:
+            messagebox.showinfo("No Gallery Data", "No images are currently in the gallery.")
+            return
+        
+        # Collect unique image directories
+        image_paths = set()
+        for image_group in self.gallery_tab.images_data:
+            for version in image_group['versions']:
+                image_dir = os.path.dirname(version['path'])
+                image_paths.add(image_dir)
+        
+        # If multiple directories, show selection dialog
+        if len(image_paths) > 1:
+            selected_dir = self._show_directory_selection_dialog(image_paths)
+        else:
+            selected_dir = list(image_paths)[0]
+        
+        if selected_dir:
+            # Add to dataset registry
+            dataset_id = self.dataset_manager.registry.add_dataset(
+                name=f"Gallery_{os.path.basename(selected_dir)}",
+                path=selected_dir,
+                description="Dataset created from gallery view",
+                category="Gallery"
+            )
+            
+            # Refresh dataset explorer
+            self.dataset_manager.explorer.refresh_datasets()
