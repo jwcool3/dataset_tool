@@ -126,7 +126,8 @@ class MainWindow:
         self.mask_expand_iterations = tk.IntVar(value=5)
         self.mask_expand_kernel_size = tk.IntVar(value=3)
         self.mask_expand_preserve_structure = tk.BooleanVar(value=True)
-
+        # Add new variable for mask-only reinsertion
+        self.reinsert_mask_only = tk.BooleanVar(value=False)
         # Preview image storage
         self.preview_image = None
         self.preview_mask = None

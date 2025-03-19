@@ -78,6 +78,51 @@ class CropReinserter:
                     source_images[file] = os.path.join(root, file)
         
         # Rest of the method remains the same...
+        # Perform different reinsertion based on the option
+        if self.app.reinsert_mask_only.get() and mask_path and os.path.exists(mask_path):
+            # Load the mask and make it binary
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            
+            # Resize mask to match cropped image if needed
+            if mask.shape != cropped_img.shape[:2]:
+                mask = cv2.resize(mask, (cropped_img.shape[1], cropped_img.shape[0]), 
+                                cv2.INTER_NEAREST)
+            
+            # Create a floating point mask for blending (0.0 to 1.0)
+            mask_float = binary_mask.astype(float) / 255.0
+            
+            # Create 3-channel mask for RGB images
+            mask_float_3d = np.stack([mask_float] * 3, axis=2)
+            
+            # Calculate insertion position
+            x_pos, y_pos, insert_width, insert_height = self._calculate_insertion_position(
+                source_img, cropped_img, padding_percent)
+            
+            # Create a result image from the source
+            result_img = source_img.copy()
+            
+            # Create a region of interest in the source image
+            roi = result_img[y_pos:y_pos+insert_height, x_pos:x_pos+insert_width]
+            
+            # Resize cropped image if needed
+            if cropped_img.shape[:2] != (insert_height, insert_width):
+                resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
+                                      cv2.INTER_LANCZOS4)
+                resized_mask = cv2.resize(mask_float_3d, (insert_width, insert_height), 
+                                      cv2.INTER_NEAREST)
+            else:
+                resized_crop = cropped_img
+                resized_mask = mask_float_3d
+            
+            # Blend only the masked regions
+            blended_roi = roi * (1 - resized_mask) + resized_crop * resized_mask
+            
+            # Place the blended region back into the result image
+            result_img[y_pos:y_pos+insert_height, x_pos:x_pos+insert_width] = blended_roi
+            
+
+
         
         # Get reinsertion parameters
         padding_percent = self.app.reinsert_padding.get()

@@ -95,6 +95,8 @@ class ConfigTab:
         # Output resolution controls
         ttk.Label(config_frame, text="Output resolution:").grid(column=0, row=3, sticky=tk.W, padx=5, pady=5)
         
+
+
         # Custom resolution frame
         self.resolution_frame = ttk.Frame(config_frame)
         self.resolution_frame.grid(column=1, row=3, sticky=tk.W)
@@ -132,8 +134,45 @@ class ConfigTab:
         self._toggle_resolution_controls()
     
 
+    def _create_crop_reinsertion(self):
+        """Create the crop reinsertion options section."""
+        # Create the main frame for crop reinsertion options
+        reinsertion_frame = ttk.LabelFrame(self.frame, text="Crop Reinsertion", padding="10")
+        reinsertion_frame.pack(fill=tk.X, pady=5)
+        
+        # Source images directory - make it very clear what this is
+        source_frame = ttk.LabelFrame(reinsertion_frame, text="Original Uncropped Images Directory", padding=5)
+        source_frame.pack(fill=tk.X, pady=5)
 
-    
+        ttk.Label(source_frame, 
+                text="Select the directory containing the ORIGINAL UNCROPPED images:",
+                font=("Helvetica", 9, "bold")).pack(anchor=tk.W, padx=5, pady=5)
+
+        source_dir_frame = ttk.Frame(source_frame)
+        source_dir_frame.pack(fill=tk.X, pady=5)
+        ttk.Entry(source_dir_frame, textvariable=self.parent.source_images_dir, width=40).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        ttk.Button(source_dir_frame, text="Browse...", command=self._browse_source_dir).pack(side=tk.RIGHT, padx=5)
+        
+        # Add a direct clarification about Input Directory
+        input_reminder = ttk.Frame(reinsertion_frame, padding=5, relief="groove")
+        input_reminder.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(input_reminder, 
+                text="IMPORTANT: The Input Directory (set in the Input/Output tab) should contain your CROPPED IMAGES.\n"
+                    "Go to the Config tab to set the source directory that contains your ORIGINAL UNCROPPED IMAGES.",
+                foreground="blue",
+                font=("Helvetica", 9, "bold"),
+                wraplength=600).pack(pady=5)
+        
+        # Add mask-only option
+        ttk.Checkbutton(
+            reinsertion_frame, 
+            text="Use mask-only reinsertion (only reinsert masked regions)", 
+            variable=self.parent.reinsert_mask_only
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Rest of your existing code for matching method, padding, etc.
+        
     def _create_mask_video_config(self):
         """Create the mask video options section."""
         mask_video_frame = ttk.LabelFrame(self.frame, text="Mask Video Options", padding="10")
