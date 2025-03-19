@@ -22,50 +22,40 @@ from utils.dataset_manager import (
     DatasetAnalyzer,
     DatasetManagerTab
 )
+
 class MainWindow:
-    """Main window class that sets up the UI and connects functionality."""
-    
     def __init__(self, root):
-        """
-        Initialize the main window UI.
-        
-        Args:
-            root: Tkinter root window
-        """
+        # Set config directory early
+        self.config_dir = os.path.join(os.path.expanduser("~"), ".dataset_preparation_tool")
+        os.makedirs(self.config_dir, exist_ok=True)
+
         self.root = root
-        self.processing = False  # Flag to track processing status
         
-        # Initialize application variables
+        # Initialize variables FIRST
         self._init_variables()
         
-        # Initialize the config manager first
+        # Create the menu bar EARLY in the initialization
+        self.menu_bar = tk.Menu(self.root)
+        self.root.config(menu=self.menu_bar)
+        
+        # Initialize config manager
         from utils.config_manager import ConfigManager
         self.config_manager = ConfigManager(self)
         
-        # Create the UI components
+        # Create main content and status bar 
         self._create_main_content()
         self._create_status_bar()
-        self._create_menu()
         
-
-        self.reinsert_crops_option = tk.BooleanVar(value=False)
-        self.original_images_dir = tk.StringVar()
-        self.selected_original_image = tk.StringVar()
-        self.crop_x_position = tk.IntVar(value=0)
-        self.crop_y_position = tk.IntVar(value=0)
-        self.crop_width = tk.IntVar(value=0)
-        self.crop_height = tk.IntVar(value=0)
-        self.reinsert_padding = tk.IntVar(value=0)
-
         # Create the notebook and tabs
         self._create_notebook()
-
-        # Initialize image comparison integration
+        
+        # Create the menu 
+        self._create_menu()
+        
+        # Other initializations
         self._init_image_comparison()
-
-        # Initialize outlier detection - ADD THIS LINE
         self._init_outlier_detection()
-
+        
         # Create Dataset Manager Tab
         self.dataset_manager = DatasetManagerTab(self)
         self.notebook.add(self.dataset_manager.frame, text="Dataset Manager")
@@ -141,9 +131,9 @@ class MainWindow:
         self.preview_mask = None
     
     def _create_menu(self):
-        """Create the application menu bar."""
-        self.menu_bar = tk.Menu(self.root)
-        self.root.config(menu=self.menu_bar)
+        # Clear any existing menus
+        for i in range(self.menu_bar.index('end') + 1):
+            self.menu_bar.delete(0)
         
         # File menu
         file_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -153,41 +143,34 @@ class MainWindow:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         
-        # Tools menu (add this)
+        # Tools menu
         tools_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Tools", menu=tools_menu)
         
-        # Add outlier detection option (add this)
+        # Add Dataset Manager to Tools menu
+        tools_menu.add_command(
+            label="Dataset Manager", 
+            command=lambda: self.notebook.select(self.notebook.index(self.dataset_manager.frame))
+        )
+        
+        # Outlier detection option
         tools_menu.add_command(
             label="Find Outlier Groups...", 
             command=self._run_outlier_detection
-    )
-
+        )
+        
         # Help menu
         help_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.menu_bar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self._show_about)
         help_menu.add_command(label="Usage Guide", command=self._show_usage_guide)
 
-        # Add Dataset Manager to Tools menu
-        tools_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.menu_bar.add_cascade(label="Tools", menu=tools_menu)
-        
-        tools_menu.add_command(
-            label="Dataset Manager", 
-            command=lambda: self.notebook.select(self.notebook.index(self.dataset_manager.frame))
-        )
-        
-        # Add integration hooks to other menus/buttons
-        self._add_integration_hooks()
-
     
-
 
     def _add_integration_hooks(self):
         # Add button to Input/Output tab
         add_dataset_btn = ttk.Button(
-            self.input_output_tab.frame, 
+            self.input_output_tab.frame,  # Use .frame to access the actual frame 
             text="Add to Datasets", 
             command=self._add_current_directory_to_datasets
         )
@@ -263,7 +246,6 @@ class MainWindow:
         self._init_image_comparison()
 
     def _init_image_comparison(self):
-        """Initialize image comparison functionality."""
         # Import here to avoid circular imports
         from utils.gallery_integration import GalleryComparisonIntegrator
         
