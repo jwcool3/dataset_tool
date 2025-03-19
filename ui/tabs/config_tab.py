@@ -18,26 +18,37 @@ class ConfigTab:
         """
         # Store the parent reference
         self.parent = parent
+        self.root = parent.root
         
         # Create the main frame that will be added to the notebook
         self.frame = ttk.Frame(parent.notebook)
         
-        # Create a canvas and scrollbar inside this main frame
-        self.canvas = tk.Canvas(self.frame)
-        self.scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
+        # Create a proper scrollable frame
+        # Main outer frame
+        self.outer_frame = ttk.Frame(self.frame)
+        self.outer_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Canvas with scrollbar
+        self.canvas = tk.Canvas(self.outer_frame)
+        self.scrollbar = ttk.Scrollbar(self.outer_frame, orient="vertical", command=self.canvas.yview)
+        
+        # Pack scrollbar first, then canvas
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Configure canvas to use scrollbar
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         
-        # Pack the scrollbar and canvas within the main frame
-        self.scrollbar.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
-        
-        # Create a content frame inside the canvas for actual content
+        # Inner content frame 
         self.content_frame = ttk.Frame(self.canvas)
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw", tags="content_frame")
         
-        # Configure the canvas to update the scrollregion
-        self.content_frame.bind("<Configure>", self._on_frame_configure)
+        # Configure canvas behavior
         self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.content_frame.bind("<Configure>", self._on_frame_configure)
+        
+        # Bind mousewheel for scrolling
+        self._bind_mousewheel()
         
         # Initialize attributes that will be set later
         self.width_spinbox = None
@@ -50,7 +61,6 @@ class ConfigTab:
         self.resolution_frame = None
         
         # Create the UI components for each configuration section
-        # IMPORTANT: Add sections to the content_frame, not self.frame
         self._create_general_config()
         self._create_mask_video_config()
         self._create_mask_expand_section()
@@ -58,19 +68,45 @@ class ConfigTab:
         self._create_square_padding()
         self._create_portrait_crop()
         self._create_crop_reinsertion()
-        
-        # Bind mousewheel scrolling for better usability
-        self._bind_mousewheel(self.canvas)
-        
-        # Update the scroll region after all content is added
-        self.content_frame.update_idletasks()
+    
+    def _on_canvas_configure(self, event):
+        """Resize the inner frame to match the canvas."""
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
+    
+    def _on_frame_configure(self, event):
+        """Reset the scroll region to encompass the inner frame."""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    
+    def _bind_mousewheel(self):
+        """Bind mousewheel to scrolling."""
+        # Define a function to scroll the canvas
+        def _on_mousewheel(event):
+            # Cross-platform handling of mousewheel
+            if event.delta:
+                # Windows & macOS
+                self.canvas.yview_scroll(int(-1 * (event.delta/120)), "units")
+            else:
+                # Linux
+                if event.num == 4:
+                    self.canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    self.canvas.yview_scroll(1, "units")
+        
+        # Windows binding
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Linux bindings
+        self.canvas.bind_all("<Button-4>", _on_mousewheel)
+        self.canvas.bind_all("<Button-5>", _on_mousewheel)
+        
+        # Additional binding for focus management
+        self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
     
     def _create_general_config(self):
         """Create the general configuration options section."""
         # Use self.content_frame instead of self.frame
         config_frame = ttk.LabelFrame(self.content_frame, text="Configuration Options", padding="10")
-        config_frame.pack(fill=tk.X, pady=5)
+        config_frame.pack(fill=tk.X, pady=5, padx=10)
         
         # Create a grid layout for configuration options
         ttk.Label(config_frame, text="Frame extraction rate (fps):").grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
@@ -96,8 +132,6 @@ class ConfigTab:
         # Output resolution controls
         ttk.Label(config_frame, text="Output resolution:").grid(column=0, row=3, sticky=tk.W, padx=5, pady=5)
         
-
-
         # Custom resolution frame
         self.resolution_frame = ttk.Frame(config_frame)
         self.resolution_frame.grid(column=1, row=3, sticky=tk.W)
@@ -130,16 +164,60 @@ class ConfigTab:
         # Add a description for naming pattern
         ttk.Label(config_frame, text="Use {index} for sequential numbering").grid(
             column=2, row=2, columnspan=2, sticky=tk.W, padx=5)
+
+    def _create_mask_expand_section(self):
+        """Create the mask expansion options section."""
+        expand_frame = ttk.LabelFrame(self.content_frame, text="Mask Expansion Options", padding="10")
+        expand_frame.pack(fill=tk.X, pady=5, padx=10)
         
-        # Set initial state of the resolution controls
-        self._toggle_resolution_controls()
-    
+        # Make the label more eye-catching
+        header_label = ttk.Label(expand_frame, text="Mask Expansion Settings", font=("Helvetica", 10, "bold"))
+        header_label.grid(column=0, row=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 10))
+        
+        # Iterations control
+        ttk.Label(expand_frame, text="Dilation Iterations:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+        iterations_spinbox = ttk.Spinbox(
+            expand_frame, 
+            from_=1, 
+            to=50, 
+            increment=1, 
+            textvariable=self.parent.mask_expand_iterations, 
+            width=5
+        )
+        iterations_spinbox.grid(column=1, row=1, padx=5, sticky=tk.W)
+        
+        # Kernel size control
+        ttk.Label(expand_frame, text="Kernel Size:").grid(column=0, row=2, sticky=tk.W, padx=5, pady=5)
+        kernel_spinbox = ttk.Spinbox(
+            expand_frame, 
+            from_=3, 
+            to=21, 
+            increment=2,  # Only odd numbers make sense for kernel size
+            textvariable=self.parent.mask_expand_kernel_size, 
+            width=5
+        )
+        kernel_spinbox.grid(column=1, row=2, padx=5, sticky=tk.W)
+        
+        # Preserve directory structure option
+        ttk.Checkbutton(
+            expand_frame, 
+            text="Preserve directory structure", 
+            variable=self.parent.mask_expand_preserve_structure
+        ).grid(column=0, row=3, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        
+        # Help text with more visible styling
+        help_frame = ttk.Frame(expand_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
+        help_frame.grid(column=0, row=4, columnspan=3, sticky=tk.W+tk.E, padx=5, pady=10)
+        
+        help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
+                    "Kernel size controls the shape of the expansion (odd numbers only).")
+        ttk.Label(help_frame, text=help_text, wraplength=600).pack(padx=5, pady=5)
 
     def _create_crop_reinsertion(self):
         """Create the crop reinsertion options section."""
         # Create the main frame for crop reinsertion options
-        reinsertion_frame = ttk.LabelFrame(self.frame, text="Crop Reinsertion", padding="10")
-        reinsertion_frame.pack(fill=tk.X, pady=5)
+        reinsertion_frame = ttk.LabelFrame(self.content_frame, text="Crop Reinsertion", padding="10")
+        reinsertion_frame.pack(fill=tk.X, pady=5, padx=10)
         
         # Source images directory - make it very clear what this is
         source_frame = ttk.LabelFrame(reinsertion_frame, text="Original Uncropped Images Directory", padding=5)
@@ -172,69 +250,29 @@ class ConfigTab:
             variable=self.parent.reinsert_mask_only
         ).pack(anchor=tk.W, padx=5, pady=5)
         
-        # Rest of your existing code for matching method, padding, etc.
+        # Add padding option with a better label
+        padding_frame = ttk.Frame(reinsertion_frame)
+        padding_frame.pack(fill=tk.X, pady=5)
         
-    def _create_mask_video_config(self):
-        """Create the mask video options section."""
-        mask_video_frame = ttk.LabelFrame(self.frame, text="Mask Video Options", padding="10")
-        mask_video_frame.pack(fill=tk.X, pady=5)
-
-        # Add checkbox to enable mask video
+        ttk.Label(padding_frame, text="Reinsertion padding (%):").pack(side=tk.LEFT, padx=5)
+        ttk.Spinbox(
+            padding_frame,
+            from_=0,
+            to=50,
+            increment=5,
+            textvariable=self.parent.reinsert_padding,
+            width=5
+        ).pack(side=tk.LEFT)
+        
+        # Add positioning options
+        pos_frame = ttk.LabelFrame(reinsertion_frame, text="Positioning", padding=5)
+        pos_frame.pack(fill=tk.X, pady=5)
+        
         ttk.Checkbutton(
-            mask_video_frame,
-            text="Use mask video for all source videos",
-            variable=self.parent.use_mask_video,
-            command=self._toggle_mask_video_controls
-        ).grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
-
-        # Add mask video path entry and browse button
-        ttk.Label(mask_video_frame, text="Mask video:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
-        self.mask_video_entry = ttk.Entry(mask_video_frame, textvariable=self.parent.mask_video_path, width=50)
-        self.mask_video_entry.grid(column=1, row=1, padx=5, sticky=tk.W)
-        self.mask_video_button = ttk.Button(mask_video_frame, text="Browse...", command=self._browse_mask_video)
-        self.mask_video_button.grid(column=2, row=1, padx=5)
-
-        # Add help text
-        ttk.Label(
-            mask_video_frame, 
-            text="This will extract frames from the mask video and copy them to the masks subfolder of each source video.",
-            wraplength=600
-        ).grid(column=0, row=2, columnspan=3, sticky=tk.W, padx=5, pady=5)
-        
-        # Initialize all UI states - do this at the end after all UI components are created
-        self.root_after_id = self.frame.after(100, self._initialize_ui_states)
-    
-
-    def _on_frame_configure(self, event):
-        """Update the scrollregion of the canvas when the frame is resized."""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def _on_canvas_configure(self, event):
-        """Update the canvas window to match the frame size."""
-        width = event.width
-        self.canvas.itemconfig(self.canvas_window, width=width)
-
-    def _bind_mousewheel(self, widget):
-        """Bind mousewheel scrolling to the canvas."""
-        def _on_mousewheel(event):
-            # The delta value varies between platforms, normalize it
-            if event.delta:
-                # Windows or macOS
-                delta = -1 * (event.delta // 120)
-            else:
-                # Linux
-                delta = event.num
-
-            widget.yview_scroll(delta, "units")
-        
-        # Bind for Windows/macOS
-        widget.bind_all("<MouseWheel>", _on_mousewheel)
-        
-        # Bind for Linux
-        widget.bind_all("<Button-4>", lambda e: widget.yview_scroll(-1, "units"))
-        widget.bind_all("<Button-5>", lambda e: widget.yview_scroll(1, "units"))
-
-
+            pos_frame,
+            text="Auto-center (try to find original position)",
+            variable=self.parent.use_center_position
+        ).pack(anchor=tk.W, padx=5, pady=5)
 # ...existing code...
     def _create_mask_expand_section(self):
         """Create the mask expansion options section."""
@@ -289,7 +327,7 @@ class ConfigTab:
 
     def _create_conditional_resize(self):
         """Create the conditional resize options section."""
-        resize_frame = ttk.LabelFrame(self.frame, text="Conditional Resize Options", padding="10")
+        resize_frame = ttk.LabelFrame(self.content_frame, text="Conditional Resize Options", padding="10")
         resize_frame.pack(fill=tk.X, pady=5)
         
         # Checkbox to enable conditional resize
@@ -328,7 +366,7 @@ class ConfigTab:
     
     def _create_square_padding(self):
         """Create the square padding options section."""
-        padding_frame = ttk.LabelFrame(self.frame, text="Square Padding Options", padding="10")
+        padding_frame = ttk.LabelFrame(self.content_frame, text="Square Padding Options", padding="10")
         padding_frame.pack(fill=tk.X, pady=5)
         
         # Color options
@@ -365,9 +403,38 @@ class ConfigTab:
         # Initialize control states
         self._toggle_square_padding_controls()
     
+
+
+    def _create_mask_video_config(self):
+        """Create the mask video options section."""
+        mask_video_frame = ttk.LabelFrame(self.content_frame, text="Mask Video Options", padding="10")
+        mask_video_frame.pack(fill=tk.X, pady=5, padx=10)
+
+        # Add checkbox to enable mask video
+        ttk.Checkbutton(
+            mask_video_frame,
+            text="Use mask video for all source videos",
+            variable=self.parent.use_mask_video,
+            command=self._toggle_mask_video_controls
+        ).grid(column=0, row=0, sticky=tk.W, padx=5, pady=5)
+
+        # Add mask video path entry and browse button
+        ttk.Label(mask_video_frame, text="Mask video:").grid(column=0, row=1, sticky=tk.W, padx=5, pady=5)
+        self.mask_video_entry = ttk.Entry(mask_video_frame, textvariable=self.parent.mask_video_path, width=50)
+        self.mask_video_entry.grid(column=1, row=1, padx=5, sticky=tk.W)
+        self.mask_video_button = ttk.Button(mask_video_frame, text="Browse...", command=self._browse_mask_video)
+        self.mask_video_button.grid(column=2, row=1, padx=5)
+
+        # Add help text
+        ttk.Label(
+            mask_video_frame, 
+            text="This will extract frames from the mask video and copy them to the masks subfolder of each source video.",
+            wraplength=600
+        ).grid(column=0, row=2, columnspan=3, sticky=tk.W, padx=5, pady=5)
+
     def _create_portrait_crop(self):
         """Create the portrait crop options section."""
-        portrait_frame = ttk.LabelFrame(self.frame, text="Portrait Photo Handling", padding="10")
+        portrait_frame = ttk.LabelFrame(self.content_frame, text="Portrait Photo Handling", padding="10")
         portrait_frame.pack(fill=tk.X, pady=5)
         
         # Checkbox to enable portrait cropping
@@ -457,7 +524,7 @@ class ConfigTab:
     def _toggle_portrait_crop_controls(self):
         """Enable or disable portrait crop controls based on checkbox state."""
         # Find and update the crop position combobox
-        for widget in self.frame.winfo_children():
+        for widget in self.content_frame.winfo_children():
             if isinstance(widget, ttk.LabelFrame) and widget.cget("text") == "Portrait Photo Handling":
                 for child in widget.winfo_children():
                     if isinstance(child, ttk.Combobox):
