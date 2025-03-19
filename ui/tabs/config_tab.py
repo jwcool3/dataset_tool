@@ -9,7 +9,6 @@ from tkinter import ttk
 class ConfigTab:
     """Tab for configuring processing options."""
     
-# ...existing code...
     def __init__(self, parent):
         """
         Initialize the configuration tab.
@@ -33,7 +32,7 @@ class ConfigTab:
         self.canvas.pack(side="left", fill="both", expand=True)
         
         # Create a content frame inside the canvas for actual content
-        self.content_frame = ttk.Frame(self.canvas, padding="10")
+        self.content_frame = ttk.Frame(self.canvas)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
         
         # Configure the canvas to update the scrollregion
@@ -51,12 +50,10 @@ class ConfigTab:
         self.resolution_frame = None
         
         # Create the UI components for each configuration section
+        # IMPORTANT: Add sections to the content_frame, not self.frame
         self._create_general_config()
         self._create_mask_video_config()
-        
-        # Add this mask expansion section early in the tab order for visibility
         self._create_mask_expand_section()
-        
         self._create_conditional_resize()
         self._create_square_padding()
         self._create_portrait_crop()
@@ -64,11 +61,15 @@ class ConfigTab:
         
         # Bind mousewheel scrolling for better usability
         self._bind_mousewheel(self.canvas)
-    # ...existing code...
+        
+        # Update the scroll region after all content is added
+        self.content_frame.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def _create_general_config(self):
         """Create the general configuration options section."""
-        config_frame = ttk.LabelFrame(self.frame, text="Configuration Options", padding="10")
+        # Use self.content_frame instead of self.frame
+        config_frame = ttk.LabelFrame(self.content_frame, text="Configuration Options", padding="10")
         config_frame.pack(fill=tk.X, pady=5)
         
         # Create a grid layout for configuration options
@@ -207,16 +208,31 @@ class ConfigTab:
     def _on_frame_configure(self, event):
         """Update the scrollregion of the canvas when the frame is resized."""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
     def _on_canvas_configure(self, event):
         """Update the canvas window to match the frame size."""
-        self.canvas.itemconfigure(self.canvas_window, width=event.width)
+        width = event.width
+        self.canvas.itemconfig(self.canvas_window, width=width)
+
     def _bind_mousewheel(self, widget):
         """Bind mousewheel scrolling to the canvas."""
-        widget.bind_all("<MouseWheel>", lambda event: widget.yview_scroll(int(-1*(event.delta/120)), "units"))
-        widget.bind_all("<Button-4>", lambda event: widget.yview_scroll(-1, "units"))
-        widget.bind_all("<Button-5>", lambda event: widget.yview_scroll(1, "units"))
+        def _on_mousewheel(event):
+            # The delta value varies between platforms, normalize it
+            if event.delta:
+                # Windows or macOS
+                delta = -1 * (event.delta // 120)
+            else:
+                # Linux
+                delta = event.num
 
-
+            widget.yview_scroll(delta, "units")
+        
+        # Bind for Windows/macOS
+        widget.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        # Bind for Linux
+        widget.bind_all("<Button-4>", lambda e: widget.yview_scroll(-1, "units"))
+        widget.bind_all("<Button-5>", lambda e: widget.yview_scroll(1, "units"))
 
 
 # ...existing code...
