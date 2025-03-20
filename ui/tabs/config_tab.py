@@ -681,11 +681,11 @@ class ConfigTab:
         ).pack(side=tk.RIGHT, padx=5)
         
         # Important note
-        note_frame = ttk.Frame(content, padding=5, relief="groove")
-        note_frame.pack(fill=tk.X, pady=10)
+        self.note_frame = ttk.Frame(content, padding=5, relief="groove")
+        self.note_frame.pack(fill=tk.X, pady=10)
         
         ttk.Label(
-            note_frame,
+            self.note_frame,
             text="IMPORTANT: The Input Directory (set in the Input/Output tab) should contain your CROPPED IMAGES.\n"
                 "The directory above should contain your ORIGINAL UNCROPPED IMAGES.",
             foreground="blue",
@@ -786,7 +786,11 @@ class ConfigTab:
         """Show or hide advanced mask alignment controls based on the checkbox state."""
         if hasattr(self, 'advanced_frame'):
             if self.parent.reinsert_handle_different_masks.get():
-                self.advanced_frame.pack(fill=tk.X, pady=5, padx=5, after=self.note_frame)
+                # Pack it after the note_frame if available, otherwise just pack it normally
+                try:
+                    self.advanced_frame.pack(fill=tk.X, pady=5, padx=5, after=self.note_frame)
+                except:
+                    self.advanced_frame.pack(fill=tk.X, pady=5, padx=5)
             else:
                 self.advanced_frame.pack_forget()
 
