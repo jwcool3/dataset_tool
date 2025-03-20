@@ -535,9 +535,21 @@ class MainWindow:
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
             if self.reinsert_crops_option.get():
                 if self.use_enhanced_reinserter.get():
-                    pipeline_steps.append(("reinsert_crops", enhanced_crop_reinserter.reinsert_crops))
+                    print("Using enhanced reinserter")
+                    # Make sure the directories are being passed correctly
+                    print(f"Enhanced reinserter input: {current_input}")
+                    print(f"Enhanced reinserter source: {self.source_images_dir.get()}")
+                    print(f"Enhanced reinserter output: {self.output_dir.get()}")
+                    success = enhanced_crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
                 else:
-                    pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))
+                    print("Using original reinserter")
+                    success = crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
+            # Add these debug prints to check paths
+            print(f"Input directory: {self.input_dir.get()}")
+            print(f"Source images directory: {self.source_images_dir.get()}")
+            print(f"Output directory: {self.output_dir.get()}")
+
+
 
 
             # Print the pipeline for debugging
