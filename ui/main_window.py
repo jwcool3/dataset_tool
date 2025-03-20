@@ -123,6 +123,15 @@ class MainWindow:
         # Add this new variable
         self.use_enhanced_reinserter = tk.BooleanVar(value=True)
 
+        # New mask alignment options
+        self.reinsert_handle_different_masks = tk.BooleanVar(value=False)
+        self.reinsert_alignment_method = tk.StringVar(value="centroid")
+        self.reinsert_blend_mode = tk.StringVar(value="alpha")
+        self.reinsert_blend_extent = tk.IntVar(value=5)
+        self.reinsert_preserve_edges = tk.BooleanVar(value=True)
+        
+
+
 
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)

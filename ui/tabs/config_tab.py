@@ -626,22 +626,35 @@ class ConfigTab:
         ).pack(anchor=tk.W, padx=5, pady=5)
     
     def _create_reinsertion_section(self):
-        """Create crop reinsertion settings section."""
+        """Create the UI for crop reinsertion settings."""
         content = self._create_section("Crop Reinsertion", "reinsertion")
+        
+        # Basic options
+        basic_frame = ttk.LabelFrame(content, text="Basic Options", padding=5)
+        basic_frame.pack(fill=tk.X, pady=5, padx=5)
         
         # Add mask-only option
         ttk.Checkbutton(
-            content,
+            basic_frame,
             text="Use mask-only reinsertion (only reinsert masked regions)",
             variable=self.parent.reinsert_mask_only
         ).pack(anchor=tk.W, padx=5, pady=5)
         
-        # Add enhanced reinsertion option (new)
+        # Add enhanced reinsertion option
         ttk.Checkbutton(
-            content,
+            basic_frame,
             text="Use enhanced resolution handling for reinsertion",
             variable=self.parent.use_enhanced_reinserter
         ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Add handling for different masks option
+        ttk.Checkbutton(
+            basic_frame,
+            text="Handle different masks between source and cropped images",
+            variable=self.parent.reinsert_handle_different_masks,
+            command=self._toggle_mask_alignment_controls
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
@@ -674,37 +687,108 @@ class ConfigTab:
         ttk.Label(
             note_frame,
             text="IMPORTANT: The Input Directory (set in the Input/Output tab) should contain your CROPPED IMAGES.\n"
-                 "The directory above should contain your ORIGINAL UNCROPPED IMAGES.",
+                "The directory above should contain your ORIGINAL UNCROPPED IMAGES.",
             foreground="blue",
             font=("Helvetica", 9, "bold"),
             wraplength=600
         ).pack(pady=5)
         
-        # Padding control
-        padding_frame = ttk.Frame(content)
-        padding_frame.pack(fill=tk.X, pady=5)
+        # Advanced settings frame 
+        self.advanced_frame = ttk.LabelFrame(content, text="Advanced Mask Alignment Options", padding=5)
+        self.advanced_frame.pack(fill=tk.X, pady=5, padx=5)
         
-        ttk.Label(padding_frame, text="Reinsertion padding (%):").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(
-            padding_frame,
+        # Alignment method selection
+        alignment_frame = ttk.Frame(self.advanced_frame)
+        alignment_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(alignment_frame, text="Alignment Method:").pack(side=tk.LEFT, padx=5)
+        
+        alignment_combo = ttk.Combobox(
+            alignment_frame,
+            textvariable=self.parent.reinsert_alignment_method,
+            values=["none", "centroid", "bbox", "landmarks", "contour", "iou"],
+            width=15,
+            state="readonly"
+        )
+        alignment_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Blend mode selection
+        blend_frame = ttk.Frame(self.advanced_frame)
+        blend_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(blend_frame, text="Blend Mode:").pack(side=tk.LEFT, padx=5)
+        
+        blend_combo = ttk.Combobox(
+            blend_frame,
+            textvariable=self.parent.reinsert_blend_mode,
+            values=["alpha", "poisson", "feathered"],
+            width=15,
+            state="readonly"
+        )
+        blend_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Blend extent slider
+        extent_frame = ttk.Frame(self.advanced_frame)
+        extent_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
+        
+        extent_slider = ttk.Scale(
+            extent_frame,
             from_=0,
-            to=50,
-            increment=5,
-            textvariable=self.parent.reinsert_padding,
-            width=5
-        ).pack(side=tk.LEFT)
+            to=20,
+            orient=tk.HORIZONTAL,
+            variable=self.parent.reinsert_blend_extent,
+            length=200
+        )
+        extent_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
-        # Positioning
-        pos_frame = ttk.LabelFrame(content, text="Positioning", padding=5)
-        pos_frame.pack(fill=tk.X, pady=5)
+        # Label to show value
+        self.extent_value_label = ttk.Label(extent_frame, text=f"{self.parent.reinsert_blend_extent.get()} px")
+        self.extent_value_label.pack(side=tk.LEFT, padx=5)
         
+        # Update label when slider is moved
+        def update_extent_label(*args):
+            self.extent_value_label.config(text=f"{self.parent.reinsert_blend_extent.get()} px")
+        
+        self.parent.reinsert_blend_extent.trace_add("write", update_extent_label)
+        
+        # Preserve edges option
         ttk.Checkbutton(
-            pos_frame,
-            text="Auto-center (try to find original position)",
-            variable=self.parent.use_center_position
+            self.advanced_frame,
+            text="Preserve original image edges",
+            variable=self.parent.reinsert_preserve_edges
         ).pack(anchor=tk.W, padx=5, pady=5)
-    
+        
+        # Explanation section
+        explanation_frame = ttk.LabelFrame(content, text="Tips for Different Masks", padding=5)
+        explanation_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        explanation_text = (
+            "• Use 'centroid' alignment when hair shape is similar but positioned differently\n"
+            "• Use 'bbox' alignment when dealing with very different hair sizes\n"
+            "• 'feathered' blending helps smooth transitions between original and new hair\n"
+            "• Increase 'Blend Extent' for more gradual blending at mask edges\n"
+            "• Try different alignment methods if hair positioning seems off"
+        )
+        
+        ttk.Label(
+            explanation_frame,
+            text=explanation_text,
+            wraplength=600
+        ).pack(padx=5, pady=5, anchor=tk.W)
+        
+        # Initially hide the advanced options if different masks handling is disabled
+        if not self.parent.reinsert_handle_different_masks.get():
+            self.advanced_frame.pack_forget()
 
+    def _toggle_mask_alignment_controls(self):
+        """Show or hide advanced mask alignment controls based on the checkbox state."""
+        if hasattr(self, 'advanced_frame'):
+            if self.parent.reinsert_handle_different_masks.get():
+                self.advanced_frame.pack(fill=tk.X, pady=5, padx=5, after=self.note_frame)
+            else:
+                self.advanced_frame.pack_forget()
 
 
     
