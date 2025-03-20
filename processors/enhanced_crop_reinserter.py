@@ -11,7 +11,7 @@ import json
 from skimage.transform import resize as skimage_resize
 from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_ubyte, img_as_float
-from processors.mask_alignment_handler import MaskAlignmentHandler
+
 import tkinter as tk
 
 class EnhancedCropReinserter:
