@@ -24,6 +24,13 @@ class CropReinserter:
     def reinsert_crops(self, input_dir, output_dir):
         """
         Reinsert cropped images back into their original images.
+        
+        Args:
+            input_dir: Input directory containing cropped images
+            output_dir: Output directory for reinserted images
+            
+        Returns:
+            bool: True if successful, False otherwise
         """
         # Create output directory for reinserted images
         reinsert_output_dir = os.path.join(output_dir, "reinserted")
@@ -33,6 +40,7 @@ class CropReinserter:
         print(f"Reinsertion: Input (Cropped) Dir: {input_dir}")
         print(f"Reinsertion: Source (Original) Dir: {self.app.source_images_dir.get()}")
         print(f"Reinsertion: Output Dir: {reinsert_output_dir}")
+        print(f"Reinsertion: Mask-only mode: {self.app.reinsert_mask_only.get()}")
         
         # Find all cropped images and respect subfolder structure
         cropped_images = []
@@ -60,6 +68,7 @@ class CropReinserter:
                         print(f"Found metadata for {file}")
         
         print(f"Found {len(cropped_images)} cropped images to process across {len(subfolders) if subfolders else 1} subfolders")
+        
         # Get source directory (original images)
         source_dir = self.app.source_images_dir.get()
         if not source_dir or not os.path.isdir(source_dir):
@@ -77,56 +86,10 @@ class CropReinserter:
                 if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                     source_images[file] = os.path.join(root, file)
         
-        # Rest of the method remains the same...
-        # Perform different reinsertion based on the option
-        if self.app.reinsert_mask_only.get() and mask_path and os.path.exists(mask_path):
-            # Load the mask and make it binary
-            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-            
-            # Resize mask to match cropped image if needed
-            if mask.shape != cropped_img.shape[:2]:
-                mask = cv2.resize(mask, (cropped_img.shape[1], cropped_img.shape[0]), 
-                                cv2.INTER_NEAREST)
-            
-            # Create a floating point mask for blending (0.0 to 1.0)
-            mask_float = binary_mask.astype(float) / 255.0
-            
-            # Create 3-channel mask for RGB images
-            mask_float_3d = np.stack([mask_float] * 3, axis=2)
-            
-            # Calculate insertion position
-            x_pos, y_pos, insert_width, insert_height = self._calculate_insertion_position(
-                source_img, cropped_img, padding_percent)
-            
-            # Create a result image from the source
-            result_img = source_img.copy()
-            
-            # Create a region of interest in the source image
-            roi = result_img[y_pos:y_pos+insert_height, x_pos:x_pos+insert_width]
-            
-            # Resize cropped image if needed
-            if cropped_img.shape[:2] != (insert_height, insert_width):
-                resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
-                                      cv2.INTER_LANCZOS4)
-                resized_mask = cv2.resize(mask_float_3d, (insert_width, insert_height), 
-                                      cv2.INTER_NEAREST)
-            else:
-                resized_crop = cropped_img
-                resized_mask = mask_float_3d
-            
-            # Blend only the masked regions
-            blended_roi = roi * (1 - resized_mask) + resized_crop * resized_mask
-            
-            # Place the blended region back into the result image
-            result_img[y_pos:y_pos+insert_height, x_pos:x_pos+insert_width] = blended_roi
-            
-
-
-        
         # Get reinsertion parameters
         padding_percent = self.app.reinsert_padding.get()
         match_method = self.app.reinsert_match_method.get()
+        use_mask_only = self.app.reinsert_mask_only.get()
         
         # Process each cropped image
         total_images = len(cropped_images)
@@ -139,9 +102,8 @@ class CropReinserter:
             
             # Get cropped image filename
             cropped_filename = os.path.basename(cropped_path)
-            cropped_basename, cropped_ext = os.path.splitext(cropped_filename)
+            cropped_basename, _ = os.path.splitext(cropped_filename)
             
-            # Inside the loop where you process each cropped image
             try:
                 # Match cropped image to source image
                 source_filename = self._match_source_image(cropped_basename, source_images, match_method)
@@ -199,7 +161,7 @@ class CropReinserter:
                 # Resize cropped image if needed to fit calculated dimensions
                 if crop_width != insert_width or crop_height != insert_height:
                     resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
-                                        interpolation=cv2.INTER_LANCZOS4)
+                                          interpolation=cv2.INTER_LANCZOS4)
                 else:
                     resized_crop = cropped_img
                 
@@ -209,43 +171,6 @@ class CropReinserter:
                 insert_width = x_end - x_pos
                 insert_height = y_end - y_pos
                 
-                # Create a mask for blending (if available)
-                blend_mask = None
-                if mask_path and os.path.exists(mask_path):
-                    blend_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-                    if blend_mask is not None:
-                        # Resize the mask to match the insertion dimensions
-                        blend_mask = cv2.resize(blend_mask, (insert_width, insert_height), 
-                                            interpolation=cv2.INTER_NEAREST)
-                        # Normalize to 0-1 range for blending
-                        blend_mask = blend_mask.astype(float) / 255.0
-                
-                # Insert the cropped image with blending if mask is available
-                if blend_mask is not None:
-                    # Extract the region where we'll insert
-                    roi = result_img[y_pos:y_end, x_pos:x_end]
-                    
-                    # Use the mask to blend the cropped image with the source
-                    for c in range(3):  # For each color channel
-                        roi[:,:,c] = roi[:,:,c] * (1 - blend_mask) + resized_crop[:,:,c] * blend_mask
-                else:
-                    # Simple insertion without blending
-                    result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
-                
-                # Save the reinserted image
-                output_path = os.path.join(reinsert_output_dir, f"reinserted_{cropped_filename}")
-                cv2.imwrite(output_path, result_img)
-                
-                # Also save a comparison image for debugging
-                comparison = np.hstack((source_img, result_img))
-                cv2.imwrite(os.path.join(reinsert_output_dir, f"comparison_{cropped_filename}"), comparison)
-                
-                processed_count += 1
-                # DEBUG - Show dimensions before insertion
-                print(f"Insertion region: ({x_pos},{y_pos}) to ({x_end},{y_end})")
-                print(f"Final insert dimensions: {insert_width}x{insert_height}")
-                print(f"Resized crop dimensions: {resized_crop.shape}")
-
                 # CRITICAL CHECK - Make sure we're not replacing the entire image
                 if x_pos == 0 and y_pos == 0 and insert_width == source_width and insert_height == source_height:
                     print("WARNING: Insertion would replace entire image. Using center positioning instead.")
@@ -259,18 +184,74 @@ class CropReinserter:
                     insert_width = center_width
                     insert_height = center_height
                     # Resize crop to fit this region
-                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), interpolation=cv2.INTER_LANCZOS4)
+                    resized_crop = cv2.resize(cropped_img, (insert_width, insert_height), 
+                                         interpolation=cv2.INTER_LANCZOS4)
                     print(f"New insertion region: ({x_pos},{y_pos}) to ({x_end},{y_end})")
-
-                try:
-                    # Actually perform the insertion
-                    result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
+                
+                # Handle mask reinsertion differently based on settings
+                if use_mask_only and mask_path and os.path.exists(mask_path):
+                    # Load the mask and make it binary
+                    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    if mask is None:
+                        print(f"Error loading mask: {mask_path}")
+                        # Fall back to regular insertion without mask
+                        result_img[y_pos:y_end, x_pos:x_end] = resized_crop[:insert_height, :insert_width]
+                    else:
+                        # Resize mask to match cropped image if needed
+                        if mask.shape != resized_crop.shape[:2]:
+                            mask = cv2.resize(mask, (insert_width, insert_height), 
+                                           interpolation=cv2.INTER_NEAREST)
+                        
+                        # Threshold mask to make it binary (0 or 255)
+                        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+                        
+                        # Create a floating point mask for blending (0.0 to 1.0)
+                        mask_float = binary_mask.astype(float) / 255.0
+                        
+                        # Create 3-channel mask for RGB images
+                        mask_float_3d = np.stack([mask_float] * 3, axis=2)
+                        
+                        # Create a ROI (Region of Interest) in the source image
+                        roi = result_img[y_pos:y_end, x_pos:x_end]
+                        
+                        # Make sure sizes match before blending (in case of boundary issues)
+                        mask_height, mask_width = mask_float_3d.shape[:2]
+                        crop_height, crop_width = resized_crop.shape[:2]
+                        roi_height, roi_width = roi.shape[:2]
+                        
+                        # Use the minimum dimensions to ensure no out-of-bounds access
+                        use_height = min(mask_height, crop_height, roi_height)
+                        use_width = min(mask_width, crop_width, roi_width)
+                        
+                        # Trim all arrays to the same size
+                        mask_float_3d = mask_float_3d[:use_height, :use_width]
+                        resized_crop = resized_crop[:use_height, :use_width]
+                        roi_view = roi[:use_height, :use_width]
+                        
+                        # Blend only the masked regions (where mask > 0)
+                        blended_roi = roi_view * (1 - mask_float_3d) + resized_crop * mask_float_3d
+                        
+                        # Place the blended region back into the result image
+                        result_img[y_pos:y_pos+use_height, x_pos:x_pos+use_width] = blended_roi
+                else:
+                    # Regular insertion (full crop replacement)
+                    # Make sure dimensions match
+                    insert_height = min(insert_height, resized_crop.shape[0])
+                    insert_width = min(insert_width, resized_crop.shape[1])
                     
-                    # For debugging, also save a before/after comparison
-                    comparison = np.hstack((source_img, result_img))
-                    cv2.imwrite(os.path.join(reinsert_output_dir, f"comparison_{os.path.basename(cropped_filename)}"), comparison)
-                except Exception as e:
-                    print(f"ERROR during insertion: {str(e)}")
+                    # Insert the cropped image
+                    result_img[y_pos:y_pos+insert_height, x_pos:x_pos+insert_width] = resized_crop[:insert_height, :insert_width]
+                
+                # Save the reinserted image
+                output_path = os.path.join(reinsert_output_dir, f"reinserted_{cropped_filename}")
+                cv2.imwrite(output_path, result_img)
+                
+                # Also save a comparison image for debugging
+                comparison = np.hstack((source_img, result_img))
+                cv2.imwrite(os.path.join(reinsert_output_dir, f"comparison_{cropped_filename}"), comparison)
+                
+                processed_count += 1
+                
             except Exception as e:
                 self.app.status_label.config(text=f"Error processing {cropped_filename}: {str(e)}")
                 print(f"Error in reinsert_crops: {str(e)}")
@@ -384,11 +365,17 @@ class CropReinserter:
         
         return result
     
-
-    
     def _calculate_insertion_position(self, source_img, cropped_img, padding_percent):
         """
         Calculate where to insert the cropped image in the source image.
+        
+        Args:
+            source_img: Source image (numpy array)
+            cropped_img: Cropped image (numpy array)
+            padding_percent: Padding percentage
+            
+        Returns:
+            tuple: (x_pos, y_pos, insert_width, insert_height)
         """
         source_height, source_width = source_img.shape[:2]
         crop_height, crop_width = cropped_img.shape[:2]
@@ -401,8 +388,8 @@ class CropReinserter:
             
             # Try using ORB feature detector and matcher
             try:
-                # Create ORB detector
-                orb = cv2.ORB_create(nfeatures=500)
+                # Create ORB detector with more features for better matching
+                orb = cv2.ORB_create(nfeatures=1000, scaleFactor=1.2, WTA_K=2)
                 
                 # Find keypoints and descriptors
                 kp1, des1 = orb.detectAndCompute(source_gray, None)
@@ -418,16 +405,16 @@ class CropReinserter:
                     # Sort by distance
                     matches = sorted(matches, key=lambda x: x.distance)
                     
-                    # Use only good matches (first 10-20)
-                    good_matches = matches[:min(20, len(matches))]
+                    # Use only good matches (first 30)
+                    good_matches = matches[:min(30, len(matches))]
                     
-                    if len(good_matches) >= 4:  # Need at least 4 points for homography
+                    if len(good_matches) >= 10:  # Need sufficient points for reliable homography
                         # Extract points
                         src_pts = np.float32([kp2[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
                         dst_pts = np.float32([kp1[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
                         
-                        # Find homography
-                        H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                        # Find homography with RANSAC for robustness
+                        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
                         
                         if H is not None:
                             # Get corners of cropped image
@@ -450,21 +437,74 @@ class CropReinserter:
                             # Ensure reasonable dimensions
                             if width > 20 and height > 20:
                                 return x_min, y_min, width, height
+                            
+                            print("Feature matching found position but dimensions were too small")
+                        else:
+                            print("Homography calculation failed")
+                    else:
+                        print(f"Not enough good matches: {len(good_matches)}")
+                else:
+                    print("No descriptors found in source or crop")
+            
             except Exception as e:
                 print(f"Feature matching failed: {str(e)}")
+                import traceback
+                traceback.print_exc()
             
-            # If feature matching fails, fall back to template matching
+            # If feature matching fails, try template matching as fallback
             try:
                 # Use template matching as a fallback
-                result = cv2.matchTemplate(source_gray, crop_gray, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                # Resize cropped image if it's too large for effective template matching
+                max_template_dimension = 300
+                if crop_width > max_template_dimension or crop_height > max_template_dimension:
+                    scale = min(max_template_dimension / crop_width, max_template_dimension / crop_height)
+                    template_width = int(crop_width * scale)
+                    template_height = int(crop_height * scale)
+                    template = cv2.resize(crop_gray, (template_width, template_height), 
+                                      interpolation=cv2.INTER_AREA)
+                    
+                    # If source is also large, resize it proportionately
+                    if source_width > 1000 or source_height > 1000:
+                        source_scale = scale * 1.5  # Scale slightly more to ensure template fits
+                        scaled_source_width = int(source_width * source_scale)
+                        scaled_source_height = int(source_height * source_scale)
+                        scaled_source = cv2.resize(source_gray, (scaled_source_width, scaled_source_height), 
+                                              interpolation=cv2.INTER_AREA)
+                        
+                        # Perform template matching
+                        result = cv2.matchTemplate(scaled_source, template, cv2.TM_CCOEFF_NORMED)
+                        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                        
+                        if max_val > 0.4:  # Threshold for a decent match
+                            # Convert back to original coordinates
+                            orig_x = int(max_loc[0] / source_scale)
+                            orig_y = int(max_loc[1] / source_scale)
+                            return orig_x, orig_y, crop_width, crop_height
+                    else:
+                        # Source is small enough to use directly
+                        result = cv2.matchTemplate(source_gray, template, cv2.TM_CCOEFF_NORMED)
+                        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                        
+                        if max_val > 0.4:
+                            # Scale back to original crop size
+                            return max_loc[0], max_loc[1], crop_width, crop_height
+                else:
+                    # Both images are small enough for direct template matching
+                    result = cv2.matchTemplate(source_gray, crop_gray, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                    
+                    if max_val > 0.3:  # Lower threshold for direct matching
+                        return max_loc[0], max_loc[1], crop_width, crop_height
                 
-                if max_val > 0.3:  # Reasonable threshold
-                    return max_loc[0], max_loc[1], crop_width, crop_height
+                print(f"Template matching failed with correlation: {max_val:.2f}")
+            
             except Exception as e:
                 print(f"Template matching failed: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
-        # Fall back to center positioning
+        # Fall back to center positioning if all else fails
+        print("Falling back to center positioning")
         x_pos = (source_width - crop_width) // 2
         y_pos = (source_height - crop_height) // 2
         
