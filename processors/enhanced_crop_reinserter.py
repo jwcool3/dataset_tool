@@ -283,107 +283,103 @@ class EnhancedCropReinserter:
         source_h, source_w = source_img.shape[:2]
         processed_h, processed_w = processed_img.shape[:2]
         
-        # Load and prepare mask
+        # Load mask
         mask = None
         if mask_path and os.path.exists(mask_path):
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
             if mask is None:
                 print(f"Failed to load mask: {mask_path}")
-                # Try to create a simple mask (white rectangle) if no mask is available
-                mask = np.ones((processed_h, processed_w), dtype=np.uint8) * 255
+                return False
         else:
-            # Create a simple mask (white rectangle) if no mask is available
-            mask = np.ones((processed_h, processed_w), dtype=np.uint8) * 255
+            print(f"No mask found at {mask_path}")
+            return False
         
-        # Check resolution difference and if we need resizing
-        resolution_diff = (abs(source_w - processed_w) / source_w > 0.05 or 
-                          abs(source_h - processed_h) / source_h > 0.05)
+        # Print diagnostic information
+        print(f"Source dimensions: {source_w}x{source_h}")
+        print(f"Processed dimensions: {processed_w}x{processed_h}")
+        print(f"Mask dimensions: {mask.shape[1]}x{mask.shape[0]}")
         
-        # If dimensions are very different, resize processed image and mask to match source
-        if resolution_diff:
-            print(f"Resolution difference detected: Source {source_w}x{source_h}, Processed {processed_w}x{processed_h}")
+        # Save original images for debugging
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "source_original.png"), source_img)
+            cv2.imwrite(os.path.join(debug_dir, "processed_original.png"), processed_img)
+            cv2.imwrite(os.path.join(debug_dir, "mask_original.png"), mask)
+        
+        # Ensure the mask is a proper binary mask
+        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Check if mask has any white pixels
+        if np.max(binary_mask) == 0:
+            print("ERROR: Mask is completely black, nothing will be copied!")
+            return False
+        
+        # Print mask statistics for debugging
+        white_pixel_count = np.count_nonzero(binary_mask)
+        total_pixels = binary_mask.size
+        white_percentage = (white_pixel_count / total_pixels) * 100
+        print(f"Mask statistics: {white_pixel_count} white pixels ({white_percentage:.2f}% of total)")
+        
+        # Resize processed image and mask to match source dimensions
+        processed_img_resized = cv2.resize(processed_img, (source_w, source_h), 
+                                        interpolation=cv2.INTER_LANCZOS4)
+        mask_resized = cv2.resize(binary_mask, (source_w, source_h), 
+                            interpolation=cv2.INTER_NEAREST)
+        
+        # Save resized images for debugging
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "processed_resized.png"), processed_img_resized)
+            cv2.imwrite(os.path.join(debug_dir, "mask_resized.png"), mask_resized)
+        
+        # Create normalized floating point mask (0.0 to 1.0)
+        mask_float = mask_resized.astype(float) / 255.0
+        
+        # Expand mask to 3 channels for RGB blending
+        mask_float_3d = np.stack([mask_float] * 3, axis=2)
+        
+        # Create visualization of what's being transferred (just the masked part)
+        if debug_dir:
+            transferred = processed_img_resized.copy()
+            transferred[mask_resized < 127] = 0  # Zero out non-mask regions
+            cv2.imwrite(os.path.join(debug_dir, "transferred_content.png"), transferred)
+        
+        # Perform alpha blending: source * (1-alpha) + processed * alpha
+        # Where alpha is the mask normalized to 0-1 range
+        result_img = source_img.copy()
+        
+        # Only apply blending where mask is non-zero
+        mask_indices = mask_resized > 0
+        if np.any(mask_indices):
+            # Create a 3-channel mask for indexing
+            mask_indices_3d = np.stack([mask_indices] * 3, axis=2)
             
-            # Save original images for debugging if enabled
-            if debug_dir:
-                cv2.imwrite(os.path.join(debug_dir, "source_original.png"), source_img)
-                cv2.imwrite(os.path.join(debug_dir, "processed_original.png"), processed_img)
-                if mask is not None:
-                    cv2.imwrite(os.path.join(debug_dir, "mask_original.png"), mask)
-            
-            # Approach 1: Resize processed image and mask to match source dimensions
-            processed_img_resized = cv2.resize(processed_img, (source_w, source_h), 
-                                           interpolation=cv2.INTER_LANCZOS4)
-            mask_resized = cv2.resize(mask, (source_w, source_h), 
-                                   interpolation=cv2.INTER_NEAREST)
-            
-            # Save resized images for debugging if enabled
-            if debug_dir:
-                cv2.imwrite(os.path.join(debug_dir, "processed_resized.png"), processed_img_resized)
-                cv2.imwrite(os.path.join(debug_dir, "mask_resized.png"), mask_resized)
-            
-            # Create a floating point mask for blending (0.0 to 1.0)
-            mask_float = mask_resized.astype(float) / 255.0
-            
-            # Create 3-channel mask for RGB images
-            mask_float_3d = np.stack([mask_float] * 3, axis=2)
-            
-            # Perform blending with full resolution images
-            # The mask controls which parts of the processed image replace the source
-            result_img = source_img * (1 - mask_float_3d) + processed_img_resized * mask_float_3d
-            
-            # Convert back to uint8 for saving
-            result_img = result_img.astype(np.uint8)
-            
+            # Apply blending only at mask locations
+            result_img[mask_indices_3d] = (source_img[mask_indices_3d] * (1 - mask_float_3d[mask_indices_3d]) + 
+                                        processed_img_resized[mask_indices_3d] * mask_float_3d[mask_indices_3d])
         else:
-            # Similar resolutions - simple blending
-            # Create a floating point mask for blending (0.0 to 1.0)
-            mask_float = mask.astype(float) / 255.0
-            
-            # Create 3-channel mask for RGB images
-            mask_float_3d = np.stack([mask_float] * 3, axis=2)
-            
-            # Perform blending
-            result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
-            
-            # Convert back to uint8 for saving
-            result_img = result_img.astype(np.uint8)
+            print("WARNING: No pixels to blend after resizing mask!")
+        
+        # Convert result back to uint8 (just to be safe)
+        result_img = np.clip(result_img, 0, 255).astype(np.uint8)
         
         # Save the result
         cv2.imwrite(output_path, result_img)
         
-        # Save side-by-side comparison if debug is enabled
+        # Create final side-by-side comparison
         if debug_dir:
-            # Resize for comparison if needed
-            if source_img.shape != processed_img.shape:
-                processed_img_display = cv2.resize(processed_img, (source_img.shape[1], source_img.shape[0]))
-            else:
-                processed_img_display = processed_img
-                
-            # Create side-by-side comparison
-            comparison = np.hstack((source_img, processed_img_display, result_img))
+            # Create before/after comparison
+            comparison = np.hstack((source_img, processed_img_resized, result_img))
             cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
             
-            # Create visualization of the mask
-            if mask is not None:
-                # Resize mask for visualization if needed
-                if mask.shape[:2] != source_img.shape[:2]:
-                    mask_viz = cv2.resize(mask, (source_img.shape[1], source_img.shape[0]))
-                else:
-                    mask_viz = mask
-                    
-                # Create a colorized mask for better visualization
-                mask_colored = cv2.cvtColor(mask_viz, cv2.COLOR_GRAY2BGR)
-                # Make it more visible by using red channel
-                mask_colored[:,:,0] = 0  # Zero out blue channel
-                mask_colored[:,:,1] = 0  # Zero out green channel
-                
-                # Create a visualization with mask overlay
-                mask_overlay = source_img.copy()
-                mask_binary = (mask_viz > 127).astype(np.uint8) * 255
-                mask_overlay[mask_binary > 0] = [0, 0, 255]  # Red color for mask regions
-                
-                # Save mask visualizations
-                cv2.imwrite(os.path.join(debug_dir, f"mask_viz_{os.path.basename(output_path)}"), mask_colored)
-                cv2.imwrite(os.path.join(debug_dir, f"mask_overlay_{os.path.basename(output_path)}"), mask_overlay)
+            # Create mask overlay visualization
+            mask_overlay = source_img.copy()
+            overlay_color = [0, 0, 255]  # Red color for the overlay
+            
+            # Create a colorful overlay showing the mask region
+            for c in range(3):
+                mask_overlay[:,:,c] = np.where(mask_resized > 0, 
+                                            mask_overlay[:,:,c] * 0.5 + overlay_color[c] * 0.5, 
+                                            mask_overlay[:,:,c])
+            
+            cv2.imwrite(os.path.join(debug_dir, f"mask_overlay_{os.path.basename(output_path)}"), mask_overlay)
         
         return True
