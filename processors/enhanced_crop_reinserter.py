@@ -243,12 +243,8 @@ class EnhancedCropReinserter:
         print(f"Processed dimensions: {processed_w}x{processed_h}")
         print(f"Mask dimensions: {mask.shape[1]}x{mask.shape[0]}")
         
-        # Check if dimensions match
-        resolution_diff = (abs(source_w - processed_w) > 2 or 
-                        abs(source_h - processed_h) > 2)
-        
-        # If resolution differs, resize processed image and mask to match source
-        if resolution_diff:
+        # Resize processed image and mask to match source if dimensions differ
+        if source_w != processed_w or source_h != processed_h:
             print(f"Resizing processed image from {processed_w}x{processed_h} to {source_w}x{source_h}")
             processed_img_resized = cv2.resize(processed_img, (source_w, source_h), 
                                             interpolation=cv2.INTER_LANCZOS4)
@@ -258,18 +254,89 @@ class EnhancedCropReinserter:
             processed_img_resized = processed_img
             mask_resized = mask
         
-        # Save original images for debugging
+        # Debug: Save original and resized images
         if debug_dir:
             cv2.imwrite(os.path.join(debug_dir, "source_original.png"), source_img)
             cv2.imwrite(os.path.join(debug_dir, "processed_original.png"), processed_img)
             cv2.imwrite(os.path.join(debug_dir, "mask_original.png"), mask)
             
-            if resolution_diff:
+            if source_w != processed_w or source_h != processed_h:
                 cv2.imwrite(os.path.join(debug_dir, "processed_resized.png"), processed_img_resized)
                 cv2.imwrite(os.path.join(debug_dir, "mask_resized.png"), mask_resized)
         
-        # Check if the source has a different hair mask (try to find it in the same directory)
-        source_mask_path = None
+        # Check if the source has a different hair mask
+        source_mask = self._find_source_mask(source_path)
+        
+        # If we're not handling different masks, simply use standard blending
+        if not self.app.reinsert_handle_different_masks.get() or source_mask is None:
+            # Basic alpha blending
+            mask_float = mask_resized.astype(float) / 255.0
+            mask_float_3d = np.stack([mask_float] * 3, axis=2)
+            result_img = source_img * (1 - mask_float_3d) + processed_img_resized * mask_float_3d
+            result_img = np.clip(result_img, 0, 255).astype(np.uint8)
+            
+            cv2.imwrite(output_path, result_img)
+            return True
+        
+        # If handling different masks, get configuration settings
+        alignment_method = self.app.reinsert_alignment_method.get()
+        blend_mode = self.app.reinsert_blend_mode.get()
+        blend_extent = self.app.reinsert_blend_extent.get()
+        preserve_edges = self.app.reinsert_preserve_edges.get()
+        
+        print(f"Using config settings: alignment={alignment_method}, blend={blend_mode}, extent={blend_extent}")
+        
+        # Align mask and image if not using "none" alignment
+        aligned_mask = mask_resized.copy()
+        aligned_img = processed_img_resized.copy()
+        
+        if alignment_method != "none":
+            # Perform the alignment based on the selected method
+            aligned_mask, aligned_img = self._align_masks(
+                source_mask, mask_resized, 
+                source_img, processed_img_resized, 
+                alignment_method, 
+                debug_dir
+            )
+        
+        # Blending stage
+        if blend_mode == "alpha":
+            result_img = self._alpha_blend(
+                source_img, aligned_img, 
+                aligned_mask, 
+                blend_extent
+            )
+        elif blend_mode == "poisson":
+            result_img = self._poisson_blend(
+                source_img, aligned_img, 
+                aligned_mask
+            )
+        elif blend_mode == "feathered":
+            result_img = self._feathered_blend(
+                source_img, aligned_img, 
+                aligned_mask, 
+                blend_extent
+            )
+        
+        # Preserve edges if requested
+        if preserve_edges:
+            result_img = self._preserve_image_edges(
+                source_img, result_img, 
+                aligned_mask
+            )
+        
+        # Save the result
+        cv2.imwrite(output_path, result_img)
+        
+        # Create comparison image for debugging
+        if debug_dir:
+            comparison = np.hstack((source_img, aligned_img, result_img))
+            cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
+        
+        return True
+
+    def _find_source_mask(self, source_path):
+        """Find the mask for a source image."""
         source_dir = os.path.dirname(source_path)
         source_name = os.path.basename(source_path)
         potential_mask_dir = os.path.join(source_dir, "masks")
@@ -278,200 +345,292 @@ class EnhancedCropReinserter:
             # Check for mask with same name
             potential_mask = os.path.join(potential_mask_dir, source_name)
             if os.path.exists(potential_mask):
-                source_mask_path = potential_mask
-            else:
-                # Try different extensions
-                base_name = os.path.splitext(source_name)[0]
-                for ext in ['.png', '.jpg', '.jpeg']:
-                    alt_mask_path = os.path.join(potential_mask_dir, base_name + ext)
-                    if os.path.exists(alt_mask_path):
-                        source_mask_path = alt_mask_path
-                        break
+                return cv2.imread(potential_mask, cv2.IMREAD_GRAYSCALE)
+            
+            # Try different extensions
+            base_name = os.path.splitext(source_name)[0]
+            for ext in ['.png', '.jpg', '.jpeg']:
+                alt_mask_path = os.path.join(potential_mask_dir, base_name + ext)
+                if os.path.exists(alt_mask_path):
+                    return cv2.imread(alt_mask_path, cv2.IMREAD_GRAYSCALE)
         
-        # Load source mask if found
-        source_mask = None
-        if source_mask_path and os.path.exists(source_mask_path):
-            print(f"Found source mask: {source_mask_path}")
-            source_mask = cv2.imread(source_mask_path, cv2.IMREAD_GRAYSCALE)
-            if source_mask is not None and source_mask.shape[:2] != (source_h, source_w):
-                source_mask = cv2.resize(source_mask, (source_w, source_h), 
-                                        interpolation=cv2.INTER_NEAREST)
-            if debug_dir and source_mask is not None:
-                cv2.imwrite(os.path.join(debug_dir, "source_mask.png"), source_mask)
-         
-        # Use the MaskAlignmentHandler for alignment and blending if both masks are available
-        if source_mask is not None and self.app.reinsert_handle_different_masks.get():
-            # Get configuration settings from the UI
-            alignment_method = self.app.reinsert_alignment_method.get()
-            blend_mode = self.app.reinsert_blend_mode.get()
-            blend_extent = self.app.reinsert_blend_extent.get()
-            preserve_edges = self.app.reinsert_preserve_edges.get()
+        return None
+
+    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
+        """
+        Align masks and images based on the specified method.
+        
+        Args:
+            source_mask: Mask from source image
+            processed_mask: Mask from processed image
+            source_img: Source image
+            processed_img: Processed image
+            alignment_method: Method to use for alignment
+            debug_dir: Directory to save debug visualizations
+        
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        # Binary threshold both masks
+        _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
+        _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Make copies to modify
+        aligned_mask = processed_mask.copy()
+        aligned_img = processed_img.copy()
+        
+        # Centroid alignment
+        if alignment_method == "centroid":
+            # Calculate centroids
+            source_moments = cv2.moments(source_mask_bin)
+            processed_moments = cv2.moments(processed_mask_bin)
             
-            print(f"Using config settings: alignment={alignment_method}, blend={blend_mode}, extent={blend_extent}")
-                # Keep original masks for alpha blending
-            aligned_mask = mask_resized.copy()
-            aligned_img = processed_img_resized.copy()
-            
-            # Pre-process both masks for better comparison
-            _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
-            _, processed_mask_bin = cv2.threshold(mask_resized, 127, 255, cv2.THRESH_BINARY)
-            
-            # Perform alignment based on selected method
-            aligned_mask = processed_mask_bin.copy()
-            aligned_img = processed_img_resized.copy()
-            
-            if alignment_method == "centroid":
-                # Calculate centroids
-                source_moments = cv2.moments(source_mask_bin)
-                processed_moments = cv2.moments(processed_mask_bin)
+            if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
+                source_cx = int(source_moments["m10"] / source_moments["m00"])
+                source_cy = int(source_moments["m01"] / source_moments["m00"])
+                processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
+                processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
                 
-                if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
-                    source_cx = int(source_moments["m10"] / source_moments["m00"])
-                    source_cy = int(source_moments["m01"] / source_moments["m00"])
-                    processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
-                    processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
-                    
-                    # Calculate shift
-                    dx = source_cx - processed_cx
-                    dy = source_cy - processed_cy
-                    
-                    # Apply shift
+                # Calculate shift
+                dx = source_cx - processed_cx
+                dy = source_cy - processed_cy
+                
+                # Apply shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        
+        # Contour-based alignment (top point alignment)
+        elif alignment_method == "contour":
+            source_points = np.argwhere(source_mask_bin > 0)
+            processed_points = np.argwhere(processed_mask_bin > 0)
+            
+            if len(source_points) > 0 and len(processed_points) > 0:
+                # Find the top point
+                source_top_y = source_points[:, 0].min()
+                source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
+                source_top_x = np.median(source_points[source_top_indices, 1])
+                
+                processed_top_y = processed_points[:, 0].min()
+                processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
+                processed_top_x = np.median(processed_points[processed_top_indices, 1])
+                
+                # Calculate shift
+                dx = int(source_top_x - processed_top_x)
+                dy = int(source_top_y - processed_top_y)
+                
+                # Apply shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        
+        # Bounding box alignment
+        elif alignment_method == "bbox":
+            source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if source_contours and processed_contours:
+                source_contour = max(source_contours, key=cv2.contourArea)
+                processed_contour = max(processed_contours, key=cv2.contourArea)
+                
+                source_x, source_y, source_w, source_h = cv2.boundingRect(source_contour)
+                processed_x, processed_y, processed_w, processed_h = cv2.boundingRect(processed_contour)
+                
+                # Calculate shifts to align top-left corners
+                dx = source_x - processed_x
+                dy = source_y - processed_y
+                
+                # Apply shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        
+        # Intersection Over Union (IoU) alignment
+        elif alignment_method == "iou":
+            best_iou = 0
+            best_mask = processed_mask.copy()
+            best_img = processed_img.copy()
+            
+            max_shift = 20  # pixels
+            for dx in range(-max_shift, max_shift + 1, 2):
+                for dy in range(-max_shift, max_shift + 1, 2):
+                    # Create shifted mask and image
                     M = np.float32([[1, 0, dx], [0, 1, dy]])
-                    aligned_mask = cv2.warpAffine(processed_mask_bin, M, (processed_mask_bin.shape[1], processed_mask_bin.shape[0]))
-                    aligned_img = cv2.warpAffine(processed_img_resized, M, (processed_img_resized.shape[1], processed_img_resized.shape[0]))
+                    shifted_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                    shifted_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
                     
-            elif alignment_method == "contour":
-                # Find the top point of each mask (for hair alignment)
-                source_points = np.argwhere(source_mask_bin > 0)
-                processed_points = np.argwhere(processed_mask_bin > 0)
-                
-                if len(source_points) > 0 and len(processed_points) > 0:
-                    # Find the top-most point in each mask
-                    source_top_y = source_points[:, 0].min()
-                    source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
-                    source_top_x = np.median(source_points[source_top_indices, 1])
+                    # Calculate IoU
+                    intersection = np.logical_and(source_mask_bin > 0, shifted_mask > 0).sum()
+                    union = np.logical_or(source_mask_bin > 0, shifted_mask > 0).sum()
+                    iou = intersection / union if union > 0 else 0
                     
-                    processed_top_y = processed_points[:, 0].min()
-                    processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
-                    processed_top_x = np.median(processed_points[processed_top_indices, 1])
-                    
-                    # Calculate shift
-                    dx = int(source_top_x - processed_top_x)
-                    dy = int(source_top_y - processed_top_y)
-                    
-                    # Apply shift
-                    M = np.float32([[1, 0, dx], [0, 1, dy]])
-                    aligned_mask = cv2.warpAffine(processed_mask_bin, M, (processed_mask_bin.shape[1], processed_mask_bin.shape[0]))
-                    aligned_img = cv2.warpAffine(processed_img_resized, M, (processed_img_resized.shape[1], processed_img_resized.shape[0]))
+                    # Update best if improved
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_mask = shifted_mask
+                        best_img = shifted_img
             
-            elif alignment_method == "bbox":
-                # Find bounding boxes
-                source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if source_contours and processed_contours:
-                    # Get largest contours
-                    source_contour = max(source_contours, key=cv2.contourArea)
-                    processed_contour = max(processed_contours, key=cv2.contourArea)
-                    
-                    # Get bounding boxes
-                    source_x, source_y, source_w, source_h = cv2.boundingRect(source_contour)
-                    processed_x, processed_y, processed_w, processed_h = cv2.boundingRect(processed_contour)
-                    
-                    # Calculate shifts to align top-left corners
-                    dx = source_x - processed_x
-                    dy = source_y - processed_y
-                    
-                    # Apply shift
-                    M = np.float32([[1, 0, dx], [0, 1, dy]])
-                    aligned_mask = cv2.warpAffine(processed_mask_bin, M, (processed_mask_bin.shape[1], processed_mask_bin.shape[0]))
-                    aligned_img = cv2.warpAffine(processed_img_resized, M, (processed_img_resized.shape[1], processed_img_resized.shape[0]))
+            aligned_mask = best_mask
+            aligned_img = best_img
+        
+        # Debug visualization
+        if debug_dir:
+            # Source mask in red, aligned mask in green
+            mask_viz = np.zeros((source_mask_bin.shape[0], source_mask_bin.shape[1], 3), dtype=np.uint8)
+            mask_viz[source_mask_bin > 0] = [0, 0, 255]  # Red for source mask
+            mask_viz[aligned_mask > 0] = [0, 255, 0]  # Green for aligned mask
+            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_viz.png"), mask_viz)
+        
+        return aligned_mask, aligned_img
+
+    def _alpha_blend(self, source_img, processed_img, mask, blend_extent=0):
+        """
+        Perform alpha blending with optional feathering.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to blend
+            mask: Blending mask
+            blend_extent: Extent of feathering (0 = no feathering)
+        
+        Returns:
+            numpy.ndarray: Blended image
+        """
+        # Create alpha mask
+        mask_float = mask.astype(float) / 255.0
+        
+        # Apply feathering if blend_extent > 0
+        if blend_extent > 0:
+            # Create feathering kernel
+            kernel = np.ones((blend_extent, blend_extent), np.uint8)
+        
+        # Create dilation and border regions
+        dilated = cv2.dilate(mask, kernel, iterations=1)
+        border = dilated & ~mask
+        
+        # Create distance map for feathering
+        dist = cv2.distanceTransform(~border, cv2.DIST_L2, 3)
+        dist[dist > blend_extent] = blend_extent
+        
+        # Normalize distances
+        feather = dist / blend_extent
+        
+        # Create alpha mask with feathering
+        mask_float = mask.astype(float) / 255.0
+        mask_float[border > 0] = 1.0 - feather[border > 0]
+        
+        # Create 3-channel mask
+        mask_float_3d = np.stack([mask_float] * 3, axis=2)
+        
+        # Apply blending
+        result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+    def _poisson_blend(self, source_img, processed_img, mask):
+        """
+        Perform Poisson blending.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to blend
+            mask: Blending mask
+        
+        Returns:
+            numpy.ndarray: Blended image
+        """
+        try:
+            # Ensure mask is uint8
+            mask_uint8 = mask.astype(np.uint8)
             
-            # Save debug visualizations
-            if debug_dir:
-                cv2.imwrite(os.path.join(debug_dir, "source_mask_binary.png"), source_mask_bin)
-                cv2.imwrite(os.path.join(debug_dir, "processed_mask_binary.png"), processed_mask_bin)
-                cv2.imwrite(os.path.join(debug_dir, "aligned_mask.png"), aligned_mask)
-                cv2.imwrite(os.path.join(debug_dir, "aligned_img.png"), aligned_img)
+            # Find center of mask
+            moments = cv2.moments(mask_uint8)
+            if moments["m00"] > 0:
+                center_x = int(moments["m10"] / moments["m00"])
+                center_y = int(moments["m01"] / moments["m00"])
+                center = (center_x, center_y)
                 
-                # Create visualization of mask alignment
-                mask_viz = np.zeros((source_mask_bin.shape[0], source_mask_bin.shape[1], 3), dtype=np.uint8)
-                mask_viz[source_mask_bin > 0] = [0, 0, 255]  # Red for source mask
-                mask_viz[aligned_mask > 0] = [0, 255, 0]  # Green for aligned mask
-                cv2.imwrite(os.path.join(debug_dir, "mask_alignment_viz.png"), mask_viz)
-            
-            # Apply blending based on selected mode and extent
-            if blend_mode == "alpha" or blend_mode == "feathered":
-                # Create feathered mask
-                kernel = np.ones((blend_extent, blend_extent), np.uint8)
-                dilated = cv2.dilate(aligned_mask, kernel, iterations=1)
-                border = dilated & ~aligned_mask
-                
-                # Create distance map
-                dist = cv2.distanceTransform(~border, cv2.DIST_L2, 3)
-                dist[dist > blend_extent] = blend_extent
-                
-                # Normalize distances
-                feather = dist / blend_extent
-                
-                # Create alpha mask
-                mask_float = aligned_mask.astype(float) / 255.0
-                
-                # Apply feathering if using feathered mode or alpha with extent > 0
-                if blend_mode == "feathered" or blend_extent > 0:
-                    mask_float[border > 0] = 1.0 - feather[border > 0]
-                
-                # Create 3-channel mask
+                # Apply seamless cloning
+                result_img = cv2.seamlessClone(processed_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE)
+            else:
+                # Fallback to alpha blending
+                mask_float = mask.astype(float) / 255.0
                 mask_float_3d = np.stack([mask_float] * 3, axis=2)
-                
-                # Apply blending
-                result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
-                
-            elif blend_mode == "poisson":
-                try:
-                    # Convert mask to correct format
-                    mask_uint8 = aligned_mask.astype(np.uint8)
-                    
-                    # Find center of mask
-                    moments = cv2.moments(mask_uint8)
-                    if moments["m00"] > 0:
-                        center_x = int(moments["m10"] / moments["m00"])
-                        center_y = int(moments["m01"] / moments["m00"])
-                        center = (center_x, center_y)
-                        
-                        # Apply seamless cloning
-                        result_img = cv2.seamlessClone(aligned_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE)
-                    else:
-                        # Fallback to alpha blending
-                        mask_float = aligned_mask.astype(float) / 255.0
-                        mask_float_3d = np.stack([mask_float] * 3, axis=2)
-                        result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
-                except Exception as e:
-                    print(f"Poisson blending failed: {str(e)}")
-                    # Fallback to alpha blending
-                    mask_float = aligned_mask.astype(float) / 255.0
-                    mask_float_3d = np.stack([mask_float] * 3, axis=2)
-                    result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
-            
-            # Clip to valid range and convert to uint8
-            result_img = np.clip(result_img, 0, 255).astype(np.uint8)
-            
-            # Preserve edges if enabled
-            if preserve_edges:
-                edges = cv2.Canny(source_img, 50, 150)
-                edge_mask = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
-                edge_mask = edge_mask & ~aligned_mask
-                
-                edge_mask_3d = np.stack([edge_mask / 255.0] * 3, axis=2)
-                result_img = source_img * edge_mask_3d + result_img * (1 - edge_mask_3d)
-                result_img = np.clip(result_img, 0, 255).astype(np.uint8)
-            
-            # Save the result
-            cv2.imwrite(output_path, result_img)
-            
-            # Create comparison image
-            if debug_dir:
-                comparison = np.hstack((source_img, aligned_img, result_img))
-                cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
-            
-            return True
+                result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+        except Exception as e:
+            print(f"Poisson blending failed: {str(e)}")
+            # Fallback to alpha blending
+            mask_float = mask.astype(float) / 255.0
+            mask_float_3d = np.stack([mask_float] * 3, axis=2)
+            result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+    def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
+        """
+        Perform feathered blending with gradual transition.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to blend
+            mask: Blending mask
+            blend_extent: Extent of feathering
+        
+        Returns:
+            numpy.ndarray: Blended image
+        """
+        # Convert mask to binary
+        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Create distance transforms
+        dist_inside = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 3)
+        dist_outside = cv2.distanceTransform(255 - binary_mask, cv2.DIST_L2, 3)
+        
+        # Create alpha values based on distance
+        alpha = np.ones_like(dist_inside, dtype=float)
+        
+        # Inside mask: fade from 1.0 at center to 0.5 at border
+        fade_inside = np.clip(dist_inside / blend_extent, 0, 1)
+        alpha = 0.5 + 0.5 * fade_inside
+        
+        # Outside mask: fade from 0.5 at border to 0.0 outside
+        fade_outside = np.clip(1.0 - dist_outside / blend_extent, 0, 1)
+        alpha = alpha * (binary_mask / 255.0) + fade_outside * (1 - binary_mask / 255.0) * 0.5
+        
+        # Create 3-channel alpha
+        alpha_3d = np.stack([alpha] * 3, axis=2)
+        
+        # Blend images
+        result_img = source_img * (1 - alpha_3d) + processed_img * alpha_3d
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+    def _preserve_image_edges(self, source_img, result_img, mask):
+        """
+        Preserve original image edges outside the mask region.
+        
+        Args:
+            source_img: Original source image
+            result_img: Blended result image
+            mask: Blending mask
+        
+        Returns:
+            numpy.ndarray: Result image with preserved edges
+        """
+        # Detect edges in source image
+        gray_source = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+        edges = cv2.Canny(gray_source, 50, 150)
+        
+        # Dilate edges to make them more prominent
+        edge_mask = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        
+        # Only preserve edges outside the mask
+        edge_mask = edge_mask & ~mask
+        
+        # Convert edge mask to 3 channels
+        edge_mask_3d = np.stack([edge_mask / 255.0] * 3, axis=2)
+        
+        # Keep original pixel values at edges
+        preserved_result = source_img * edge_mask_3d + result_img * (1 - edge_mask_3d)
+        
+        return np.clip(preserved_result, 0, 255).astype(np.uint8)
