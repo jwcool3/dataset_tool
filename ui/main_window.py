@@ -119,6 +119,10 @@ class MainWindow:
         self.reinsert_y = tk.IntVar(value=0)
         self.reinsert_width = tk.IntVar(value=0)
         self.reinsert_height = tk.IntVar(value=0)
+    
+        # Add this new variable
+        self.use_enhanced_reinserter = tk.BooleanVar(value=True)
+
 
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
