@@ -492,6 +492,14 @@ class MainWindow:
     
     def _process_data_thread(self):
         """Processing thread implementation."""
+
+            # Add these debug prints to check paths
+        print(f"Input directory: {self.input_dir.get()}")
+        print(f"Source images directory: {self.source_images_dir.get()}")
+        print(f"Output directory: {self.output_dir.get()}")
+        # Initialize current_input
+        current_input = self.input_dir.get()
+        
         try:
             # Import processors
             from processors.frame_extractor import FrameExtractor
@@ -544,10 +552,6 @@ class MainWindow:
                 else:
                     print("Using original reinserter")
                     success = crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
-            # Add these debug prints to check paths
-            print(f"Input directory: {self.input_dir.get()}")
-            print(f"Source images directory: {self.source_images_dir.get()}")
-            print(f"Output directory: {self.output_dir.get()}")
 
 
 
