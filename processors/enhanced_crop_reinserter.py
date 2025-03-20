@@ -11,7 +11,7 @@ import json
 from skimage.transform import resize as skimage_resize
 from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_ubyte, img_as_float
-
+from processors.mask_alignment_handler import MaskAlignmentHandler
 import tkinter as tk
 
 class EnhancedCropReinserter:
@@ -301,8 +301,7 @@ class EnhancedCropReinserter:
         
         # Use the MaskAlignmentHandler for alignment and blending if both masks are available
         if source_mask is not None and self.app.reinsert_handle_different_masks.get():
-            from mask_alignment_handler import MaskAlignmentHandler
-            
+            from processors.mask_alignment_handler import MaskAlignmentHandler            
             # Get alignment method from config (or use default)
             alignment_method = getattr(self.app, 'reinsert_alignment_method', tk.StringVar(value="centroid")).get()
             blend_mode = getattr(self.app, 'reinsert_blend_mode', tk.StringVar(value="alpha")).get()
