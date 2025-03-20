@@ -403,6 +403,16 @@ class MainWindow:
 
     def start_processing(self):
         """Start the processing pipeline in a separate thread."""
+        
+# At the start of your processing function
+        print("Current Configuration:")
+        print(f"- Alignment Method: {self.app.reinsert_alignment_method.get()}")
+        print(f"- Blend Mode: {self.app.reinsert_blend_mode.get()}")
+        print(f"- Blend Extent: {self.app.reinsert_blend_extent.get()}")
+        print(f"- Preserve Edges: {self.app.reinsert_preserve_edges.get()}")
+        print(f"- Using Enhanced Reinserter: {self.app.use_enhanced_reinserter.get()}")
+        print(f"- Handle Different Masks: {self.app.reinsert_handle_different_masks.get()}")
+
         if not self.input_dir.get() or not os.path.isdir(self.input_dir.get()):
             messagebox.showerror("Error", "Please select a valid input directory.")
             return
