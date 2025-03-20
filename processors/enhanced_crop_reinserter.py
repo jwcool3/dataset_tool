@@ -300,76 +300,68 @@ class EnhancedCropReinserter:
                 cv2.imwrite(os.path.join(debug_dir, "source_mask.png"), source_mask)
         
         # Use the MaskAlignmentHandler for alignment and blending if both masks are available
+        # In _reinsert_with_resolution_handling method, replace the MaskAlignmentHandler block with:
+
         if source_mask is not None and self.app.reinsert_handle_different_masks.get():
-            from processors.mask_alignment_handler import MaskAlignmentHandler            
-            # Get alignment method from config (or use default)
-            alignment_method = getattr(self.app, 'reinsert_alignment_method', tk.StringVar(value="centroid")).get()
-            blend_mode = getattr(self.app, 'reinsert_blend_mode', tk.StringVar(value="alpha")).get()
-            blend_extent = getattr(self.app, 'reinsert_blend_extent', tk.IntVar(value=5)).get()
-            preserve_edges = getattr(self.app, 'reinsert_preserve_edges', tk.BooleanVar(value=True)).get()
+            # Pre-process both masks for better comparison
+            _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
+            _, processed_mask_bin = cv2.threshold(mask_resized, 127, 255, cv2.THRESH_BINARY)
             
-            # Create mask alignment handler
-            aligner = MaskAlignmentHandler(debug_dir=debug_dir)
-            
-            # Align and blend images
-            print(f"Using mask alignment with method: {alignment_method}, blend mode: {blend_mode}")
-            result_img, aligned_mask = aligner.align_masks(
-                source_img, 
-                processed_img_resized, 
-                source_mask=source_mask, 
-                processed_mask=mask_resized,
-                alignment_method=alignment_method,
-                blend_mode=blend_mode, 
-                blend_extent=blend_extent,
-                preserve_original_edges=preserve_edges
-            )
-            
-            # Save the result
-            cv2.imwrite(output_path, result_img)
-            
-            # If debug mode, create a comparison image
+            # Save the pre-processed masks for debugging
             if debug_dir:
-                comparison = np.hstack((source_img, processed_img_resized, result_img))
-                cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
+                cv2.imwrite(os.path.join(debug_dir, "source_mask_binary.png"), source_mask_bin)
+                cv2.imwrite(os.path.join(debug_dir, "processed_mask_binary.png"), processed_mask_bin)
+            
+            # Find the top point of each mask (for hair, this is usually what we want to align)
+            source_points = np.argwhere(source_mask_bin > 0)
+            processed_points = np.argwhere(processed_mask_bin > 0)
+            
+            if len(source_points) > 0 and len(processed_points) > 0:
+                # Find the top-most point (minimum y-coordinate) in each mask
+                source_top_y = source_points[:, 0].min()
+                source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
+                source_top_x = np.median(source_points[source_top_indices, 1])
                 
-            return True
-        
-        # If not using the mask alignment handler, use standard blending
-        # Standard blending with mask-only option
-        if self.app.reinsert_mask_only.get():
-            # Ensure mask is binary
-            _, binary_mask = cv2.threshold(mask_resized, 127, 255, cv2.THRESH_BINARY)
-            
-            # Check if mask has any white pixels
-            if np.max(binary_mask) == 0:
-                print("ERROR: Mask is completely black, nothing will be copied!")
-                return False
-            
-            # Print mask statistics for debugging
-            white_pixel_count = np.count_nonzero(binary_mask)
-            total_pixels = binary_mask.size
-            white_percentage = (white_pixel_count / total_pixels) * 100
-            print(f"Mask statistics: {white_pixel_count} white pixels ({white_percentage:.2f}% of total)")
-            
-            # Create normalized floating point mask (0.0 to 1.0)
-            mask_float = binary_mask.astype(float) / 255.0
-            
-            # Expand mask to 3 channels for RGB blending
-            mask_float_3d = np.stack([mask_float] * 3, axis=2)
-            
-            # Create visualization of what's being transferred (just the masked part)
-            if debug_dir:
-                transferred = processed_img_resized.copy()
-                transferred[binary_mask < 127] = 0  # Zero out non-mask regions
-                cv2.imwrite(os.path.join(debug_dir, "transferred_content.png"), transferred)
-            
-            # Apply feathering to the mask edges for smoother transition
-            blend_extent = getattr(self.app, 'reinsert_blend_extent', tk.IntVar(value=5)).get()
-            if blend_extent > 0:
-                # Create a dilated mask for feathering
+                processed_top_y = processed_points[:, 0].min()
+                processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
+                processed_top_x = np.median(processed_points[processed_top_indices, 1])
+                
+                # Calculate shift needed to align top points
+                dx = int(source_top_x - processed_top_x)
+                dy = int(source_top_y - processed_top_y)
+                
+                print(f"Aligning masks: dx={dx}, dy={dy}")
+                
+                # Create a transformation matrix for the shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                
+                # Apply the transformation to the processed mask
+                aligned_mask = cv2.warpAffine(processed_mask_bin, M, 
+                                            (processed_mask_bin.shape[1], processed_mask_bin.shape[0]))
+                
+                # Apply the same transformation to the processed image
+                aligned_img = cv2.warpAffine(processed_img_resized, M,
+                                        (processed_img_resized.shape[1], processed_img_resized.shape[0]))
+                
+                # Save aligned results for debugging
+                if debug_dir:
+                    cv2.imwrite(os.path.join(debug_dir, "aligned_mask.png"), aligned_mask)
+                    cv2.imwrite(os.path.join(debug_dir, "aligned_img.png"), aligned_img)
+                    
+                    # Create a visualization of the alignment
+                    mask_viz = np.zeros((source_mask_bin.shape[0], source_mask_bin.shape[1], 3), dtype=np.uint8)
+                    mask_viz[source_mask_bin > 0] = [0, 0, 255]  # Red for source mask
+                    mask_viz[aligned_mask > 0] = [0, 255, 0]  # Green for aligned mask
+                    cv2.imwrite(os.path.join(debug_dir, "mask_alignment_viz.png"), mask_viz)
+                
+                # Create a feathered mask with a large blend extent for hair
+                blend_extent = 20  # Use a large blend extent for hair
+                
+                # Create a distance transform for smooth blending
+                # First dilate the aligned mask to create a border region
                 kernel = np.ones((blend_extent, blend_extent), np.uint8)
-                dilated = cv2.dilate(binary_mask, kernel, iterations=1)
-                border = dilated & ~binary_mask  # Border pixels
+                dilated = cv2.dilate(aligned_mask, kernel, iterations=1)
+                border = dilated & ~aligned_mask  # Border pixels
                 
                 # Create distance map from border
                 dist = cv2.distanceTransform(~border, cv2.DIST_L2, 3)
@@ -378,39 +370,25 @@ class EnhancedCropReinserter:
                 # Normalize distances to create feathered mask
                 feather = dist / blend_extent
                 
-                # Apply feathering to mask edges
+                # Create the final alpha mask for blending
+                mask_float = aligned_mask.astype(float) / 255.0
                 mask_float[border > 0] = 1.0 - feather[border > 0]
                 
-                # Recreate 3D mask after feathering
+                # Create 3-channel mask for RGB
                 mask_float_3d = np.stack([mask_float] * 3, axis=2)
-            
-            # Perform alpha blending: source * (1-alpha) + processed * alpha
-            result_img = source_img.copy()
-            
-            # Apply blending only at mask locations for efficiency
-            mask_indices = binary_mask > 0
-            if np.any(mask_indices):
-                # Create a 3-channel mask for indexing
-                mask_indices_3d = np.stack([mask_indices] * 3, axis=2)
                 
-                # Apply blending only at mask locations
-                result_img[mask_indices_3d] = (source_img[mask_indices_3d] * (1 - mask_float_3d[mask_indices_3d]) + 
-                                            processed_img_resized[mask_indices_3d] * mask_float_3d[mask_indices_3d])
+                # Perform the blending
+                result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
+                result_img = np.clip(result_img, 0, 255).astype(np.uint8)
+                
+                # Save the result
+                cv2.imwrite(output_path, result_img)
+                
+                # Create comparison image
+                if debug_dir:
+                    comparison = np.hstack((source_img, aligned_img, result_img))
+                    cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
+                
+                return True
             else:
-                print("WARNING: No pixels to blend after resizing mask!")
-        else:
-            # Regular insertion (full crop replacement)
-            result_img = processed_img_resized
-        
-        # Convert result back to uint8 (just to be safe)
-        result_img = np.clip(result_img, 0, 255).astype(np.uint8)
-        
-        # Save the result
-        cv2.imwrite(output_path, result_img)
-        
-        # Create final side-by-side comparison
-        if debug_dir:
-            comparison = np.hstack((source_img, processed_img_resized, result_img))
-            cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
-        
-        return True
+                print("Cannot find points in the masks for alignment")
