@@ -168,95 +168,37 @@ class EnhancedCropReinserter:
         return processed_count > 0
     
     def _match_source_image(self, processed_filename, source_images):
-        """
-        Match processed image filename to source image using multiple strategies.
+        """Match processed image filename to source image."""
+        # First, just try a direct approach - look for the exact same filename in the source dir
+        source_dir = self.app.source_images_dir.get()
+        source_path = os.path.join(source_dir, processed_filename)
         
-        Args:
-            processed_filename: Filename of the processed image
-            source_images: Dictionary of source images
-            
-        Returns:
-            str: Matched source filename or None if no match found
-        """
-        # Try direct filename match first
-        if processed_filename in source_images:
+        # Check if this exact filename exists in the source directory
+        if os.path.exists(source_path):
+            print(f"Found direct match for {processed_filename} in source directory")
             return processed_filename
         
-        # Extract base name without extension
+        # If not, try to find a file with the same base name regardless of extension
         base_name = os.path.splitext(processed_filename)[0]
+        for file in os.listdir(source_dir):
+            if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                source_base = os.path.splitext(file)[0]
+                if source_base == base_name:
+                    print(f"Found match by base name: {file}")
+                    return file
         
-        # Strategy 1: Try different extensions with the same base name
-        for ext in ['.png', '.jpg', '.jpeg']:
-            potential_match = base_name + ext
-            if potential_match in source_images:
-                return potential_match
+        # As a last resort, if there's only one file in the source directory, use that
+        image_files = [f for f in os.listdir(source_dir) 
+                    if os.path.isfile(os.path.join(source_dir, f)) and 
+                    f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         
-        # Strategy 2: Check if source contains the base name
-        for source_name in source_images:
-            source_base = os.path.splitext(source_name)[0]
-            if base_name in source_base or source_base in base_name:
-                return source_name
+        if len(image_files) == 1:
+            print(f"Only one source image found, using {image_files[0]}")
+            return image_files[0]
         
-        # Strategy 3: Try numerical matching
-        numbers_in_processed = re.findall(r'\d+', base_name)
-        if numbers_in_processed:
-            # Use the last number in the filename
-            number = numbers_in_processed[-1]
-            for source_name in source_images:
-                source_numbers = re.findall(r'\d+', os.path.splitext(source_name)[0])
-                if source_numbers and source_numbers[-1] == number:
-                    return source_name
-        
-        # Strategy 4: Check for JSON metadata file
-        metadata_path = os.path.splitext(processed_filename)[0] + "_info.json"
-        metadata_fullpath = os.path.join(os.path.dirname(self.app.input_dir.get()), metadata_path)
-        if os.path.exists(metadata_fullpath):
-            try:
-                with open(metadata_fullpath, 'r') as f:
-                    metadata = json.load(f)
-                if 'source_image' in metadata:
-                    source_name = metadata['source_image']
-                    if source_name in source_images:
-                        return source_name
-            except Exception as e:
-                print(f"Error reading metadata: {str(e)}")
-        
-        # If all else fails, use image similarity to find the best match
-        # (This is computationally expensive, so we use it as a last resort)
-        if self.app.debug_mode.get():  # Only do this in debug mode
-            try:
-                print("Attempting image similarity matching...")
-                processed_img = cv2.imread(os.path.join(self.app.input_dir.get(), processed_filename))
-                if processed_img is not None:
-                    # Process a small version for speed
-                    processed_small = cv2.resize(processed_img, (64, 64))
-                    processed_gray = cv2.cvtColor(processed_small, cv2.COLOR_BGR2GRAY)
-                    
-                    best_score = -1
-                    best_match = None
-                    
-                    for source_name, source_path in source_images.items():
-                        source_img = cv2.imread(source_path)
-                        if source_img is not None:
-                            source_small = cv2.resize(source_img, (64, 64))
-                            source_gray = cv2.cvtColor(source_small, cv2.COLOR_BGR2GRAY)
-                            
-                            # Calculate structural similarity
-                            score = ssim(processed_gray, source_gray)
-                            
-                            if score > best_score:
-                                best_score = score
-                                best_match = source_name
-                    
-                    if best_score > 0.5:  # Threshold for a reasonably good match
-                        print(f"Found match by image similarity: {best_match} (score: {best_score:.2f})")
-                        return best_match
-            except Exception as e:
-                print(f"Error during image similarity matching: {str(e)}")
-        
-        # No match found
+        print(f"WARNING: No matching source image found for {processed_filename}")
         return None
-    
+        
     def _reinsert_with_resolution_handling(self, source_path, processed_path, mask_path, output_path, debug_dir=None):
         """
         Reinsert a processed image region into the source image, handling resolution differences.
