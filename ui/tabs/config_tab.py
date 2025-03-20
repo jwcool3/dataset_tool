@@ -636,6 +636,12 @@ class ConfigTab:
             variable=self.parent.reinsert_mask_only
         ).pack(anchor=tk.W, padx=5, pady=5)
         
+        # Add enhanced reinsertion option (new)
+        ttk.Checkbutton(
+            content,
+            text="Use enhanced resolution handling for reinsertion",
+            variable=self.parent.use_enhanced_reinserter
+        ).pack(anchor=tk.W, padx=5, pady=5)
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
@@ -697,6 +703,10 @@ class ConfigTab:
             text="Auto-center (try to find original position)",
             variable=self.parent.use_center_position
         ).pack(anchor=tk.W, padx=5, pady=5)
+    
+
+
+
     
     def _create_debug_section(self):
         """Create debug options section."""

@@ -10,6 +10,7 @@ from processors.video_converter import VideoConverter
 from processors.square_padder import SquarePadder
 from processors.crop_reinserter import CropReinserter
 from processors.mask_expander import MaskExpander  # Add new import
+from processors.enhanced_crop_reinserter import EnhancedCropReinserter
 
 __all__ = [
     'FrameExtractor',
@@ -19,5 +20,6 @@ __all__ = [
     'VideoConverter',
     'SquarePadder',
     'CropReinserter',
-    'MaskExpander'  # Add to __all__
+    'MaskExpander',
+    'EnhancedCropReinserter'  # Add to __all__
 ]

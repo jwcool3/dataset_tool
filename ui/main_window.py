@@ -498,7 +498,9 @@ class MainWindow:
             from processors.square_padder import SquarePadder
             from processors.crop_reinserter import CropReinserter
             from processors.mask_expander import MaskExpander
-            
+            from processors.enhanced_crop_reinserter import EnhancedCropReinserter
+
+
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
             mask_processor = MaskProcessor(self)
@@ -508,7 +510,9 @@ class MainWindow:
             square_padder = SquarePadder(self)
             crop_reinserter = CropReinserter(self)
             mask_expander = MaskExpander(self)
-            
+            enhanced_crop_reinserter = EnhancedCropReinserter(self)
+
+
             # Define pipeline steps in order
             pipeline_steps = []
             if self.extract_frames.get():
@@ -526,8 +530,12 @@ class MainWindow:
             if self.convert_to_video.get():
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
             if self.reinsert_crops_option.get():
-                pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))
-            
+                if self.use_enhanced_reinserter.get():
+                    pipeline_steps.append(("reinsert_crops", enhanced_crop_reinserter.reinsert_crops))
+                else:
+                    pipeline_steps.append(("reinsert_crops", crop_reinserter.reinsert_crops))
+
+
             # Print the pipeline for debugging
             print("Processing pipeline steps:", [step[0] for step in pipeline_steps])
             
