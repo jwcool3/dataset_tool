@@ -414,14 +414,12 @@ class MainWindow:
     def start_processing(self):
         """Start the processing pipeline in a separate thread."""
         
-# At the start of your processing function
         print("Current Configuration:")
-        print(f"- Alignment Method: {self.reinsert_alignment_method.get()}")
-        print(f"- Blend Mode: {self.reinsert_blend_mode.get()}")
-        print(f"- Blend Extent: {self.reinsert_blend_extent.get()}")
-        print(f"- Preserve Edges: {self.reinsert_preserve_edges.get()}")
+        print(f"- Using Smart Hair Reinserter: {self.use_smart_hair_reinserter.get()}")
         print(f"- Using Enhanced Reinserter: {self.use_enhanced_reinserter.get()}")
-        print(f"- Handle Different Masks: {self.reinsert_handle_different_masks.get()}")
+        print(f"- Mask-only mode: {self.reinsert_mask_only.get()}")
+        print(f"- Soft Edge Width: {self.soft_edge_width.get()}")
+        print(f"- Vertical Alignment Bias: {self.vertical_alignment_bias.get()}")
 
         if not self.input_dir.get() or not os.path.isdir(self.input_dir.get()):
             messagebox.showerror("Error", "Please select a valid input directory.")
@@ -439,30 +437,18 @@ class MainWindow:
                 messagebox.showerror("Error", f"Failed to create output directory: {str(e)}")
                 return
         
-        # Check if any processing steps are selected - INCLUDE expand_masks
+        # Check if any processing steps are selected
         if not any([self.extract_frames.get(), self.crop_mask_regions.get(), 
-                self.expand_masks.get(),  # Make sure this line is included
-                self.square_pad_images.get(), self.resize_images.get(), 
-                self.organize_files.get(), self.convert_to_video.get(),
-                self.reinsert_crops_option.get()]):
+                self.expand_masks.get(), self.square_pad_images.get(), 
+                self.resize_images.get(), self.organize_files.get(), 
+                self.convert_to_video.get(), self.reinsert_crops_option.get()]):
             messagebox.showerror("Error", "Please select at least one processing step.")
             return
-        
-        # Add debugging print to see which steps are selected
-        print("Selected processing steps:")
-        print(f"- Extract frames: {self.extract_frames.get()}")
-        print(f"- Crop mask regions: {self.crop_mask_regions.get()}")
-        print(f"- Expand mask regions: {self.expand_masks.get()}")  # Debug print
-        print(f"- Square pad images: {self.square_pad_images.get()}")
-        print(f"- Resize images: {self.resize_images.get()}")
-        print(f"- Organize files: {self.organize_files.get()}")
-        print(f"- Convert to video: {self.convert_to_video.get()}")
-        print(f"- Reinsert crops: {self.reinsert_crops_option.get()}")
         
         # Additional check for reinsert_crops_option
         if self.reinsert_crops_option.get():
             if not self.source_images_dir.get() or not os.path.isdir(self.source_images_dir.get()):
-                messagebox.showerror("Error", "For image reinsertion, please select a valid source images directory in the Config tab.")
+                messagebox.showerror("Error", "For image reinsertion, please select a valid source images directory.")
                 return
         
         # Get confirmation before starting processing
@@ -521,11 +507,12 @@ class MainWindow:
     
     def _process_data_thread(self):
         """Processing thread implementation."""
-
-            # Add these debug prints to check paths
+        
+        # Debug prints to check paths
         print(f"Input directory: {self.input_dir.get()}")
         print(f"Source images directory: {self.source_images_dir.get()}")
         print(f"Output directory: {self.output_dir.get()}")
+        
         # Initialize current_input
         current_input = self.input_dir.get()
         
@@ -537,11 +524,11 @@ class MainWindow:
             from processors.file_organizer import FileOrganizer
             from processors.video_converter import VideoConverter
             from processors.square_padder import SquarePadder
-            from processors.crop_reinserter import CropReinserter
             from processors.mask_expander import MaskExpander
-            from processors.enhanced_crop_reinserter import EnhancedCropReinserter
-            from processors.smart_hair_reinserter import SmartHairReinserter
-
+            
+            # Import the new unified reinsertion manager
+            from processors.reinsertion_manager import ReinsertionManager
+            
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
             mask_processor = MaskProcessor(self)
@@ -549,12 +536,9 @@ class MainWindow:
             file_organizer = FileOrganizer(self)
             video_converter = VideoConverter(self)
             square_padder = SquarePadder(self)
-            crop_reinserter = CropReinserter(self)
             mask_expander = MaskExpander(self)
-            enhanced_crop_reinserter = EnhancedCropReinserter(self)
-            smart_hair_reinserter = SmartHairReinserter(self)
+            reinsertion_manager = ReinsertionManager(self)
             
-
             # Define pipeline steps in order
             pipeline_steps = []
             if self.extract_frames.get():
@@ -572,20 +556,8 @@ class MainWindow:
             if self.convert_to_video.get():
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
             if self.reinsert_crops_option.get():
-                if self.use_enhanced_reinserter.get():
-                    print("Using enhanced reinserter")
-                    # Make sure the directories are being passed correctly
-                    print(f"Enhanced reinserter input: {current_input}")
-                    print(f"Enhanced reinserter source: {self.source_images_dir.get()}")
-                    print(f"Enhanced reinserter output: {self.output_dir.get()}")
-                    success = enhanced_crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
-                else:
-                    print("Using original reinserter")
-                    success = crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
-
-
-
-
+                pipeline_steps.append(("reinsert_crops", reinsertion_manager.reinsert_crops))
+            
             # Print the pipeline for debugging
             print("Processing pipeline steps:", [step[0] for step in pipeline_steps])
             
@@ -642,62 +614,11 @@ class MainWindow:
                             current_input = output_directories["resized"]
                         elif step_name == "organize_files" and os.path.exists(output_directories["organized"]):
                             current_input = output_directories["organized"]
-                                # Inside the pipeline steps loop
-                        elif step_name == "reinsert_crops":
-                            # Validate that source directories are set correctly
-                            self.status_label.config(text="Validating directories for crop reinsertion...")
-                            
-                            if not self.source_images_dir.get() or not os.path.isdir(self.source_images_dir.get()):
-                                error_msg = "Error: Source images directory not set or invalid for crop reinsertion"
-                                self.status_label.config(text=error_msg)
-                                messagebox.showerror("Directory Error", error_msg)
-                                continue
-                            
-                            # Verify that the input directory has cropped images (not masks)
-                            mask_dir_found = False
-                            for root, dirs, _ in os.walk(current_input):
-                                if "masks" in dirs:
-                                    mask_dir_found = True
-                                    break
-                            
-                            if not mask_dir_found:
-                                self.status_label.config(text="Warning: No 'masks' subdirectory found in input. "
-                                                        "Ensure input contains cropped images, not masks.")
-                                                        
-                            # Now execute crop reinsertion
-                            success = step_func(current_input, self.output_dir.get())
                         
                         self.status_label.config(text=f"Completed step: {step_name}. Using {current_input} for next step.")
                     else:
                         self.status_label.config(text=f"Warning: Step {step_name} did not produce expected output. Continuing with same input.")
-                    
-                    # Automatically add datasets if auto-add is enabled
-                    if hasattr(self, 'dataset_manager') and getattr(self, 'auto_add_datasets', True):
-                        output_dirs = {
-                            "frames": os.path.join(self.output_dir.get(), "frames"),
-                            "cropped": os.path.join(self.output_dir.get(), "cropped"),
-                            "expanded_masks": os.path.join(self.output_dir.get(), "expanded_masks"),
-                            "square_padded": os.path.join(self.output_dir.get(), "square_padded"),
-                            "resized": os.path.join(self.output_dir.get(), "resized"),
-                            "organized": os.path.join(self.output_dir.get(), "organized")
-                        }
-                        
-                        for step_name, dir_path in output_dirs.items():
-                            if os.path.isdir(dir_path) and os.listdir(dir_path):
-                                try:
-                                    self.dataset_manager.registry.add_dataset(
-                                        name=f"{os.path.basename(self.input_dir.get())}_{step_name}",
-                                        path=dir_path,
-                                        description=f"Processed output from {step_name} step",
-                                        category="Processed"
-                                    )
-                                except Exception as e:
-                                    print(f"Failed to add {step_name} dataset: {str(e)}")
-                        
-                        # Refresh the dataset explorer
-                        self.dataset_manager.explorer.refresh_datasets()
-
-
+                
                 except Exception as e:
                     error_msg = f"Error during {step_name} step: {str(e)}"
                     self.status_label.config(text=error_msg)
@@ -728,8 +649,7 @@ class MainWindow:
             # Reset UI state
             self.processing = False
             self.input_output_tab.process_button.config(state=tk.NORMAL)
-            self.input_output_tab.cancel_button.config(state=tk.DISABLED)
-    
+            self.input_output_tab.cancel_button.config(state=tk.DISABLED)    
     def _check_progress(self):
         """Check the progress of the processing thread."""
         if self.processing:

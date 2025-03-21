@@ -180,6 +180,8 @@ class InputOutputTab:
 
 # Update to input_output_tab.py to add Smart Hair Reinserter to processing pipeline
 
+# Fix for the reinsert_idx variable error in input_output_tab.py
+
     def _create_pipeline_section(self):
         """Create the processing pipeline section with checkboxes."""
         pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
@@ -194,56 +196,49 @@ class InputOutputTab:
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
-            ("Reinsert cropped images", self.parent.reinsert_crops_option)
+            ("Reinsert processed regions", self.parent.reinsert_crops_option)
         ]
         
-        # Use a cleaner approach with fewer loops
+        # Find the index of reinsert option before creating widgets
+        reinsert_idx = None
+        for i, (text, var) in enumerate(processing_options):
+            if text == "Reinsert processed regions":
+                reinsert_idx = i
+                break
+        
+        # Create checkboxes in a grid layout
         for i, (text, var) in enumerate(processing_options):
             row = i % 3  # 3 options per row
             col = i // 3
             checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
             checkbutton.grid(column=col, row=row, sticky=tk.W, padx=10, pady=5)
-            
-            # Highlight the mask expansion option to make it more noticeable
-            if text == "Expand mask regions":
-                checkbutton.configure(style="Accent.TCheckbutton")
         
-        # Add a special highlight for the Smart Hair Reinserter
-        hair_reinserter_frame = ttk.Frame(pipeline_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
-        hair_reinserter_frame.grid(column=0, row=3, columnspan=3, sticky=tk.W+tk.E, padx=10, pady=5)
+        # Add the Smart Hair Reinserter option in a special frame
+        hair_frame = ttk.Frame(pipeline_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
+        hair_frame.grid(column=0, row=3, columnspan=3, sticky=tk.W+tk.E, padx=10, pady=5)
         
-        # Create a custom styled heading
-        hair_heading = ttk.Label(
-            hair_reinserter_frame,
-            text="✨ Smart Hair Reinsertion ✨",
+        # Create heading
+        ttk.Label(
+            hair_frame,
+            text="✨ Hair Replacement Mode ✨",
             font=("Helvetica", 10, "bold"),
             foreground="#8E44AD"  # Purple color for emphasis
-        )
-        hair_heading.pack(anchor=tk.W, padx=5, pady=(5, 0))
+        ).pack(anchor=tk.W, padx=5, pady=(0, 5))
         
-        # Add the Smart Hair Reinserter checkbox
-        smart_hair_cb = ttk.Checkbutton(
-            hair_reinserter_frame,
-            text="Use Smart Hair Reinserter (optimized for hair replacement)",
+        # Single checkbox for Smart Hair Reinserter
+        self.hair_reinserter_cb = ttk.Checkbutton(
+            hair_frame,
+            text="Use intelligent hair processing (optimized for AI-generated hair)",
             variable=self.parent.use_smart_hair_reinserter,
-            command=self._highlight_hair_options
+            command=self._on_hair_reinserter_changed
         )
-        smart_hair_cb.pack(anchor=tk.W, padx=20, pady=5)
+        self.hair_reinserter_cb.pack(anchor=tk.W, padx=20, pady=0)
         
-        # Add descriptive text
-        ttk.Label(
-            hair_reinserter_frame,
-            text="Specialized processor for AI-generated hair reinsertion with intelligent alignment",
-            font=("Helvetica", 9, "italic"),
-            foreground="#555555",
-            wraplength=550
-        ).pack(anchor=tk.W, padx=20, pady=(0, 5))
-        
-        # Debug mode checkbox (separate for visibility)
-        ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
-                    variable=self.parent.debug_mode).grid(
-            column=0, row=4, columnspan=2, sticky=tk.W, padx=10, pady=5
-        )
+        # Debug checkbox at the bottom
+        ttk.Checkbutton(
+            pipeline_frame, text="Debug Mode (Save visualization images)", 
+            variable=self.parent.debug_mode
+        ).grid(column=0, row=4, columnspan=2, sticky=tk.W, padx=10, pady=5)
         
         # Add hint about standalone processing
         hint_frame = ttk.Frame(self.frame, padding="10")
@@ -256,34 +251,107 @@ class InputOutputTab:
         hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
         hint_label.pack(anchor=tk.W)
 
+        # Function to handle when reinsertion is toggled
         def on_reinsert_toggle():
             """Called when the reinsertion option is toggled"""
             if self.parent.reinsert_crops_option.get():
-                # Show a hint about the input directory
-                if not hasattr(self, 'reinsert_hint_label'):
-                    self.reinsert_hint_label = ttk.Label(
-                        pipeline_frame, 
-                        text="Note: Input Directory = Cropped Images, Source Directory = Original Images", 
-                        foreground="blue"
-                    )
-                    self.reinsert_hint_label.grid(
-                        column=0, row=5, columnspan=3, sticky=tk.W, padx=20, pady=5
-                    )
-            elif hasattr(self, 'reinsert_hint_label'):
-                # Hide the hint
-                self.reinsert_hint_label.grid_forget()
-
-        # Add a command to the reinsert checkbox
-        for i, (text, var) in enumerate(processing_options):
-            if text == "Reinsert cropped images":
-                reinsert_idx = i
-                break
+                # Show reinsertion note
+                if hasattr(self, 'reinsertion_note_frame'):
+                    self.reinsertion_note_frame.grid()
                 
-        # Find the reinsert checkbutton widget
-        for widget in pipeline_frame.winfo_children():
-            if isinstance(widget, ttk.Checkbutton) and widget.grid_info()['row'] == reinsert_idx % 3 and widget.grid_info()['column'] == reinsert_idx // 3:
-                widget.configure(command=on_reinsert_toggle)
-                break
+                # Auto-switch to Config tab to show reinsertion options
+                self.parent.notebook.select(1)  # Config tab is index 1
+                
+                # Show a notification
+                self.parent.status_label.config(
+                    text="Reinsertion enabled. Please configure source directory in the Config tab."
+                )
+            else:
+                # Hide reinsertion note
+                if hasattr(self, 'reinsertion_note_frame'):
+                    self.reinsertion_note_frame.grid_remove()
+
+        # Update the state of hair reinserter
+        self._update_hair_reinserter_state()
+        
+        # Find and configure the reinsertion checkbox widget
+        if reinsert_idx is not None:
+            # Calculate grid position
+            row = reinsert_idx % 3
+            col = reinsert_idx // 3
+            
+            # Find the widget at this position
+            for widget in pipeline_frame.winfo_children():
+                if (isinstance(widget, ttk.Checkbutton) and 
+                    widget.grid_info().get('row') == row and 
+                    widget.grid_info().get('column') == col):
+                    widget.configure(command=on_reinsert_toggle)
+                    break
+    # Add handlers for checkbox state management
+    def _on_processing_option_changed(self, changed_var):
+        """Handle changes to processing options."""
+        self._update_hair_reinserter_state()
+        
+        # If 'Reinsert processed regions' is checked, show the hint
+        if changed_var == self.parent.reinsert_crops_option and changed_var.get():
+            self._show_reinsertion_hint()
+        elif changed_var == self.parent.reinsert_crops_option and not changed_var.get():
+            self._hide_reinsertion_hint()
+
+
+
+    def _show_reinsertion_hint(self):
+        """Show hint about reinsertion directories."""
+        if not hasattr(self, 'reinsert_hint_frame'):
+            self.reinsert_hint_frame = ttk.Frame(self.frame, padding=5, relief="groove")
+            self.reinsert_hint_frame.pack(fill=tk.X, pady=5, padx=10)
+            
+            ttk.Label(
+                self.reinsert_hint_frame,
+                text="IMPORTANT: For reinsertion, your Input Directory should contain PROCESSED images with masks.\n"
+                    "In the Configuration tab, set the Source Directory to your ORIGINAL images.",
+                foreground="blue",
+                font=("Helvetica", 9, "bold"),
+                wraplength=600
+            ).pack(pady=5)
+        
+    def _hide_reinsertion_hint(self):
+        """Hide the reinsertion hint."""
+        if hasattr(self, 'reinsert_hint_frame'):
+            self.reinsert_hint_frame.pack_forget()
+
+
+# Replace these methods in your InputOutputTab class
+    def _on_hair_reinserter_changed(self):
+        """Handle changes to the hair reinserter option."""
+        if self.parent.use_smart_hair_reinserter.get():
+            # Switch to Config tab
+            self.parent.notebook.select(1)  # Config tab
+            
+            # Enable relevant settings
+            if hasattr(self.parent, 'reinsert_handle_different_masks'):
+                self.parent.reinsert_handle_different_masks.set(True)
+            
+            if hasattr(self.parent, 'hair_color_correction'):
+                self.parent.hair_color_correction.set(True)
+                
+            if hasattr(self.parent, 'hair_top_alignment'):
+                self.parent.hair_top_alignment.set(True)
+            
+            # Show a message
+            self.parent.status_label.config(
+                text="Hair Replacement Mode activated. Adjust settings in the Configuration tab."
+            )
+
+    def _update_hair_reinserter_state(self):
+        """Update the state of the hair reinserter checkbox based on reinsertion option."""
+        if hasattr(self, 'hair_reinserter_cb'):
+            if self.parent.reinsert_crops_option.get():
+                self.hair_reinserter_cb.configure(state="normal")
+            else:
+                self.hair_reinserter_cb.configure(state="disabled")
+                # Uncheck hair reinserter if reinsertion is disabled
+                self.parent.use_smart_hair_reinserter.set(False)
 
     def _highlight_hair_options(self):
         """Highlight Smart Hair Reinserter options in the Config tab when enabled."""
@@ -297,19 +365,11 @@ class InputOutputTab:
         )
         
         # Switch to the Config tab
-        self.parent.notebook.select(1)  # Config tab is usually index 1
+        self.parent.notebook.select(1)  # Config tab
         
-        # Try to highlight the hair options section
         try:
-            # Find Config tab instance
-            config_tab = self.parent.config_tab
-            
-            # Highlight the hair reinserter section
-            if hasattr(config_tab, 'hair_reinserter_frame'):
-                config_tab.hair_reinserter_frame.configure(background="#f0e6f5")  # Light purple highlight
-                
-                # Reset background after a delay
-                self.parent.root.after(2000, lambda: config_tab.hair_reinserter_frame.configure(background=""))
-        except:
-            # If any error occurs, just continue without highlighting
+            # Just switching to the Config tab is enough if we can't highlight anything
+            # No need to highlight specific frames that might not exist
             pass
+        except Exception as e:
+            print(f"Error during tab switching: {e}")

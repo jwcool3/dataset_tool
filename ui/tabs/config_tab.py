@@ -1,6 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, filedialog
 
+import utils.config_manager as config_manager
+from ui.tabs.simplified_reinsertion_ui import SimplifiedReinsertionUI
+
 class ConfigTab:
     """Tab for configuring processing options with dynamic UI based on selected processing steps."""
     
@@ -165,7 +168,7 @@ class ConfigTab:
             self._hide_section(section_id)
     
     def update_ui_visibility(self):
-        """Update which UI sections are visible based on processing selections."""
+        """Update which UI sections are visible based on processing selections - Updated version."""
         # First, determine which sections should be visible
         visible_sections = set()
         
@@ -195,9 +198,6 @@ class ConfigTab:
             
             # Convert to video selected
             self.parent.convert_to_video.get(): ["video_conversion"],
-            
-            # Reinsert crops selected
-            self.parent.reinsert_crops_option.get(): ["reinsertion"]
         }
         
         # Populate visible sections based on selected processing steps
@@ -212,10 +212,21 @@ class ConfigTab:
         
         # Update visibility of each section
         for section_id, section_info in self.sections.items():
+            # Skip reinsertion section since it's handled separately
+            if section_id == "reinsertion":
+                continue
+                
             if section_id in visible_sections:
                 self._show_section(section_id)
             else:
                 self._hide_section(section_id)
+        
+        # Handle reinsertion UI separately
+        if hasattr(self, 'reinsertion_ui'):
+            if self.parent.reinsert_crops_option.get() or "reinsertion" in visible_sections:
+                self.reinsertion_ui.show()
+            else:
+                self.reinsertion_ui.hide()
         
         # Update the active processes label
         active_steps = []
@@ -244,7 +255,6 @@ class ConfigTab:
         # Force update of scroll region
         self.content_frame.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-    
     def _show_section(self, section_id):
         """Show a section by its ID."""
         if section_id in self.sections:
@@ -630,282 +640,31 @@ class ConfigTab:
 # Add this method to the ConfigTab class by updating _create_reinsertion_section:
 
     def _create_reinsertion_section(self):
-        """Create the UI for crop reinsertion settings."""
-        content = self._create_section("Crop Reinsertion", "reinsertion")
+        """Create the UI for reinsertion settings - Updated version."""
+        # Instead of building UI elements directly, use the SimplifiedReinsertionUI
+        reinsertion_ui = SimplifiedReinsertionUI(self.content_frame, self.parent)
         
-        # Basic options
-        basic_frame = ttk.LabelFrame(content, text="Basic Options", padding=5)
-        basic_frame.pack(fill=tk.X, pady=5, padx=5)
+        # Store a reference to the reinsertion UI
+        self.reinsertion_ui = reinsertion_ui
         
-        # Add mask-only option
-        ttk.Checkbutton(
-            basic_frame,
-            text="Use mask-only reinsertion (only reinsert masked regions)",
-            variable=self.parent.reinsert_mask_only
-        ).pack(anchor=tk.W, padx=5, pady=5)
+        # Ensure it's visible if reinsertion is enabled
+        if self.parent.reinsert_crops_option.get():
+            reinsertion_ui.show()
+        else:
+            reinsertion_ui.hide()
         
-        # Add Smart Hair Reinserter option - NEW
-        ttk.Checkbutton(
-            basic_frame,
-            text="Use Smart Hair Reinserter (optimized for hair replacement)",
-            variable=self.parent.use_smart_hair_reinserter,
-            command=self._toggle_hair_reinserter_controls
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Add enhanced reinsertion option
-        ttk.Checkbutton(
-            basic_frame,
-            text="Use enhanced resolution handling for reinsertion",
-            variable=self.parent.use_enhanced_reinserter
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Add handling for different masks option
-        ttk.Checkbutton(
-            basic_frame,
-            text="Handle different masks between source and cropped images",
-            variable=self.parent.reinsert_handle_different_masks,
-            command=self._toggle_mask_alignment_controls
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # NEW: Smart Hair Reinserter options frame
-        self.hair_reinserter_frame = ttk.LabelFrame(content, text="Smart Hair Reinserter Options", padding=5)
-        self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        # Add hair-specific options
-        ttk.Checkbutton(
-            self.hair_reinserter_frame,
-            text="Enable automatic color correction for hair",
-            variable=self.parent.hair_color_correction
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        ttk.Checkbutton(
-            self.hair_reinserter_frame,
-            text="Prioritize top alignment for hair (recommended)",
-            variable=self.parent.hair_top_alignment
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Hair alignment preset selector
-        preset_frame = ttk.Frame(self.hair_reinserter_frame)
-        preset_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(preset_frame, text="Quick Presets:").pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            preset_frame, 
-            text="Natural Hair",
-            command=lambda: self._apply_hair_preset("natural")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            preset_frame, 
-            text="Anime Hair",
-            command=lambda: self._apply_hair_preset("anime")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            preset_frame, 
-            text="Updo/Ponytail",
-            command=lambda: self._apply_hair_preset("updo")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Vertical Alignment Bias Frame
-        vertical_bias_frame = ttk.LabelFrame(content, text="Vertical Alignment", padding=5)
-        vertical_bias_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        # Vertical Bias Slider
-        ttk.Label(vertical_bias_frame, text="Vertical Alignment Bias:").pack(side=tk.LEFT, padx=5)
-        vertical_bias_slider = ttk.Scale(
-            vertical_bias_frame,
-            from_=-50,
-            to=50,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.vertical_alignment_bias,
-            length=200
-        )
-        vertical_bias_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Label to show current bias value
-        self.vertical_bias_label = ttk.Label(vertical_bias_frame, text="0")
-        self.vertical_bias_label.pack(side=tk.LEFT, padx=5)
-        
-        # Update label when slider moves
-        def update_vertical_bias_label(*args):
-            bias = self.parent.vertical_alignment_bias.get()
-            self.vertical_bias_label.config(text=f"{bias:.0f}")
-        
-        self.parent.vertical_alignment_bias.trace_add("write", update_vertical_bias_label)
-        
-        # Soft Edge Frame
-        soft_edge_frame = ttk.LabelFrame(content, text="Soft Edge Settings", padding=5)
-        soft_edge_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        # Feather Pixels Slider
-        ttk.Label(soft_edge_frame, text="Soft Edge Width:").pack(side=tk.LEFT, padx=5)
-        feather_slider = ttk.Scale(
-            soft_edge_frame,
-            from_=0,
-            to=30,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.soft_edge_width,
-            length=200
-        )
-        feather_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Label to show current feather value
-        self.feather_label = ttk.Label(soft_edge_frame, text="15")
-        self.feather_label.pack(side=tk.LEFT, padx=5)
-        
-        # Update label when slider moves
-        def update_feather_label(*args):
-            width = self.parent.soft_edge_width.get()
-            self.feather_label.config(text=f"{width:.0f}")
-        
-        self.parent.soft_edge_width.trace_add("write", update_feather_label)
-        
-        # Source directory
-        source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
-        source_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(
-            source_frame,
-            text="Select the directory containing the ORIGINAL UNCROPPED images:",
-            font=("Helvetica", 9, "bold")
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        source_dir_frame = ttk.Frame(source_frame)
-        source_dir_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Entry(
-            source_dir_frame,
-            textvariable=self.parent.source_images_dir,
-            width=40
-        ).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
-        
-        ttk.Button(
-            source_dir_frame,
-            text="Browse...",
-            command=self._browse_source_dir
-        ).pack(side=tk.RIGHT, padx=5)
-        
-        # Important note
-        self.note_frame = ttk.Frame(content, padding=5, relief="groove")
-        self.note_frame.pack(fill=tk.X, pady=10)
-        
-        ttk.Label(
-            self.note_frame,
-            text="IMPORTANT: The Input Directory (set in the Input/Output tab) should contain your CROPPED IMAGES.\n"
-                "The directory above should contain your ORIGINAL UNCROPPED IMAGES.",
-            foreground="blue",
-            font=("Helvetica", 9, "bold"),
-            wraplength=600
-        ).pack(pady=5)
-        
-        # Advanced settings frame 
-        self.advanced_frame = ttk.LabelFrame(content, text="Advanced Mask Alignment Options", padding=5)
-        self.advanced_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        # Alignment method selection
-        alignment_frame = ttk.Frame(self.advanced_frame)
-        alignment_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(alignment_frame, text="Alignment Method:").pack(side=tk.LEFT, padx=5)
-        
-        alignment_combo = ttk.Combobox(
-            alignment_frame,
-            textvariable=self.parent.reinsert_alignment_method,
-            values=["none", "centroid", "bbox", "landmarks", "contour", "iou"],
-            width=15,
-            state="readonly"
-        )
-        alignment_combo.pack(side=tk.LEFT, padx=5)
-        
-        # Blend mode selection
-        blend_frame = ttk.Frame(self.advanced_frame)
-        blend_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(blend_frame, text="Blend Mode:").pack(side=tk.LEFT, padx=5)
-        
-        blend_combo = ttk.Combobox(
-            blend_frame,
-            textvariable=self.parent.reinsert_blend_mode,
-            values=["alpha", "poisson", "feathered"],
-            width=15,
-            state="readonly"
-        )
-        blend_combo.pack(side=tk.LEFT, padx=5)
-        
-        # Blend extent slider
-        extent_frame = ttk.Frame(self.advanced_frame)
-        extent_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
-        
-        extent_slider = ttk.Scale(
-            extent_frame,
-            from_=0,
-            to=20,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.reinsert_blend_extent,
-            length=200
-        )
-        extent_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Label to show value
-        self.extent_value_label = ttk.Label(extent_frame, text=f"{self.parent.reinsert_blend_extent.get()} px")
-        self.extent_value_label.pack(side=tk.LEFT, padx=5)
-        
-        # Update label when slider is moved
-        def update_extent_label(*args):
-            self.extent_value_label.config(text=f"{self.parent.reinsert_blend_extent.get()} px")
-        
-        self.parent.reinsert_blend_extent.trace_add("write", update_extent_label)
-        
-        # Preserve edges option
-        ttk.Checkbutton(
-            self.advanced_frame,
-            text="Preserve original image edges",
-            variable=self.parent.reinsert_preserve_edges
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Explanation section
-        explanation_frame = ttk.LabelFrame(content, text="Tips for Hair Reinsertion", padding=5)
-        explanation_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        explanation_text = (
-            "• Use Smart Hair Reinserter for best results with hair replacement\n"
-            "• Positive vertical bias values move hair downward, negative values move hair upward\n"
-            "• Increase soft edge width for more gradual blending between original and processed hair\n"
-            "• For best results, ensure hair masks don't include the face or other features\n"
-            "• Try different preset options if default alignment doesn't work well"
-        )
-        
-        ttk.Label(
-            explanation_frame,
-            text=explanation_text,
-            wraplength=600
-        ).pack(padx=5, pady=5, anchor=tk.W)
-        
-        # Initially hide the advanced options if different masks handling is disabled
-        if not self.parent.reinsert_handle_different_masks.get():
-            self.advanced_frame.pack_forget()
-        
-        # Initially hide the hair reinserter options if not enabled
-        if not self.parent.use_smart_hair_reinserter.get():
-            self.hair_reinserter_frame.pack_forget()
-
-    # Add this method to toggle hair reinserter controls
-    def _toggle_hair_reinserter_controls(self):
-        """Show or hide Smart Hair Reinserter controls based on the checkbox state."""
-        if hasattr(self, 'hair_reinserter_frame'):
-            if self.parent.use_smart_hair_reinserter.get():
-                # Show the hair reinserter controls
-                try:
-                    self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5, after=self.note_frame)
-                except:
-                    self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5)
+        # Add trace to the reinsert_crops_option variable to show/hide the UI
+        def toggle_reinsertion_ui(*args):
+            if self.parent.reinsert_crops_option.get():
+                reinsertion_ui.show()
             else:
-                # Hide the hair reinserter controls
-                self.hair_reinserter_frame.pack_forget()
+                reinsertion_ui.hide()
+        
+        self.parent.reinsert_crops_option.trace_add("write", toggle_reinsertion_ui)
+        
+        # Update UI based on current values
+        reinsertion_ui.update_ui()
+    # Add this method to toggle hair reinserter controls
 
     # Add this method for hair presets
     def _apply_hair_preset(self, preset_type):
@@ -931,17 +690,6 @@ class ConfigTab:
             self.parent.reinsert_blend_mode.set("feathered")
             self.parent.hair_color_correction.set(True)
             self.parent.hair_top_alignment.set(True)
-    def _toggle_mask_alignment_controls(self):
-        """Show or hide advanced mask alignment controls based on the checkbox state."""
-        if hasattr(self, 'advanced_frame'):
-            if self.parent.reinsert_handle_different_masks.get():
-                # Pack it after the note_frame if available, otherwise just pack it normally
-                try:
-                    self.advanced_frame.pack(fill=tk.X, pady=5, padx=5, after=self.note_frame)
-                except:
-                    self.advanced_frame.pack(fill=tk.X, pady=5, padx=5)
-            else:
-                self.advanced_frame.pack_forget()
 
 
     
@@ -1041,6 +789,10 @@ class ConfigTab:
         filepath = filedialog.askopenfilename(filetypes=filetypes, title="Select Mask Video")
         if filepath:
             self.parent.mask_video_path.set(filepath)
+    
+
+
+
     
     def refresh(self):
         """
