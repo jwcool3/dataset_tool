@@ -305,6 +305,9 @@ class SmartHairReinserter:
         if source_mask_path and os.path.exists(source_mask_path):
             source_mask = cv2.imread(source_mask_path, cv2.IMREAD_GRAYSCALE)
         
+        # Import hair processing utilities
+        from utils.hair_processing import match_hair_color, create_hair_specific_mask, analyze_hair_shape, generate_hair_mask_recommendations
+
         # Get dimensions
         source_h, source_w = source_img.shape[:2]
         processed_h, processed_w = processed_img.shape[:2]
@@ -328,7 +331,68 @@ class SmartHairReinserter:
         # Ensure source mask is also properly sized
         if source_mask is not None and (source_mask.shape[0] != source_h or source_mask.shape[1] != source_w):
             source_mask = cv2.resize(source_mask, (source_w, source_h), 
-                                  interpolation=cv2.INTER_NEAREST)
+                                interpolation=cv2.INTER_NEAREST)
+        
+        # Analyze hair shapes if both masks are available
+        if source_mask is not None and mask is not None:
+            # Analyze both hair shapes
+            source_analysis = analyze_hair_shape(source_mask)
+            processed_analysis = analyze_hair_shape(mask)
+            
+            # Get recommendations for alignment settings
+            if source_analysis['is_valid'] and processed_analysis['is_valid']:
+                recommendations = generate_hair_mask_recommendations(
+                    source_analysis, processed_analysis
+                )
+                
+                # Log recommendations
+                if debug_dir:
+                    import json
+                    with open(os.path.join(debug_dir, "hair_recommendations.json"), 'w') as f:
+                        json.dump(recommendations, f, indent=2)
+                
+                # Apply recommended settings if confidence is high enough
+                if recommendations['confidence'] != 'low':
+                    # Adjust vertical bias if not set manually
+                    if hasattr(self.app, 'vertical_alignment_bias') and self.app.vertical_alignment_bias.get() == 0:
+                        self.app.vertical_alignment_bias.set(recommendations['vertical_bias'])
+                        print(f"Setting recommended vertical bias: {recommendations['vertical_bias']}")
+                    
+                    # Adjust soft edge width if not manually set
+                    if hasattr(self.app, 'soft_edge_width') and self.app.soft_edge_width.get() == 15:  # Default value
+                        self.app.soft_edge_width.set(recommendations['soft_edge_width'])
+                        print(f"Setting recommended soft edge width: {recommendations['soft_edge_width']}")
+
+        # Apply color correction if enabled
+        if hasattr(self.app, 'hair_color_correction') and self.app.hair_color_correction.get() and source_mask is not None:
+            print("Applying hair color correction")
+            processed_img = match_hair_color(
+                source_img=source_img,
+                processed_img=processed_img,
+                source_mask=source_mask,
+                processed_mask=mask,
+                strength=0.7  # Stronger correction (0.5-0.8 recommended)
+            )
+            
+            # Save color-corrected image for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "color_corrected.png"), processed_img)
+
+        # Create a hair-specific mask that prioritizes the top part
+        if hasattr(self.app, 'hair_top_alignment') and self.app.hair_top_alignment.get():
+            print("Creating hair-specific mask")
+            specialized_mask = create_hair_specific_mask(
+                mask=mask,
+                focus_on_top=True,
+                padding=5
+            )
+            
+            # Save specialized mask for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "specialized_mask.png"), specialized_mask)
+            
+            # Use the specialized mask for alignment
+            mask = specialized_mask
         
         # If we're handling different masks between source and processed images
         if self.app.reinsert_handle_different_masks.get() and source_mask is not None:

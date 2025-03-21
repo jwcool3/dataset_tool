@@ -4,6 +4,9 @@ from tkinter import ttk, filedialog
 class ConfigTab:
     """Tab for configuring processing options with dynamic UI based on selected processing steps."""
     
+# Look for this code in your ConfigTab class's __init__ method
+# and modify it to not reference hair_reinserter_frame
+
     def __init__(self, parent):
         """
         Initialize the configuration tab with adaptive UI.
@@ -36,7 +39,6 @@ class ConfigTab:
         
         # Update UI based on current selections
         self.update_ui_visibility()
-    
     def _create_scrollable_frame(self):
         """Create the main scrollable frame for content."""
         # Create a canvas with scrollbar for the main content
@@ -629,14 +631,56 @@ class ConfigTab:
 
 # Add this method to the ConfigTab class by updating _create_reinsertion_section:
 
+
     def _create_reinsertion_section(self):
         """Create the UI for crop reinsertion settings."""
         content = self._create_section("Reinsertion Settings", "reinsertion")
         
-        # Source directory section first (most important)
-        source_frame = ttk.LabelFrame(content, text="Original Images Directory", padding=5)
-        source_frame.pack(fill=tk.X, pady=5, padx=5)
+        # Basic Options frame
+        basic_frame = ttk.LabelFrame(content, text="Basic Options", padding=5)
+        basic_frame.pack(fill=tk.X, pady=5, padx=5)
         
+        # Add mask-only option
+        ttk.Checkbutton(
+            basic_frame,
+            text="Only reinsert masked regions (preserve rest of image)",
+            variable=self.parent.reinsert_mask_only
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Add hair-specific options directly in basic frame instead of a separate frame
+        if hasattr(self.parent, 'hair_color_correction'):
+            ttk.Checkbutton(
+                basic_frame,
+                text="Enable automatic color correction for hair",
+                variable=self.parent.hair_color_correction
+            ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        if hasattr(self.parent, 'hair_top_alignment'):
+            ttk.Checkbutton(
+                basic_frame,
+                text="Prioritize top alignment for hair",
+                variable=self.parent.hair_top_alignment
+            ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Vertical Alignment frame
+        vertical_frame = ttk.LabelFrame(content, text="Vertical Alignment", padding=5)
+        vertical_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Vertical Alignment slider
+        if hasattr(self.parent, 'vertical_alignment_bias'):
+            ttk.Label(vertical_frame, text="Vertical Position:").pack(side=tk.LEFT, padx=5)
+            slider = ttk.Scale(
+                vertical_frame,
+                from_=-50,
+                to=50,
+                orient=tk.HORIZONTAL,
+                variable=self.parent.vertical_alignment_bias,
+                length=200
+            )
+            slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+
+
         ttk.Label(
             source_frame,
             text="Select the directory containing the ORIGINAL UNCROPPED images:",
