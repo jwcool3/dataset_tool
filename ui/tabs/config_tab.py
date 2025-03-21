@@ -731,6 +731,46 @@ class ConfigTab:
         extent_frame = ttk.Frame(self.advanced_frame)
         extent_frame.pack(fill=tk.X, pady=5)
         
+
+        # Manual offset controls
+        offset_frame = ttk.Frame(self.advanced_frame)
+        offset_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(offset_frame, text="Manual Offset:").pack(side=tk.LEFT, padx=5)
+
+        # Horizontal offset
+        ttk.Label(offset_frame, text="X:").pack(side=tk.LEFT, padx=2)
+        x_spinner = ttk.Spinbox(
+            offset_frame,
+            from_=-100,
+            to=100,
+            increment=1,
+            width=5,
+            textvariable=self.parent.reinsert_manual_offset_x
+        )
+        x_spinner.pack(side=tk.LEFT, padx=2)
+
+        # Vertical offset
+        ttk.Label(offset_frame, text="Y:").pack(side=tk.LEFT, padx=5)
+        y_spinner = ttk.Spinbox(
+            offset_frame,
+            from_=-100,
+            to=100,
+            increment=1,
+            width=5,
+            textvariable=self.parent.reinsert_manual_offset_y
+        )
+        y_spinner.pack(side=tk.LEFT, padx=2)
+
+        # Add a tip about negative Y values raising the hair
+        ttk.Label(
+            offset_frame, 
+            text="(negative Y values raise the hair)",
+            font=("Helvetica", 8),
+            foreground="gray"
+        ).pack(side=tk.LEFT, padx=5)
+
+
         ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
         
         extent_slider = ttk.Scale(

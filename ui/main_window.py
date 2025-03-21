@@ -130,7 +130,9 @@ class MainWindow:
         self.reinsert_blend_extent = tk.IntVar(value=5)
         self.reinsert_preserve_edges = tk.BooleanVar(value=True)
         
-
+        # Add these variables
+        self.reinsert_manual_offset_x = tk.IntVar(value=0)
+        self.reinsert_manual_offset_y = tk.IntVar(value=0)
 
 
         # Mask expansion options

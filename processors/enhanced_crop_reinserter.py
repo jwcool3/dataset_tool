@@ -278,6 +278,27 @@ class EnhancedCropReinserter:
             cv2.imwrite(output_path, result_img)
             return True
         
+        # Get manual offset values
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
+
+        # Apply manual offset if any is set
+        if manual_offset_x != 0 or manual_offset_y != 0:
+            print(f"Applying manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+            
+            # Create transformation matrix for the offset
+            M = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+            
+            # Apply to both processed image and mask
+            processed_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+            mask = cv2.warpAffine(mask, M, (mask.shape[1], mask.shape[0]))
+            
+            # Save offset versions for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "offset_processed.png"), processed_img)
+                cv2.imwrite(os.path.join(debug_dir, "offset_mask.png"), mask)
+
+
         # If handling different masks, get configuration settings
         alignment_method = self.app.reinsert_alignment_method.get()
         blend_mode = self.app.reinsert_blend_mode.get()
