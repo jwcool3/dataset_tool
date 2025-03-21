@@ -998,3 +998,329 @@ class ReinsertionManager:
         corrected_img = cv2.cvtColor(corrected_lab, cv2.COLOR_LAB2BGR)
         
         return np.clip(corrected_img, 0, 255).astype(np.uint8)
+    
+
+    """
+    Debugging function for reinsertion problems.
+    Add this to your ReinsertionManager class.
+    """
+
+    def debug_reinsert_image(self, input_dir, output_dir):
+        """
+        Debugging version of reinsertion with extensive logging and image saving.
+        
+        Args:
+            input_dir: Input directory containing processed images
+            output_dir: Output directory for reinserted images
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        print("\n==== DEBUGGING REINSERTION ====")
+        
+        # Create output and debug directories
+        debug_dir = os.path.join(output_dir, "debug_reinsertion")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Find processed images
+        print(f"Looking for processed images in: {input_dir}")
+        processed_images = []
+        
+        for root, dirs, files in os.walk(input_dir):
+            if os.path.basename(root).lower() == "masks":
+                continue
+                
+            for file in files:
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    processed_path = os.path.join(root, file)
+                    
+                    # Look for corresponding mask
+                    mask_path = None
+                    masks_dir = os.path.join(root, "masks")
+                    if os.path.isdir(masks_dir):
+                        potential_mask = os.path.join(masks_dir, file)
+                        if os.path.exists(potential_mask):
+                            mask_path = potential_mask
+                    
+                    processed_images.append({
+                        'processed_path': processed_path,
+                        'mask_path': mask_path,
+                        'filename': file
+                    })
+        
+        print(f"Found {len(processed_images)} processed images")
+        
+        # Get source images
+        source_dir = self.app.source_images_dir.get()
+        print(f"Source directory: {source_dir}")
+        
+        source_images = {}
+        for root, dirs, files in os.walk(source_dir):
+            if os.path.basename(root).lower() == "masks":
+                continue
+                
+            for file in files:
+                if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    source_images[file] = os.path.join(root, file)
+        
+        print(f"Found {len(source_images)} source images")
+        
+        # Process the first image as a test
+        if not processed_images:
+            print("No processed images found!")
+            return False
+        
+        img_data = processed_images[0]
+        processed_path = img_data['processed_path']
+        mask_path = img_data['mask_path']
+        filename = img_data['filename']
+        
+        print(f"\nTesting with image: {filename}")
+        print(f"Processed path: {processed_path}")
+        print(f"Mask path: {mask_path}")
+        
+        # Try to match source image
+        source_filename = None
+        for src_file in source_images:
+            if src_file == filename or os.path.splitext(src_file)[0] == os.path.splitext(filename)[0]:
+                source_filename = src_file
+                break
+        
+        if not source_filename:
+            print("Source image not found! Trying to find by metadata...")
+            # Try with metadata
+            crop_info_path = os.path.splitext(processed_path)[0] + "_crop_info.json"
+            if os.path.exists(crop_info_path):
+                try:
+                    with open(crop_info_path, 'r') as f:
+                        crop_info = json.load(f)
+                    if 'original_image' in crop_info:
+                        source_filename = crop_info['original_image']
+                        if source_filename in source_images:
+                            print(f"Found source from metadata: {source_filename}")
+                except Exception as e:
+                    print(f"Error reading crop info: {str(e)}")
+        
+        if not source_filename:
+            print("Could not find matching source image!")
+            if len(source_images) == 1:
+                source_filename = list(source_images.keys())[0]
+                print(f"Using only available source image: {source_filename}")
+            else:
+                return False
+        
+        source_path = source_images[source_filename]
+        print(f"Source path: {source_path}")
+        
+        # Load images
+        source_img = cv2.imread(source_path)
+        processed_img = cv2.imread(processed_path)
+        
+        if source_img is None:
+            print("Failed to load source image!")
+            return False
+        
+        if processed_img is None:
+            print("Failed to load processed image!")
+            return False
+        
+        # Save the original images
+        cv2.imwrite(os.path.join(debug_dir, "source_original.png"), source_img)
+        cv2.imwrite(os.path.join(debug_dir, "processed_original.png"), processed_img)
+        
+        if mask_path and os.path.exists(mask_path):
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            if mask is not None:
+                cv2.imwrite(os.path.join(debug_dir, "mask_original.png"), mask)
+        
+        # Get dimensions
+        source_h, source_w = source_img.shape[:2]
+        processed_h, processed_w = processed_img.shape[:2]
+        
+        print(f"Source dimensions: {source_w}x{source_h}")
+        print(f"Processed dimensions: {processed_w}x{processed_h}")
+        
+        # Check for crop info
+        crop_info_path = os.path.splitext(processed_path)[0] + "_crop_info.json"
+        crop_info = None
+        if os.path.exists(crop_info_path):
+            try:
+                with open(crop_info_path, 'r') as f:
+                    crop_info = json.load(f)
+                print(f"Crop info found: {crop_info}")
+            except Exception as e:
+                print(f"Error reading crop info: {str(e)}")
+        else:
+            print("No crop info found")
+        
+        # Create different reinsertion methods to debug the issue
+        
+        # 1. Simple centered placement
+        result_centered = source_img.copy()
+        center_x = (source_w - processed_w) // 2
+        center_y = (source_h - processed_h) // 2
+        print(f"Center placement coordinates: ({center_x}, {center_y})")
+        
+        try:
+            # Only copy if processed image is smaller
+            if processed_w <= source_w and processed_h <= source_h:
+                result_centered[center_y:center_y+processed_h, center_x:center_x+processed_w] = processed_img
+            else:
+                print("Processed image too large for center placement, using full replacement")
+                result_centered = processed_img.copy()
+        except Exception as e:
+            print(f"Error in center placement: {str(e)}")
+        
+        cv2.imwrite(os.path.join(debug_dir, "result_centered.png"), result_centered)
+        
+        # 2. Crop info based placement
+        result_crop_info = source_img.copy()
+        if crop_info and all(k in crop_info for k in ["crop_x", "crop_y", "crop_width", "crop_height"]):
+            x_pos = crop_info["crop_x"]
+            y_pos = crop_info["crop_y"]
+            width = crop_info["crop_width"]
+            height = crop_info["crop_height"]
+            
+            print(f"Crop info placement: x={x_pos}, y={y_pos}, width={width}, height={height}")
+            
+            try:
+                # Need to ensure processed image is resized correctly to match the crop region
+                if processed_w != width or processed_h != height:
+                    print(f"Resizing processed image from {processed_w}x{processed_h} to {width}x{height}")
+                    processed_for_crop = cv2.resize(processed_img, (width, height), 
+                                                interpolation=cv2.INTER_LANCZOS4)
+                else:
+                    processed_for_crop = processed_img
+                
+                # Ensure bounds are valid
+                if x_pos >= 0 and y_pos >= 0 and x_pos + width <= source_w and y_pos + height <= source_h:
+                    result_crop_info[y_pos:y_pos+height, x_pos:x_pos+width] = processed_for_crop
+                else:
+                    print("Crop coordinates out of bounds, using centered placement")
+                    if processed_w <= source_w and processed_h <= source_h:
+                        center_x = (source_w - processed_w) // 2
+                        center_y = (source_h - processed_h) // 2
+                        result_crop_info[center_y:center_y+processed_h, center_x:center_x+processed_w] = processed_img
+                    else:
+                        print("Processed image too large, using alpha blend")
+                        alpha = 0.7
+                        result_crop_info = cv2.addWeighted(source_img, 1-alpha, 
+                                                        cv2.resize(processed_img, (source_w, source_h)), 
+                                                        alpha, 0)
+            except Exception as e:
+                print(f"Error in crop info placement: {str(e)}")
+        else:
+            print("No valid crop info, skipping crop info based placement")
+        
+        cv2.imwrite(os.path.join(debug_dir, "result_crop_info.png"), result_crop_info)
+        
+        # 3. Alpha blending
+        result_alpha = source_img.copy()
+        try:
+            # Resize processed image to match source if needed
+            if source_w != processed_w or source_h != processed_h:
+                processed_resized = cv2.resize(processed_img, (source_w, source_h), 
+                                            interpolation=cv2.INTER_LANCZOS4)
+            else:
+                processed_resized = processed_img
+            
+            # Alpha blend
+            alpha = 0.7  # 70% processed, 30% source
+            result_alpha = cv2.addWeighted(source_img, 1-alpha, processed_resized, alpha, 0)
+        except Exception as e:
+            print(f"Error in alpha blending: {str(e)}")
+        
+        cv2.imwrite(os.path.join(debug_dir, "result_alpha.png"), result_alpha)
+        
+        # 4. Mask-based blending (if mask available)
+        result_mask = source_img.copy()
+        if mask_path and os.path.exists(mask_path):
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            if mask is not None:
+                try:
+                    # Resize mask to match source if needed
+                    if source_w != mask.shape[1] or source_h != mask.shape[0]:
+                        mask = cv2.resize(mask, (source_w, source_h), 
+                                    interpolation=cv2.INTER_NEAREST)
+                    
+                    # Resize processed image to match source if needed
+                    if source_w != processed_w or source_h != processed_h:
+                        processed_resized = cv2.resize(processed_img, (source_w, source_h), 
+                                                    interpolation=cv2.INTER_LANCZOS4)
+                    else:
+                        processed_resized = processed_img
+                    
+                    # Create float mask
+                    mask_float = mask.astype(float) / 255.0
+                    mask_float_3d = np.stack([mask_float] * 3, axis=2)
+                    
+                    # Blend images
+                    result_mask = source_img * (1 - mask_float_3d) + processed_resized * mask_float_3d
+                    result_mask = np.clip(result_mask, 0, 255).astype(np.uint8)
+                except Exception as e:
+                    print(f"Error in mask-based blending: {str(e)}")
+        else:
+            print("No mask available, skipping mask-based blending")
+        
+        cv2.imwrite(os.path.join(debug_dir, "result_mask.png"), result_mask)
+        
+        # Create side-by-side comparisons
+        try:
+            # Resize all to same height for comparison
+            comp_height = 300
+            
+            src_scale = comp_height / source_h
+            src_width = int(source_w * src_scale)
+            src_resized = cv2.resize(source_img, (src_width, comp_height))
+            
+            proc_scale = comp_height / processed_h 
+            proc_width = int(processed_w * proc_scale)
+            proc_resized = cv2.resize(processed_img, (proc_width, comp_height))
+            
+            cent_scale = comp_height / result_centered.shape[0]
+            cent_width = int(result_centered.shape[1] * cent_scale)
+            cent_resized = cv2.resize(result_centered, (cent_width, comp_height))
+            
+            crop_scale = comp_height / result_crop_info.shape[0]
+            crop_width = int(result_crop_info.shape[1] * crop_scale)
+            crop_resized = cv2.resize(result_crop_info, (crop_width, comp_height))
+            
+            # Create comparison rows
+            row1 = np.hstack((src_resized, proc_resized))
+            row2 = np.hstack((cent_resized, crop_resized))
+            
+            # Add labels to row1
+            cv2.putText(row1, "Source", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(row1, "Processed", (src_width + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            # Add labels to row2
+            cv2.putText(row2, "Center Place", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(row2, "Crop Info", (cent_width + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            # Save comparison
+            cv2.imwrite(os.path.join(debug_dir, "comparison_row1.png"), row1)
+            cv2.imwrite(os.path.join(debug_dir, "comparison_row2.png"), row2)
+            
+            # Also create comparison with alpha and mask methods
+            alpha_scale = comp_height / result_alpha.shape[0]
+            alpha_width = int(result_alpha.shape[1] * alpha_scale)
+            alpha_resized = cv2.resize(result_alpha, (alpha_width, comp_height))
+            
+            mask_scale = comp_height / result_mask.shape[0]
+            mask_width = int(result_mask.shape[1] * mask_scale)
+            mask_resized = cv2.resize(result_mask, (mask_width, comp_height))
+            
+            row3 = np.hstack((alpha_resized, mask_resized))
+            
+            # Add labels to row3
+            cv2.putText(row3, "Alpha Blend", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(row3, "Mask Blend", (alpha_width + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            
+            cv2.imwrite(os.path.join(debug_dir, "comparison_row3.png"), row3)
+        except Exception as e:
+            print(f"Error creating comparisons: {str(e)}")
+        
+        print("\nAll debug images saved to:", debug_dir)
+        print("==== DEBUGGING COMPLETE ====")
+        
+        return True
