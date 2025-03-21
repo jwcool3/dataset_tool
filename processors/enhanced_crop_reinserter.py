@@ -940,7 +940,8 @@ class EnhancedCropReinserter:
         return extended_mask
     
 
-    def _align_with_landmarks(self, source_img, processed_img, source_mask, processed_mask, debug_dir=None):
+    def _align_with_landmarks(self, source_img, processed_img, source_mask, processed_mask, 
+                            source_landmarks, processed_landmarks, debug_dir=None):
         """
         Align processed hair mask and image based on facial landmarks from both images.
         
@@ -949,27 +950,17 @@ class EnhancedCropReinserter:
             processed_img: Processed image with hair to insert
             source_mask: Mask for source image
             processed_mask: Mask for processed image
+            source_landmarks: Pre-computed landmarks for source image
+            processed_landmarks: Pre-computed landmarks for processed image
             debug_dir: Directory to save debug visualizations
             
         Returns:
             tuple: (aligned_mask, aligned_image)
         """
-        if not hasattr(self, 'face_detector') or self.face_detector is None:
-            self.face_detector = dlib.get_frontal_face_detector()
-            
-        if not hasattr(self, 'landmark_predictor') or self.landmark_predictor is None:
-            # Check if the predictor file exists
-            predictor_path = os.path.join(os.path.dirname(__file__), "shape_predictor_68_face_landmarks.dat")
-            if os.path.exists(predictor_path):
-                self.landmark_predictor = dlib.shape_predictor(predictor_path)
-            else:
-                print("Landmark predictor file not found")
-                return processed_mask, processed_img
-        
-        # Detect faces and get landmarks
-        source_landmarks = self._get_landmarks(source_img)
-        processed_landmarks = self._get_landmarks(processed_img)
-        
+        # Convert landmarks to numpy arrays
+        source_points = np.array(source_landmarks)
+        processed_points = np.array(processed_landmarks)
+
         if source_landmarks is None or processed_landmarks is None:
             print("Could not detect landmarks in one or both images")
             return processed_mask, processed_img
