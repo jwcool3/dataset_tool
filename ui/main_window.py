@@ -521,11 +521,6 @@ class MainWindow:
     
     def _process_data_thread(self):
         """Processing thread implementation."""
-
-            # Add these debug prints to check paths
-        print(f"Input directory: {self.input_dir.get()}")
-        print(f"Source images directory: {self.source_images_dir.get()}")
-        print(f"Output directory: {self.output_dir.get()}")
         # Initialize current_input
         current_input = self.input_dir.get()
         
@@ -554,7 +549,6 @@ class MainWindow:
             enhanced_crop_reinserter = EnhancedCropReinserter(self)
             smart_hair_reinserter = SmartHairReinserter(self)
             
-
             # Define pipeline steps in order
             pipeline_steps = []
             if self.extract_frames.get():
@@ -571,18 +565,21 @@ class MainWindow:
                 pipeline_steps.append(("organize_files", file_organizer.organize_files))
             if self.convert_to_video.get():
                 pipeline_steps.append(("convert_to_video", video_converter.convert_to_video))
+            
+            # Add reinsertion step if selected
             if self.reinsert_crops_option.get():
-                if self.use_enhanced_reinserter.get():
-                    print("Using enhanced reinserter")
-                    # Make sure the directories are being passed correctly
-                    print(f"Enhanced reinserter input: {current_input}")
-                    print(f"Enhanced reinserter source: {self.source_images_dir.get()}")
-                    print(f"Enhanced reinserter output: {self.output_dir.get()}")
-                    success = enhanced_crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
+                # Simplified decision logic for which reinserter to use:
+                if self.use_smart_hair_reinserter.get():
+                    # Use Smart Hair Reinserter for hair replacement
+                    self.status_label.config(text="Using Smart Hair Reinserter for hair replacement...")
+                    pipeline_steps.append(("reinsert_crops", smart_hair_reinserter.reinsert_hair))
                 else:
-                    print("Using original reinserter")
-                    success = crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
-
+                    # Use Enhanced Crop Reinserter for general reinsertion
+                    self.status_label.config(text="Using Enhanced Crop Reinserter...")
+                    pipeline_steps.append(("reinsert_crops", enhanced_crop_reinserter.reinsert_crops))
+            
+            # Print the pipeline for debugging
+            print("Processing pipeline steps:", [step[0] for step in pipeline_steps])
 
 
 
