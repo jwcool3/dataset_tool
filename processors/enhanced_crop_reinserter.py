@@ -284,9 +284,15 @@ class EnhancedCropReinserter:
         blend_extent = self.app.reinsert_blend_extent.get()
         preserve_edges = self.app.reinsert_preserve_edges.get()
         
-        # NEW: Add these lines to capture vertical bias and soft edge width
-        vertical_bias = self.app.vertical_alignment_bias.get()
-        soft_edge_width = self.app.soft_edge_width.get()
+        # Get vertical bias and soft edge width
+        vertical_bias = 0
+        soft_edge_width = 15
+        
+        if hasattr(self.app, 'vertical_alignment_bias'):
+            vertical_bias = self.app.vertical_alignment_bias.get()
+        
+        if hasattr(self.app, 'soft_edge_width'):
+            soft_edge_width = self.app.soft_edge_width.get()
         
         print(f"Using config settings: alignment={alignment_method}, blend={blend_mode}, extent={blend_extent}")
         print(f"Vertical Bias: {vertical_bias}, Soft Edge Width: {soft_edge_width}")  # Debug print
@@ -297,14 +303,14 @@ class EnhancedCropReinserter:
         
         if alignment_method != "none":
             # Perform the alignment based on the selected method
-            # NEW: Pass vertical_bias and soft_edge_width as additional parameters
+            # THIS IS THE KEY FIX: properly unpack the two return values
             aligned_mask, aligned_img = self._align_masks(
                 source_mask, mask_resized, 
                 source_img, processed_img_resized, 
                 alignment_method, 
                 debug_dir,
-                vertical_bias=vertical_bias,
-                soft_edge_width=soft_edge_width
+                vertical_bias,
+                soft_edge_width
             )
         
         # Blending stage
@@ -321,6 +327,13 @@ class EnhancedCropReinserter:
             )
         elif blend_mode == "feathered":
             result_img = self._feathered_blend(
+                source_img, aligned_img, 
+                aligned_mask, 
+                blend_extent
+            )
+        else:
+            # Fallback to alpha blend if unknown mode
+            result_img = self._alpha_blend(
                 source_img, aligned_img, 
                 aligned_mask, 
                 blend_extent
@@ -364,14 +377,22 @@ class EnhancedCropReinserter:
         
         return None
 
-    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
+    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None, vertical_bias=0, soft_edge_width=15):
         """
         Enhanced mask alignment with vertical bias and soft edge handling.
         
-        Key Improvements:
-        - More intelligent vertical alignment
-        - Soft mask edge transitions
-        - Configurable vertical bias
+        Args:
+            source_mask: Binary mask of source image
+            processed_mask: Binary mask of processed image 
+            source_img: Source image
+            processed_img: Processed image
+            alignment_method: Method to use for alignment
+            debug_dir: Directory for debug output (optional)
+            vertical_bias: Vertical adjustment bias (default: 0)
+            soft_edge_width: Width of soft edge (default: 15)
+        
+        Returns:
+            tuple: (aligned_mask, aligned_img) - The aligned mask and image
         """
         # Ensure source_mask is not None
         if source_mask is None:
@@ -381,6 +402,144 @@ class EnhancedCropReinserter:
         _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
         _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
         
+        # Make copies to modify
+        aligned_mask = processed_mask.copy()
+        aligned_img = processed_img.copy()
+        
+        # Alignment methods with improved vertical handling
+        if alignment_method in ["centroid", "landmarks", "contour", "bbox"]:
+            try:
+                # Get the vertical bias from the UI if available
+                if hasattr(self.app, 'vertical_alignment_bias'):
+                    vertical_bias = self.app.vertical_alignment_bias.get()
+                
+                # Default dx, dy for safety
+                dx, dy = 0, vertical_bias
+                
+                # Compute alignment based on selected method
+                if alignment_method == "centroid":
+                    source_moments = cv2.moments(source_mask_bin)
+                    processed_moments = cv2.moments(processed_mask_bin)
+                    
+                    if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
+                        source_cx = int(source_moments["m10"] / source_moments["m00"])
+                        source_cy = int(source_moments["m01"] / source_moments["m00"])
+                        processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
+                        processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
+                        
+                        dx = source_cx - processed_cx
+                        dy = source_cy - processed_cy + vertical_bias
+                
+                elif alignment_method in ["landmarks", "contour"]:
+                    source_points = np.argwhere(source_mask_bin > 0)
+                    processed_points = np.argwhere(processed_mask_bin > 0)
+                    
+                    if len(source_points) > 0 and len(processed_points) > 0:
+                        # Find the top points of each mask (for hair alignment)
+                        source_top = source_points[:, 0].min()
+                        processed_top = processed_points[:, 0].min()
+                        
+                        # For horizontal alignment, use median x at the top
+                        source_top_x = np.median(source_points[source_points[:, 0] == source_top, 1])
+                        processed_top_x = np.median(processed_points[processed_points[:, 0] == processed_top, 1])
+                        
+                        dx = int(source_top_x - processed_top_x)
+                        dy = source_top - processed_top + vertical_bias
+                
+                elif alignment_method == "bbox":
+                    source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    if source_contours and processed_contours:
+                        source_x, source_y, _, _ = cv2.boundingRect(max(source_contours, key=cv2.contourArea))
+                        processed_x, processed_y, _, _ = cv2.boundingRect(max(processed_contours, key=cv2.contourArea))
+                        
+                        dx = source_x - processed_x
+                        dy = source_y - processed_y + vertical_bias
+                
+                # Apply transformation
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+                
+                # Save debug visualization if debug directory is provided
+                if debug_dir:
+                    try:
+                        # Create color visualizations of the masks
+                        source_vis = np.zeros((source_mask.shape[0], source_mask.shape[1], 3), dtype=np.uint8)
+                        source_vis[source_mask_bin > 0] = [0, 255, 0]  # Green for source mask
+                        
+                        aligned_vis = np.zeros((aligned_mask.shape[0], aligned_mask.shape[1], 3), dtype=np.uint8)
+                        aligned_vis[aligned_mask > 0] = [0, 0, 255]  # Red for aligned mask
+                        
+                        # Combine visualizations
+                        overlay = source_vis + aligned_vis
+                        
+                        # Save visualization
+                        cv2.imwrite(os.path.join(debug_dir, "mask_alignment.png"), overlay)
+                        cv2.imwrite(os.path.join(debug_dir, "aligned_mask.png"), aligned_mask)
+                        cv2.imwrite(os.path.join(debug_dir, "aligned_image.png"), aligned_img)
+                    except Exception as e:
+                        print(f"Error saving debug visualization: {e}")
+            
+            except Exception as e:
+                print(f"Alignment error: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Now create a soft-edged version of the aligned mask if needed
+        if soft_edge_width > 0:
+            try:
+                # Get the soft edge width from the UI if available
+                if hasattr(self.app, 'soft_edge_width'):
+                    soft_edge_width = max(1, self.app.soft_edge_width.get())
+                
+                # Create kernel for morphology operations
+                kernel = np.ones((max(1, soft_edge_width // 3), max(1, soft_edge_width // 3)), np.uint8)
+                
+                # Create inner and outer mask regions
+                _, binary_mask = cv2.threshold(aligned_mask, 127, 255, cv2.THRESH_BINARY)
+                dilated = cv2.dilate(binary_mask, kernel, iterations=1)
+                eroded = cv2.erode(binary_mask, kernel, iterations=1)
+                
+                # Create transition region
+                border = dilated & ~eroded
+                
+                # Create float mask starting with 1.0 in eroded region
+                soft_mask = np.zeros_like(binary_mask, dtype=np.float32)
+                soft_mask[eroded > 0] = 1.0
+                
+                # Apply distance-based feathering in border region
+                if np.any(border):
+                    dist = cv2.distanceTransform(border, cv2.DIST_L2, 3)
+                    max_dist = np.max(dist) if np.max(dist) > 0 else 1.0
+                    normalized_dist = dist / max_dist
+                    soft_mask[border > 0] = 1.0 - normalized_dist[border > 0]
+                
+                # Convert back to uint8 for return
+                aligned_mask = (soft_mask * 255).astype(np.uint8)
+                
+                # Save debug visualization if debug directory is provided
+                if debug_dir:
+                    try:
+                        cv2.imwrite(os.path.join(debug_dir, "soft_mask.png"), aligned_mask)
+                        
+                        # Create visualization of soft mask
+                        soft_vis = np.zeros((aligned_mask.shape[0], aligned_mask.shape[1], 3), dtype=np.uint8)
+                        # Use heat map coloring: red (1.0) to blue (0.0)
+                        soft_vis[:,:,0] = (soft_mask * 255).astype(np.uint8)  # B
+                        soft_vis[:,:,2] = ((1.0 - soft_mask) * 255).astype(np.uint8)  # R
+                        cv2.imwrite(os.path.join(debug_dir, "soft_mask_visualization.png"), soft_vis)
+                    except Exception as e:
+                        print(f"Error saving soft mask visualization: {e}")
+            
+            except Exception as e:
+                print(f"Soft mask creation error: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Return the aligned mask and image
+        return aligned_mask, aligned_img
         # Compute vertical bias dynamically
         def compute_vertical_bias(source_mask, processed_mask):
             """
