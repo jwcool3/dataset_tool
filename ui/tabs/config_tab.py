@@ -732,6 +732,17 @@ class ConfigTab:
         extent_frame.pack(fill=tk.X, pady=5)
         
 
+        # Add to the advanced frame in ConfigTab._create_reinsertion_section
+        ttk.Checkbutton(
+            self.advanced_frame,
+            text="Preserve hair parting (experimental)",
+            variable=self.parent.preserve_hair_parting
+        ).pack(anchor=tk.W, padx=5, pady=5)
+
+        # And initialize the variable in MainWindow._init_variables
+        self.preserve_hair_parting = tk.BooleanVar(value=False)
+
+
         # Manual offset controls
         offset_frame = ttk.Frame(self.advanced_frame)
         offset_frame.pack(fill=tk.X, pady=5)

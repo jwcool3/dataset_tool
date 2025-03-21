@@ -13,6 +13,8 @@ from skimage.metrics import structural_similarity as ssim
 from skimage import img_as_ubyte, img_as_float
 from processors.mask_alignment_handler import MaskAlignmentHandler
 import tkinter as tk
+import dlib 
+
 
 class EnhancedCropReinserter:
     """Reinserts processed regions back into original images, handling resolution differences."""
@@ -381,6 +383,45 @@ class EnhancedCropReinserter:
                 alignment_method, 
                 debug_dir
             )
+
+
+
+        # Inside _reinsert_with_resolution_handling method, before applying blending:
+
+        # Use landmark-based alignment if selected
+        if self.app.reinsert_alignment_method.get() == "landmarks":
+            aligned_mask, aligned_img = self._align_with_landmarks(
+                source_img, processed_img_resized, source_mask, mask_resized, debug_dir
+            )
+        else:
+            # Use existing alignment method...
+            aligned_mask, aligned_img = self._align_masks(
+                source_mask, mask_resized, 
+                source_img, processed_img_resized, 
+                alignment_method, 
+                debug_dir
+            )
+            
+        # Preserve hair parting if option enabled
+        if self.app.preserve_hair_parting.get():  # Add this option to UI
+            # Detect landmarks for source and processed images
+            source_landmarks = self._get_landmarks(source_img)
+            processed_landmarks = self._get_landmarks(aligned_img)
+            
+            # Detect parting in source and processed hair
+            source_parting, _ = self._detect_hair_parting(source_mask, source_landmarks)
+            processed_parting, _ = self._detect_hair_parting(aligned_mask, processed_landmarks)
+            
+            # If partings detected, blend them
+            if source_parting is not None and processed_parting is not None:
+                # Create a blended parting that preserves the original direction
+                blended_parting = cv2.addWeighted(source_parting, 0.7, processed_parting, 0.3, 0)
+                
+                # Apply blended parting to aligned mask
+                _, aligned_mask = self._detect_hair_parting(aligned_mask, None, blended_parting)
+                
+                if debug_dir:
+                    cv2.imwrite(os.path.join(debug_dir, "parting_preserved.png"), aligned_mask)
         
         # Blending stage
         if blend_mode == "alpha":
@@ -846,3 +887,259 @@ class EnhancedCropReinserter:
         extended_mask = cv2.GaussianBlur(extended_mask, (3, 3), 0)
         
         return extended_mask
+    
+
+    def _align_with_landmarks(self, source_img, processed_img, source_mask, processed_mask, debug_dir=None):
+        """
+        Align processed hair mask and image based on facial landmarks from both images.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image with hair to insert
+            source_mask: Mask for source image
+            processed_mask: Mask for processed image
+            debug_dir: Directory to save debug visualizations
+            
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        if not hasattr(self, 'face_detector') or self.face_detector is None:
+            self.face_detector = dlib.get_frontal_face_detector()
+            
+        if not hasattr(self, 'landmark_predictor') or self.landmark_predictor is None:
+            # Check if the predictor file exists
+            predictor_path = os.path.join(os.path.dirname(__file__), "shape_predictor_68_face_landmarks.dat")
+            if os.path.exists(predictor_path):
+                self.landmark_predictor = dlib.shape_predictor(predictor_path)
+            else:
+                print("Landmark predictor file not found")
+                return processed_mask, processed_img
+        
+        # Detect faces and get landmarks
+        source_landmarks = self._get_landmarks(source_img)
+        processed_landmarks = self._get_landmarks(processed_img)
+        
+        if source_landmarks is None or processed_landmarks is None:
+            print("Could not detect landmarks in one or both images")
+            return processed_mask, processed_img
+        
+        # Convert landmarks to numpy arrays
+        source_points = np.array(source_landmarks)
+        processed_points = np.array(processed_landmarks)
+        
+        # Get facial measurements for scaling
+        # We'll use a subset of landmarks that define the face shape
+        # Typically points: 0-16 (jaw line), 17-26 (eyebrows), 27-35 (nose), 36-47 (eyes), 48-67 (mouth)
+        face_shape_indices = list(range(17))  # Jaw line and forehead
+        
+        source_face_points = source_points[face_shape_indices]
+        processed_face_points = processed_points[face_shape_indices]
+        
+        # Calculate face width and height ratios
+        source_width = np.max(source_face_points[:, 0]) - np.min(source_face_points[:, 0])
+        source_height = np.max(source_face_points[:, 1]) - np.min(source_face_points[:, 1])
+        
+        processed_width = np.max(processed_face_points[:, 0]) - np.min(processed_face_points[:, 0])
+        processed_height = np.max(processed_face_points[:, 1]) - np.min(processed_face_points[:, 1])
+        
+        # Calculate scaling factors
+        scale_x = source_width / processed_width if processed_width > 0 else 1.0
+        scale_y = source_height / processed_height if processed_height > 0 else 1.0
+        
+        # Calculate face centers
+        source_center = np.mean(source_face_points, axis=0)
+        processed_center = np.mean(processed_face_points, axis=0)
+        
+        # Create transformation matrix for scaling around center and translation
+        # First scale, then translate
+        scale_matrix = np.array([
+            [scale_x, 0, processed_center[0] * (1 - scale_x)],
+            [0, scale_y, processed_center[1] * (1 - scale_y)]
+        ], dtype=np.float32)
+        
+        # Calculate translation to align face centers
+        tx = source_center[0] - processed_center[0] * scale_x
+        ty = source_center[1] - processed_center[1] * scale_y
+        
+        translation_matrix = np.array([
+            [1, 0, tx],
+            [0, 1, ty]
+        ], dtype=np.float32)
+        
+        # Combine transformations
+        M = translation_matrix.copy()
+        M[:, 2] += scale_matrix[:, 2]
+        M[0, 0] = scale_matrix[0, 0]
+        M[1, 1] = scale_matrix[1, 1]
+        
+        # Apply transformation
+        h, w = processed_img.shape[:2]
+        aligned_img = cv2.warpAffine(processed_img, M, (w, h), flags=cv2.INTER_LANCZOS4)
+        aligned_mask = cv2.warpAffine(processed_mask, M, (w, h), flags=cv2.INTER_NEAREST)
+        
+        # Save debug visualization
+        if debug_dir:
+            # Draw landmarks on images
+            source_vis = source_img.copy()
+            processed_vis = processed_img.copy()
+            aligned_vis = aligned_img.copy()
+            
+            # Draw source landmarks
+            for (x, y) in source_points:
+                cv2.circle(source_vis, (int(x), int(y)), 2, (0, 255, 0), -1)
+                
+            # Draw processed landmarks
+            for (x, y) in processed_points:
+                cv2.circle(processed_vis, (int(x), int(y)), 2, (0, 0, 255), -1)
+            
+            # Create visualization of the alignment
+            combined = np.hstack((source_vis, processed_vis, aligned_vis))
+            cv2.imwrite(os.path.join(debug_dir, "landmark_alignment.png"), combined)
+            
+            # Save the aligned mask
+            cv2.imwrite(os.path.join(debug_dir, "aligned_mask_landmarks.png"), aligned_mask)
+        
+        return aligned_mask, aligned_img
+
+    def _get_landmarks(self, image):
+        """
+        Detect face and extract facial landmarks.
+        
+        Args:
+            image: Input image
+            
+        Returns:
+            list: List of (x, y) landmark coordinates or None if detection fails
+        """
+        # Convert to grayscale for detection
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        # Detect faces
+        faces = self.face_detector(gray)
+        if not faces:
+            return None
+        
+        # Get largest face
+        largest_face = faces[0]
+        largest_area = (largest_face.right() - largest_face.left()) * (largest_face.bottom() - largest_face.top())
+        
+        for face in faces[1:]:
+            area = (face.right() - face.left()) * (face.bottom() - face.top())
+            if area > largest_area:
+                largest_face = face
+                largest_area = area
+        
+        # Get landmarks for the face
+        shape = self.landmark_predictor(gray, largest_face)
+        
+        # Convert landmarks to list of (x, y) coordinates
+        landmarks = []
+        for i in range(68):  # 68 landmarks in the standard model
+            x = shape.part(i).x
+            y = shape.part(i).y
+            landmarks.append((x, y))
+        
+        return landmarks
+    
+    def _detect_hair_parting(self, mask, landmarks=None):
+        """
+        Detect and enhance the hair parting line in the mask.
+        
+        Args:
+            mask: Hair mask image
+            landmarks: Optional facial landmarks for guidance
+            
+        Returns:
+            tuple: (parting_line, enhanced_mask)
+        """
+        # Create copy of mask
+        enhanced_mask = mask.copy()
+        
+        # Ensure mask is grayscale
+        if len(mask.shape) > 2:
+            mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        else:
+            mask_gray = mask
+        
+        # Threshold mask to binary
+        _, binary_mask = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
+        
+        # Apply morphological operations to find potential parting
+        kernel = np.ones((3, 3), np.uint8)
+        eroded = cv2.erode(binary_mask, kernel, iterations=2)
+        
+        # Find difference (potential parting lines)
+        potential_parting = binary_mask - eroded
+        
+        # Use connected components to find the parting line
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(potential_parting)
+        
+        # If we have landmarks, use them to help identify the correct parting
+        parting_line = None
+        if landmarks is not None:
+            # Find the center line of the face
+            middle_points = [(landmarks[27][0], landmarks[27][1]),  # Nose bridge top
+                            (landmarks[30][0], landmarks[30][1])]  # Nose tip
+            
+            # Create a vertical line approximating face midline
+            face_midline_x = int(np.mean([p[0] for p in middle_points]))
+            
+            # Find component closest to this midline
+            best_dist = float('inf')
+            best_component = 0
+            
+            for i in range(1, num_labels):  # Skip background (0)
+                if stats[i, cv2.CC_STAT_AREA] < 20:  # Skip very small components
+                    continue
+                    
+                # Calculate distance to face midline
+                component_x = centroids[i][0]
+                dist = abs(component_x - face_midline_x)
+                
+                if dist < best_dist:
+                    best_dist = dist
+                    best_component = i
+            
+            if best_component > 0:
+                parting_mask = np.zeros_like(binary_mask)
+                parting_mask[labels == best_component] = 255
+                parting_line = parting_mask
+        else:
+            # Without landmarks, use the longest thin connected component in the upper part
+            best_length = 0
+            best_component = 0
+            
+            for i in range(1, num_labels):  # Skip background (0)
+                # Calculate length/width ratio
+                width = stats[i, cv2.CC_STAT_WIDTH]
+                height = stats[i, cv2.CC_STAT_HEIGHT]
+                area = stats[i, cv2.CC_STAT_AREA]
+                
+                # Skip components that are too small or too square
+                if area < 20 or min(width, height) == 0:
+                    continue
+                
+                length_ratio = max(width, height) / (min(width, height) + 1)
+                
+                # Check if component is in upper half
+                top = stats[i, cv2.CC_STAT_TOP]
+                if top < mask.shape[0] / 2 and length_ratio > 3 and length_ratio > best_length:
+                    best_length = length_ratio
+                    best_component = i
+            
+            if best_component > 0:
+                parting_mask = np.zeros_like(binary_mask)
+                parting_mask[labels == best_component] = 255
+                parting_line = parting_mask
+        
+        # If we found a parting line, enhance it in the mask
+        if parting_line is not None:
+            # Dilate the parting slightly to make it more visible
+            parting_enhanced = cv2.dilate(parting_line, kernel, iterations=1)
+            
+            # Create a blend of the original mask with a gap for the parting
+            parting_factor = 0.7  # Strength of the parting (lower value = more visible parting)
+            enhanced_mask = enhanced_mask * (1 - parting_enhanced/255 * (1-parting_factor))
+            enhanced_mask = enhanced_mask.astype(np.uint8)
+        
+        return parting_line, enhanced_mask
