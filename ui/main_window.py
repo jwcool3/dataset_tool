@@ -138,7 +138,8 @@ class MainWindow:
         self.reinsert_manual_scale_y = tk.DoubleVar(value=1.0)
 
 
-
+        # Add this new variable for hair parting preservation
+        self.preserve_hair_parting = tk.BooleanVar(value=False)
         # Add bangs extension options
         self.extend_bangs = tk.BooleanVar(value=False)
         self.bangs_extension_amount = tk.IntVar(value=30)
