@@ -358,162 +358,133 @@ class EnhancedCropReinserter:
 
     def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
         """
-        Align masks and images based on the specified method.
+        Enhanced mask alignment with vertical bias and soft edge handling.
         
-        Args:
-            source_mask: Mask from source image
-            processed_mask: Mask from processed image
-            source_img: Source image
-            processed_img: Processed image
-            alignment_method: Method to use for alignment
-            debug_dir: Directory to save debug visualizations
-        
-        Returns:
-            tuple: (aligned_mask, aligned_image)
+        Key Improvements:
+        - More intelligent vertical alignment
+        - Soft mask edge transitions
+        - Configurable vertical bias
         """
-        def clean_mask(mask, threshold=50):
+        # Ensure source_mask is not None
+        if source_mask is None:
+            return processed_mask, processed_img
+        
+        # Binary threshold both masks
+        _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
+        _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Compute vertical bias dynamically
+        def compute_vertical_bias(source_mask, processed_mask):
             """
-            Convert pixels below threshold to black
+            Compute an intelligent vertical bias based on mask characteristics.
             
             Args:
-                mask: Input grayscale mask
-                threshold: Pixel intensity threshold (0-255)
-                    - Pixels below this will be set to black (0)
-                    - Pixels above will be preserved
+                source_mask: Binary mask of source image
+                processed_mask: Binary mask of processed image
             
             Returns:
-                Cleaned mask with darker pixels removed
+                int: Recommended vertical shift
             """
-            # Create a copy of the mask
-            cleaned_mask = mask.copy()
+            source_points = np.argwhere(source_mask > 0)
+            processed_points = np.argwhere(processed_mask > 0)
             
-            # Convert pixels below threshold to black
-            cleaned_mask[cleaned_mask < threshold] = 0
+            if len(source_points) == 0 or len(processed_points) == 0:
+                return 0
             
-            return cleaned_mask
+            source_top = source_points[:, 0].min()
+            processed_top = processed_points[:, 0].min()
+            
+            # Compute vertical difference with additional upward bias
+            vertical_diff = source_top - processed_top
+            upward_bias = 10  # Configurable upward shift
+            
+            return vertical_diff - upward_bias
         
-        # Clean source and processed masks
-        source_mask_cleaned = clean_mask(source_mask)
-        processed_mask_cleaned = clean_mask(processed_mask)
+        # Soft mask edge function
+        def soft_mask_edge(mask, feather_pixels=15):
+            """
+            Create a soft-edged mask with gradual transition.
+            
+            Args:
+                mask: Input binary mask
+                feather_pixels: Width of soft edge transition
+            
+            Returns:
+                numpy.ndarray: Soft-edged mask with float values
+            """
+            kernel = np.ones((feather_pixels, feather_pixels), np.uint8)
+            dilated = cv2.dilate(mask, kernel, iterations=1)
+            eroded = cv2.erode(mask, kernel, iterations=1)
+            
+            soft_mask = np.zeros_like(mask, dtype=np.float32)
+            soft_mask[eroded > 0] = 1.0
+            
+            border = dilated & ~eroded
+            dist = cv2.distanceTransform(~border, cv2.DIST_L2, 5)
+            dist_normalized = dist / feather_pixels
+            soft_mask[border > 0] = 1.0 - dist_normalized[border > 0]
+            
+            return soft_mask
         
-        # Debug: Save cleaned masks if debug directory is provided
-        if debug_dir:
-            cv2.imwrite(os.path.join(debug_dir, "source_mask_cleaned.png"), source_mask_cleaned)
-            cv2.imwrite(os.path.join(debug_dir, "processed_mask_cleaned.png"), processed_mask_cleaned)
-        
-        # Continue with alignment using cleaned masks
-        # Binary threshold cleaned masks if needed
-        _, source_mask_bin = cv2.threshold(source_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
-        _, processed_mask_bin = cv2.threshold(processed_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
+        # Compute intelligent vertical bias
+        vertical_bias = compute_vertical_bias(source_mask_bin, processed_mask_bin)
         
         # Make copies to modify
         aligned_mask = processed_mask.copy()
         aligned_img = processed_img.copy()
         
-        # Centroid alignment
-        if alignment_method == "centroid":
-            # Calculate centroids
-            source_moments = cv2.moments(source_mask_bin)
-            processed_moments = cv2.moments(processed_mask_bin)
-            
-            if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
-                source_cx = int(source_moments["m10"] / source_moments["m00"])
-                source_cy = int(source_moments["m01"] / source_moments["m00"])
-                processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
-                processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
-                
-                # Calculate shift
-                dx = source_cx - processed_cx
-                dy = source_cy - processed_cy
-                
-                # Apply shift
-                M = np.float32([[1, 0, dx], [0, 1, dy]])
-                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-        
-        # Contour-based alignment (top point alignment)
-        elif alignment_method == "contour":
-            source_points = np.argwhere(source_mask_bin > 0)
-            processed_points = np.argwhere(processed_mask_bin > 0)
-            
-            if len(source_points) > 0 and len(processed_points) > 0:
-                # Find the top point
-                source_top_y = source_points[:, 0].min()
-                source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
-                source_top_x = np.median(source_points[source_top_indices, 1])
-                
-                processed_top_y = processed_points[:, 0].min()
-                processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
-                processed_top_x = np.median(processed_points[processed_top_indices, 1])
-                
-                # Calculate shift
-                dx = int(source_top_x - processed_top_x)
-                dy = int(source_top_y - processed_top_y)
-                
-                # Apply shift
-                M = np.float32([[1, 0, dx], [0, 1, dy]])
-                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-        
-        # Bounding box alignment
-        elif alignment_method == "bbox":
-            source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if source_contours and processed_contours:
-                source_contour = max(source_contours, key=cv2.contourArea)
-                processed_contour = max(processed_contours, key=cv2.contourArea)
-                
-                source_x, source_y, source_w, source_h = cv2.boundingRect(source_contour)
-                processed_x, processed_y, processed_w, processed_h = cv2.boundingRect(processed_contour)
-                
-                # Calculate shifts to align top-left corners
-                dx = source_x - processed_x
-                dy = source_y - processed_y
-                
-                # Apply shift
-                M = np.float32([[1, 0, dx], [0, 1, dy]])
-                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-        
-        # Intersection Over Union (IoU) alignment
-        elif alignment_method == "iou":
-            best_iou = 0
-            best_mask = processed_mask.copy()
-            best_img = processed_img.copy()
-            
-            max_shift = 20  # pixels
-            for dx in range(-max_shift, max_shift + 1, 2):
-                for dy in range(-max_shift, max_shift + 1, 2):
-                    # Create shifted mask and image
-                    M = np.float32([[1, 0, dx], [0, 1, dy]])
-                    shifted_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                    shifted_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        # Alignment methods with improved vertical handling
+        if alignment_method in ["centroid", "landmarks", "contour", "bbox"]:
+            try:
+                # Compute moments or contours
+                if alignment_method == "centroid":
+                    source_moments = cv2.moments(source_mask_bin)
+                    processed_moments = cv2.moments(processed_mask_bin)
                     
-                    # Calculate IoU
-                    intersection = np.logical_and(source_mask_bin > 0, shifted_mask > 0).sum()
-                    union = np.logical_or(source_mask_bin > 0, shifted_mask > 0).sum()
-                    iou = intersection / union if union > 0 else 0
+                    source_cx = int(source_moments["m10"] / source_moments["m00"])
+                    source_cy = int(source_moments["m01"] / source_moments["m00"])
+                    processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
+                    processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
                     
-                    # Update best if improved
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_mask = shifted_mask
-                        best_img = shifted_img
+                    dx = source_cx - processed_cx
+                    dy = source_cy - processed_cy + vertical_bias
+                
+                elif alignment_method in ["landmarks", "contour"]:
+                    source_points = np.argwhere(source_mask_bin > 0)
+                    processed_points = np.argwhere(processed_mask_bin > 0)
+                    
+                    source_top_x = np.median(source_points[source_points[:, 0].min() == source_points[:, 0], 1])
+                    processed_top_x = np.median(processed_points[processed_points[:, 0].min() == processed_points[:, 0], 1])
+                    
+                    dx = int(source_top_x - processed_top_x)
+                    dy = vertical_bias
+                
+                elif alignment_method == "bbox":
+                    source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    
+                    source_x, _, _, _ = cv2.boundingRect(max(source_contours, key=cv2.contourArea))
+                    processed_x, _, _, _ = cv2.boundingRect(max(processed_contours, key=cv2.contourArea))
+                    
+                    dx = source_x - processed_x
+                    dy = vertical_bias
+                
+                # Apply transformation
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
             
-            aligned_mask = best_mask
-            aligned_img = best_img
+            except Exception as e:
+                print(f"Alignment error: {e}")
+        
+        # Apply soft mask edge
+        aligned_soft_mask = soft_mask_edge(aligned_mask)
         
         # Debug visualization
         if debug_dir:
-            # Source mask in red, aligned mask in green
-            mask_viz = np.zeros((source_mask_bin.shape[0], source_mask_bin.shape[1], 3), dtype=np.uint8)
-            mask_viz[source_mask_bin > 0] = [0, 0, 255]  # Red for source mask
-            mask_viz[aligned_mask > 0] = [0, 255, 0]  # Green for aligned mask
-            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_viz.png"), mask_viz)
+            cv2.imwrite(os.path.join(debug_dir, "aligned_soft_mask.png"), (aligned_soft_mask * 255).astype(np.uint8))
         
-        return aligned_mask, aligned_img
-
+        return aligned_soft_mask, aligned_img
     def _alpha_blend(self, source_img, processed_img, mask, blend_extent=0):
         """
         Perform alpha blending with optional feathering.
