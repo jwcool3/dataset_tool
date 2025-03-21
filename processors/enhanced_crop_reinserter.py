@@ -364,14 +364,16 @@ class EnhancedCropReinserter:
         
         return None
 
-    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
+    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, 
+                    alignment_method, debug_dir=None, 
+                    vertical_bias=10,  # Default value
+                    soft_edge_width=15):  # Default value
         """
         Enhanced mask alignment with vertical bias and soft edge handling.
         
-        Key Improvements:
-        - More intelligent vertical alignment
-        - Soft mask edge transitions
-        - Configurable vertical bias
+        Added parameters:
+        - vertical_bias: Vertical shift for alignment
+        - soft_edge_width: Width of soft edge feathering
         """
         # Ensure source_mask is not None
         if source_mask is None:
@@ -381,18 +383,8 @@ class EnhancedCropReinserter:
         _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
         _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
         
-        # Compute vertical bias dynamically
+        # Use passed vertical bias and soft edge width
         def compute_vertical_bias(source_mask, processed_mask):
-            """
-            Compute an intelligent vertical bias based on mask characteristics.
-            
-            Args:
-                source_mask: Binary mask of source image
-                processed_mask: Binary mask of processed image
-            
-            Returns:
-                int: Recommended vertical shift
-            """
             source_points = np.argwhere(source_mask > 0)
             processed_points = np.argwhere(processed_mask > 0)
             
@@ -402,12 +394,8 @@ class EnhancedCropReinserter:
             source_top = source_points[:, 0].min()
             processed_top = processed_points[:, 0].min()
             
-            # Compute vertical difference with additional upward bias
-            vertical_diff = source_top - processed_top
-            upward_bias = 10  # Configurable upward shift
-            
-            return vertical_diff - upward_bias
-        
+            # Use the passed vertical_bias instead of hardcoded value
+            return source_top - processed_top - vertical_bias
         # Soft mask edge function
         def soft_mask_edge(mask, feather_pixels=15):
             """
@@ -435,7 +423,7 @@ class EnhancedCropReinserter:
             return soft_mask
         
         # Compute intelligent vertical bias
-        vertical_bias = compute_vertical_bias(source_mask_bin, processed_mask_bin)
+        vertical_bias_adjustment = compute_vertical_bias(source_mask_bin, processed_mask_bin)
         
         # Make copies to modify
         aligned_mask = processed_mask.copy()
