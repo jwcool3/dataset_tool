@@ -139,6 +139,11 @@ class MainWindow:
 
 
 
+        # Add bangs extension options
+        self.extend_bangs = tk.BooleanVar(value=False)
+        self.bangs_extension_amount = tk.IntVar(value=30)
+        self.bangs_width_ratio = tk.DoubleVar(value=0.3)
+
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
         self.mask_expand_kernel_size = tk.IntVar(value=3)

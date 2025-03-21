@@ -243,6 +243,24 @@ class EnhancedCropReinserter:
         print(f"Processed dimensions: {processed_w}x{processed_h}")
         print(f"Mask dimensions: {mask.shape[1]}x{mask.shape[0]}")
         
+
+        # Apply bangs extension if enabled (add after loading the mask but before any other mask processing)
+        if self.app.extend_bangs.get() and mask is not None:
+            print("Extending mask in bangs/forehead area")
+            extension_amount = self.app.bangs_extension_amount.get()
+            width_ratio = self.app.bangs_width_ratio.get()
+            
+            # Apply the extension
+            mask = self._extend_bangs_area(
+                mask, 
+                extend_pixels=extension_amount,
+                forehead_ratio=width_ratio
+            )
+            
+            # Save debug image
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask.png"), mask)
+
         # Resize processed image and mask to match source if dimensions differ
         if source_w != processed_w or source_h != processed_h:
             print(f"Resizing processed image from {processed_w}x{processed_h} to {source_w}x{source_h}")
@@ -764,3 +782,62 @@ class EnhancedCropReinserter:
         preserved_result = source_img * edge_mask_3d + result_img * (1 - edge_mask_3d)
         
         return np.clip(preserved_result, 0, 255).astype(np.uint8)
+    
+    def _extend_bangs_area(self, mask, extend_pixels=30, forehead_ratio=0.2):
+        """
+        Extend the mask downward in the bangs/forehead area.
+        
+        Args:
+            mask: The binary mask image
+            extend_pixels: How many pixels to extend downward
+            forehead_ratio: What portion of the width to consider as forehead (centered)
+            
+        Returns:
+            numpy.ndarray: Extended mask
+        """
+        if mask is None:
+            return None
+            
+        # Create a copy of the mask to modify
+        extended_mask = mask.copy()
+        
+        # Find the top points of the mask
+        mask_points = np.argwhere(mask > 127)
+        if len(mask_points) == 0:
+            return mask  # Empty mask, nothing to extend
+        
+        # Find the top boundary of the mask
+        top_y_values = {}
+        height, width = mask.shape[:2]
+        
+        # For each column, find the topmost pixel
+        for y, x in mask_points:
+            if x not in top_y_values or y < top_y_values[x]:
+                top_y_values[x] = y
+        
+        # Calculate the forehead region (center portion of width)
+        center_x = width // 2
+        forehead_half_width = int(width * forehead_ratio / 2)
+        forehead_left = max(0, center_x - forehead_half_width)
+        forehead_right = min(width, center_x + forehead_half_width)
+        
+        # Extend the mask downward in the forehead region
+        for x in range(forehead_left, forehead_right):
+            if x in top_y_values:
+                # Get the topmost y for this column
+                top_y = top_y_values[x]
+                
+                # Extend downward by extend_pixels, but don't go out of bounds
+                extend_to_y = min(height, top_y + extend_pixels)
+                
+                # Create a gradually decreasing alpha value for smoother transition
+                for y in range(top_y, extend_to_y):
+                    # Calculate fade factor (1.0 at top, decreasing to 0.0)
+                    fade = 1.0 - (y - top_y) / float(extend_pixels)
+                    fade_value = int(255 * fade)
+                    
+                    # Don't overwrite existing mask pixels
+                    if extended_mask[y, x] < fade_value:
+                        extended_mask[y, x] = fade_value
+        
+        return extended_mask

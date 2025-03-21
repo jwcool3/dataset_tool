@@ -809,7 +809,49 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
 
 
+        # Create a separator
+        ttk.Separator(self.advanced_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 
+        # Bangs extension frame
+        bangs_frame = ttk.Frame(self.advanced_frame)
+        bangs_frame.pack(fill=tk.X, pady=5)
+
+        # Checkbox to enable bangs extension
+        ttk.Checkbutton(
+            bangs_frame,
+            text="Extend mask in bangs/forehead area",
+            variable=self.parent.extend_bangs
+        ).pack(anchor=tk.W, padx=5, pady=5)
+
+        # Extension amount
+        extension_frame = ttk.Frame(bangs_frame)
+        extension_frame.pack(fill=tk.X, pady=5, padx=20)
+
+        ttk.Label(extension_frame, text="Extension amount:").pack(side=tk.LEFT, padx=2)
+        ttk.Spinbox(
+            extension_frame,
+            from_=10,
+            to=100,
+            increment=5,
+            width=5,
+            textvariable=self.parent.bangs_extension_amount
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Label(extension_frame, text="pixels").pack(side=tk.LEFT, padx=2)
+
+        # Width ratio
+        width_frame = ttk.Frame(bangs_frame)
+        width_frame.pack(fill=tk.X, pady=5, padx=20)
+
+        ttk.Label(width_frame, text="Forehead width:").pack(side=tk.LEFT, padx=2)
+        ttk.Spinbox(
+            width_frame,
+            from_=0.1,
+            to=1.0,
+            increment=0.05,
+            width=5,
+            textvariable=self.parent.bangs_width_ratio
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Label(width_frame, text="(ratio of total width)").pack(side=tk.LEFT, padx=2)
 
 
 
