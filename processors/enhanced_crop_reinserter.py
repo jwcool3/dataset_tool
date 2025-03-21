@@ -289,15 +289,16 @@ class EnhancedCropReinserter:
             # Create transformation matrix for the offset
             M = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
             
-            # Apply to both processed image and mask
-            processed_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-            mask = cv2.warpAffine(mask, M, (mask.shape[1], mask.shape[0]))
+            # Apply to both processed image and mask AFTER resizing
+            processed_img_resized = cv2.warpAffine(processed_img_resized, M, 
+                                                (processed_img_resized.shape[1], processed_img_resized.shape[0]))
+            mask_resized = cv2.warpAffine(mask_resized, M, 
+                                        (mask_resized.shape[1], mask_resized.shape[0]))
             
             # Save offset versions for debugging
             if debug_dir:
-                cv2.imwrite(os.path.join(debug_dir, "offset_processed.png"), processed_img)
-                cv2.imwrite(os.path.join(debug_dir, "offset_mask.png"), mask)
-
+                cv2.imwrite(os.path.join(debug_dir, "offset_processed.png"), processed_img_resized)
+                cv2.imwrite(os.path.join(debug_dir, "offset_mask.png"), mask_resized)
 
         # If handling different masks, get configuration settings
         alignment_method = self.app.reinsert_alignment_method.get()
