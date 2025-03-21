@@ -113,6 +113,8 @@ class ReinsertionManager:
                 mask = None
                 if mask_path and os.path.exists(mask_path):
                     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    if mask is None:
+                        print(f"Warning: Could not load mask from {mask_path}")
                 
                 # Get dimensions
                 source_h, source_w = source_img.shape[:2]
@@ -120,31 +122,14 @@ class ReinsertionManager:
                 
                 # Resize processed image and mask to match source if dimensions differ
                 if source_w != processed_w or source_h != processed_h:
+                    print(f"Resizing processed image from {processed_w}x{processed_h} to {source_w}x{source_h}")
                     processed_img = cv2.resize(processed_img, (source_w, source_h), 
                                             interpolation=cv2.INTER_LANCZOS4)
                     if mask is not None:
                         mask = cv2.resize(mask, (source_w, source_h), 
                                        interpolation=cv2.INTER_NEAREST)
                 
-                # Calculate insertion position (center of image by default)
-                x_pos = (source_w - processed_w) // 2
-                y_pos = (source_h - processed_h) // 2
-                
-                # If we have crop information, use it for positioning
-                crop_info_path = os.path.splitext(processed_path)[0] + "_crop_info.json"
-                if os.path.exists(crop_info_path):
-                    try:
-                        with open(crop_info_path, 'r') as f:
-                            crop_info = json.load(f)
-                        
-                        # Get position from crop info
-                        if all(k in crop_info for k in ["crop_x", "crop_y", "crop_width", "crop_height"]):
-                            x_pos = crop_info["crop_x"]
-                            y_pos = crop_info["crop_y"]
-                    except Exception as e:
-                        print(f"Error reading crop info: {str(e)}")
-                
-                # Create a copy of the source image to modify
+                # CRITICAL FIX: Always create a result_img based on source_img, not processed_img
                 result_img = source_img.copy()
                 
                 # Apply insertion based on mask option
@@ -154,9 +139,49 @@ class ReinsertionManager:
                     mask_float_3d = np.stack([mask_float] * 3, axis=2)
                     result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
                 else:
-                    # Standard insertion (replace the entire processed region)
-                    # For standard insertion with matching dimensions, just use the entire image
-                    result_img = processed_img
+                    # Check for crop info to position the processed image
+                    crop_info_path = os.path.splitext(processed_path)[0] + "_crop_info.json"
+                    if os.path.exists(crop_info_path):
+                        try:
+                            with open(crop_info_path, 'r') as f:
+                                crop_info = json.load(f)
+                            
+                            # Get position from crop info
+                            if all(k in crop_info for k in ["crop_x", "crop_y", "crop_width", "crop_height"]):
+                                x_pos = crop_info["crop_x"]
+                                y_pos = crop_info["crop_y"]
+                                width = crop_info["crop_width"]
+                                height = crop_info["crop_height"]
+                                
+                                # Create a region of interest and place the processed image there
+                                roi = result_img[y_pos:y_pos+height, x_pos:x_pos+width]
+                                processed_roi = processed_img[y_pos:y_pos+height, x_pos:x_pos+width]
+                                
+                                # Only copy if dimensions match
+                                if roi.shape == processed_roi.shape:
+                                    result_img[y_pos:y_pos+height, x_pos:x_pos+width] = processed_roi
+                                else:
+                                    print(f"Warning: ROI dimensions mismatch: {roi.shape} vs {processed_roi.shape}")
+                                    # Fall back to full image replacement with blending
+                                    alpha = 0.7  # Blend factor
+                                    result_img = cv2.addWeighted(source_img, 1-alpha, processed_img, alpha, 0)
+                        except Exception as e:
+                            print(f"Error using crop info: {str(e)}")
+                            # Fall back to full image replacement
+                            alpha = 0.7  # Blend factor
+                            result_img = cv2.addWeighted(source_img, 1-alpha, processed_img, alpha, 0)
+                    else:
+                        # If no crop info, use center positioning
+                        center_x = (source_w - processed_w) // 2 if processed_w < source_w else 0
+                        center_y = (source_h - processed_h) // 2 if processed_h < source_h else 0
+                        
+                        # If dimensions match, we can do a direct replacement of the center region
+                        if processed_w < source_w and processed_h < source_h:
+                            result_img[center_y:center_y+processed_h, center_x:center_x+processed_w] = processed_img
+                        else:
+                            # If processed image is same size or larger, use alpha blending
+                            alpha = 0.7  # Blend factor
+                            result_img = cv2.addWeighted(source_img, 1-alpha, processed_img, alpha, 0)
                 
                 # Save the result
                 output_path = os.path.join(output_dir, f"reinserted_{filename}")
@@ -164,8 +189,35 @@ class ReinsertionManager:
                 
                 # Save debug comparison if enabled
                 if debug_dir:
-                    comparison = np.hstack((source_img, result_img))
+                    # Create side-by-side comparison of source, processed, and result
+                    # Resize all images to the same height for proper comparison
+                    comp_height = 300
+                    
+                    # Calculate scaling factors
+                    src_scale = comp_height / source_h
+                    src_width = int(source_w * src_scale)
+                    
+                    proc_scale = comp_height / processed_h
+                    proc_width = int(processed_w * proc_scale)
+                    
+                    res_scale = comp_height / result_img.shape[0]
+                    res_width = int(result_img.shape[1] * res_scale)
+                    
+                    # Resize images
+                    src_resized = cv2.resize(source_img, (src_width, comp_height))
+                    proc_resized = cv2.resize(processed_img, (proc_width, comp_height))
+                    res_resized = cv2.resize(result_img, (res_width, comp_height))
+                    
+                    # Create comparison image
+                    comparison = np.hstack((src_resized, proc_resized, res_resized))
                     cv2.imwrite(os.path.join(debug_dir, f"comparison_{filename}"), comparison)
+                    
+                    # Add labels
+                    cv2.putText(comparison, "Source", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(comparison, "Processed", (src_width + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(comparison, "Result", (src_width + proc_width + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    
+                    cv2.imwrite(os.path.join(debug_dir, f"labeled_comparison_{filename}"), comparison)
                 
                 processed_count += 1
                 
