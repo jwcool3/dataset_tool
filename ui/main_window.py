@@ -133,6 +133,10 @@ class MainWindow:
         # Add these variables
         self.reinsert_manual_offset_x = tk.IntVar(value=0)
         self.reinsert_manual_offset_y = tk.IntVar(value=0)
+        # Add these variables
+        self.reinsert_manual_scale_x = tk.DoubleVar(value=1.0)
+        self.reinsert_manual_scale_y = tk.DoubleVar(value=1.0)
+
 
 
         # Mask expansion options

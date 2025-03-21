@@ -300,6 +300,49 @@ class EnhancedCropReinserter:
                 cv2.imwrite(os.path.join(debug_dir, "offset_processed.png"), processed_img_resized)
                 cv2.imwrite(os.path.join(debug_dir, "offset_mask.png"), mask_resized)
 
+
+        # Get manual scaling values
+        scale_x = self.app.reinsert_manual_scale_x.get()
+        scale_y = self.app.reinsert_manual_scale_y.get()
+
+        # Apply scaling if not at default value (1.0)
+        if scale_x != 1.0 or scale_y != 1.0:
+            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
+            
+            # Get dimensions
+            h, w = processed_img_resized.shape[:2]
+            
+            # Calculate new dimensions
+            new_w = int(w * scale_x)
+            new_h = int(h * scale_y)
+            
+            # Calculate center point for scaling around the center
+            center_x = w // 2
+            center_y = h // 2
+            
+            # Create transformation matrix
+            # First translate to origin, then scale, then translate back
+            M = np.float32([
+                [scale_x, 0, center_x * (1 - scale_x)],
+                [0, scale_y, center_y * (1 - scale_y)]
+            ])
+            
+            # Apply to processed image and mask
+            processed_img_resized = cv2.warpAffine(
+                processed_img_resized, M, (w, h),
+                flags=cv2.INTER_LANCZOS4
+            )
+            mask_resized = cv2.warpAffine(
+                mask_resized, M, (w, h),
+                flags=cv2.INTER_NEAREST
+            )
+            
+            # Save scaled versions for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "scaled_processed.png"), processed_img_resized)
+                cv2.imwrite(os.path.join(debug_dir, "scaled_mask.png"), mask_resized)
+
+
         # If handling different masks, get configuration settings
         alignment_method = self.app.reinsert_alignment_method.get()
         blend_mode = self.app.reinsert_blend_mode.get()

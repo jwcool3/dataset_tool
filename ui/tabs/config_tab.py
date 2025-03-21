@@ -770,6 +770,48 @@ class ConfigTab:
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
 
+        # Scale controls
+        scale_frame = ttk.Frame(self.advanced_frame)
+        scale_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(scale_frame, text="Scale Factor:").pack(side=tk.LEFT, padx=5)
+
+        # Horizontal scale
+        ttk.Label(scale_frame, text="X:").pack(side=tk.LEFT, padx=2)
+        x_scale_spinner = ttk.Spinbox(
+            scale_frame,
+            from_=0.5,
+            to=2.0,
+            increment=0.05,
+            width=5,
+            textvariable=self.parent.reinsert_manual_scale_x
+        )
+        x_scale_spinner.pack(side=tk.LEFT, padx=2)
+
+        # Vertical scale
+        ttk.Label(scale_frame, text="Y:").pack(side=tk.LEFT, padx=5)
+        y_scale_spinner = ttk.Spinbox(
+            scale_frame,
+            from_=0.5,
+            to=2.0,
+            increment=0.05,
+            width=5,
+            textvariable=self.parent.reinsert_manual_scale_y
+        )
+        y_scale_spinner.pack(side=tk.LEFT, padx=2)
+
+        # Add a tip about scaling
+        ttk.Label(
+            scale_frame, 
+            text="(values > 1 enlarge, < 1 shrink)",
+            font=("Helvetica", 8),
+            foreground="gray"
+        ).pack(side=tk.LEFT, padx=5)
+
+
+
+
+
 
         ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
         
