@@ -365,12 +365,21 @@ class InputOutputTab:
             # Find Config tab instance
             config_tab = self.parent.config_tab
             
-            # Highlight the hair reinserter section
+            # Check if hair_reinserter_frame attribute exists before using it
             if hasattr(config_tab, 'hair_reinserter_frame'):
                 config_tab.hair_reinserter_frame.configure(background="#f0e6f5")  # Light purple highlight
                 
                 # Reset background after a delay
                 self.parent.root.after(2000, lambda: config_tab.hair_reinserter_frame.configure(background=""))
-        except:
+            else:
+                # If the frame doesn't exist, just highlight the general reinsertion section
+                if hasattr(config_tab, 'sections') and 'reinsertion' in config_tab.sections:
+                    reinsertion_frame = config_tab.sections['reinsertion']['frame']
+                    reinsertion_frame.configure(background="#f0e6f5")  # Light purple highlight
+                    
+                    # Reset background after a delay
+                    self.parent.root.after(2000, lambda: reinsertion_frame.configure(background=""))
+        except Exception as e:
             # If any error occurs, just continue without highlighting
+            print(f"Unable to highlight hair options: {e}")
             pass
