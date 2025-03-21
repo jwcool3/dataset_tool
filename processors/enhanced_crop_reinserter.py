@@ -527,7 +527,7 @@ class EnhancedCropReinserter:
 
     def _poisson_blend(self, source_img, processed_img, mask):
         """
-        Perform Poisson blending.
+        Perform Poisson blending with enhanced error handling.
         
         Args:
             source_img: Original source image
@@ -538,8 +538,18 @@ class EnhancedCropReinserter:
             numpy.ndarray: Blended image
         """
         try:
-            # Ensure mask is uint8
+            # Ensure mask is uint8 and same size as images
             mask_uint8 = mask.astype(np.uint8)
+            
+            # Ensure source and processed images are the same size
+            if source_img.shape[:2] != processed_img.shape[:2]:
+                processed_img = cv2.resize(processed_img, (source_img.shape[1], source_img.shape[0]), 
+                                        interpolation=cv2.INTER_LANCZOS4)
+            
+            # Ensure mask is same size as images
+            if mask_uint8.shape[:2] != source_img.shape[:2]:
+                mask_uint8 = cv2.resize(mask_uint8, (source_img.shape[1], source_img.shape[0]), 
+                                        interpolation=cv2.INTER_NEAREST)
             
             # Find center of mask
             moments = cv2.moments(mask_uint8)
@@ -548,22 +558,65 @@ class EnhancedCropReinserter:
                 center_y = int(moments["m01"] / moments["m00"])
                 center = (center_x, center_y)
                 
+                # Ensure center is within image bounds
+                center_x = max(0, min(center_x, source_img.shape[1] - 1))
+                center_y = max(0, min(center_y, source_img.shape[0] - 1))
+                center = (center_x, center_y)
+                
                 # Apply seamless cloning
                 result_img = cv2.seamlessClone(processed_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE)
             else:
                 # Fallback to alpha blending
-                mask_float = mask.astype(float) / 255.0
+                mask_float = mask_uint8.astype(float) / 255.0
                 mask_float_3d = np.stack([mask_float] * 3, axis=2)
                 result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
         except Exception as e:
             print(f"Poisson blending failed: {str(e)}")
             # Fallback to alpha blending
-            mask_float = mask.astype(float) / 255.0
+            mask_float = mask_uint8.astype(float) / 255.0
             mask_float_3d = np.stack([mask_float] * 3, axis=2)
             result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
         
         return np.clip(result_img, 0, 255).astype(np.uint8)
 
+    def _preserve_image_edges(self, source_img, result_img, mask):
+        """
+        Preserve original image edges outside the mask region.
+        
+        Args:
+            source_img: Original source image
+            result_img: Blended result image
+            mask: Blending mask
+        
+        Returns:
+            numpy.ndarray: Result image with preserved edges
+        """
+        # Ensure mask is same size as images and is binary
+        if mask.shape[:2] != source_img.shape[:2]:
+            mask = cv2.resize(mask, (source_img.shape[1], source_img.shape[0]), 
+                            interpolation=cv2.INTER_NEAREST)
+        
+        # Convert mask to binary
+        _, mask_binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Detect edges in source image
+        gray_source = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+        edges = cv2.Canny(gray_source, 50, 150)
+        
+        # Dilate edges to make them more prominent
+        edge_mask = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        
+        # Only preserve edges outside the mask
+        edge_mask = cv2.bitwise_and(edge_mask, cv2.bitwise_not(mask_binary))
+        
+        # Convert edge mask to 3 channels
+        edge_mask_3d = cv2.cvtColor(edge_mask, cv2.COLOR_GRAY2BGR)
+        edge_mask_3d = edge_mask_3d.astype(float) / 255.0
+        
+        # Keep original pixel values at edges
+        preserved_result = source_img * edge_mask_3d + result_img * (1 - edge_mask_3d)
+        
+        return np.clip(preserved_result, 0, 255).astype(np.uint8)
     def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
         """
         Perform feathered blending with gradual transition.
@@ -603,7 +656,7 @@ class EnhancedCropReinserter:
         
         return np.clip(result_img, 0, 255).astype(np.uint8)
 
-    def _preserve_image_edges(self, source_img, result_img, mask):
+
         """
         Preserve original image edges outside the mask region.
         
