@@ -130,7 +130,9 @@ class MainWindow:
         self.reinsert_blend_extent = tk.IntVar(value=5)
         self.reinsert_preserve_edges = tk.BooleanVar(value=True)
         
-
+        # New variables for alignment and soft edges
+        self.vertical_alignment_bias = tk.IntVar(value=10)  # Default upward bias
+        self.soft_edge_width = tk.IntVar(value=15)  # Default soft edge width
 
 
         # Mask expansion options

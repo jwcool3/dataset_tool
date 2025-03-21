@@ -284,7 +284,12 @@ class EnhancedCropReinserter:
         blend_extent = self.app.reinsert_blend_extent.get()
         preserve_edges = self.app.reinsert_preserve_edges.get()
         
+        # NEW: Add these lines to capture vertical bias and soft edge width
+        vertical_bias = self.app.vertical_alignment_bias.get()
+        soft_edge_width = self.app.soft_edge_width.get()
+        
         print(f"Using config settings: alignment={alignment_method}, blend={blend_mode}, extent={blend_extent}")
+        print(f"Vertical Bias: {vertical_bias}, Soft Edge Width: {soft_edge_width}")  # Debug print
         
         # Align mask and image if not using "none" alignment
         aligned_mask = mask_resized.copy()
@@ -292,11 +297,14 @@ class EnhancedCropReinserter:
         
         if alignment_method != "none":
             # Perform the alignment based on the selected method
+            # NEW: Pass vertical_bias and soft_edge_width as additional parameters
             aligned_mask, aligned_img = self._align_masks(
                 source_mask, mask_resized, 
                 source_img, processed_img_resized, 
                 alignment_method, 
-                debug_dir
+                debug_dir,
+                vertical_bias=vertical_bias,
+                soft_edge_width=soft_edge_width
             )
         
         # Blending stage

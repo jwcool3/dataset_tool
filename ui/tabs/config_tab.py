@@ -655,6 +655,59 @@ class ConfigTab:
             command=self._toggle_mask_alignment_controls
         ).pack(anchor=tk.W, padx=5, pady=5)
         
+        # Vertical Alignment Bias Frame
+        vertical_bias_frame = ttk.LabelFrame(content, text="Vertical Alignment", padding=5)
+        vertical_bias_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Vertical Bias Slider
+        ttk.Label(vertical_bias_frame, text="Vertical Alignment Bias:").pack(side=tk.LEFT, padx=5)
+        vertical_bias_slider = ttk.Scale(
+            vertical_bias_frame,
+            from_=-50,
+            to=50,
+            orient=tk.HORIZONTAL,
+            variable=self.parent.vertical_alignment_bias,
+            length=200
+        )
+        vertical_bias_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Label to show current bias value
+        self.vertical_bias_label = ttk.Label(vertical_bias_frame, text="0")
+        self.vertical_bias_label.pack(side=tk.LEFT, padx=5)
+        
+        # Update label when slider moves
+        def update_vertical_bias_label(*args):
+            bias = self.parent.vertical_alignment_bias.get()
+            self.vertical_bias_label.config(text=f"{bias:.0f}")
+        
+        self.parent.vertical_alignment_bias.trace_add("write", update_vertical_bias_label)
+        
+        # Soft Edge Frame
+        soft_edge_frame = ttk.LabelFrame(content, text="Soft Edge Settings", padding=5)
+        soft_edge_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Feather Pixels Slider
+        ttk.Label(soft_edge_frame, text="Soft Edge Width:").pack(side=tk.LEFT, padx=5)
+        feather_slider = ttk.Scale(
+            soft_edge_frame,
+            from_=0,
+            to=30,
+            orient=tk.HORIZONTAL,
+            variable=self.parent.soft_edge_width,
+            length=200
+        )
+        feather_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Label to show current feather value
+        self.feather_label = ttk.Label(soft_edge_frame, text="15")
+        self.feather_label.pack(side=tk.LEFT, padx=5)
+        
+        # Update label when slider moves
+        def update_feather_label(*args):
+            width = self.parent.soft_edge_width.get()
+            self.feather_label.config(text=f"{width:.0f}")
+        
+        self.parent.soft_edge_width.trace_add("write", update_feather_label)
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
