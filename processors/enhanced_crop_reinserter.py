@@ -371,9 +371,40 @@ class EnhancedCropReinserter:
         Returns:
             tuple: (aligned_mask, aligned_image)
         """
-        # Binary threshold both masks
-        _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
-        _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
+        def clean_mask(mask, threshold=50):
+            """
+            Convert pixels below threshold to black
+            
+            Args:
+                mask: Input grayscale mask
+                threshold: Pixel intensity threshold (0-255)
+                    - Pixels below this will be set to black (0)
+                    - Pixels above will be preserved
+            
+            Returns:
+                Cleaned mask with darker pixels removed
+            """
+            # Create a copy of the mask
+            cleaned_mask = mask.copy()
+            
+            # Convert pixels below threshold to black
+            cleaned_mask[cleaned_mask < threshold] = 0
+            
+            return cleaned_mask
+        
+        # Clean source and processed masks
+        source_mask_cleaned = clean_mask(source_mask)
+        processed_mask_cleaned = clean_mask(processed_mask)
+        
+        # Debug: Save cleaned masks if debug directory is provided
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "source_mask_cleaned.png"), source_mask_cleaned)
+            cv2.imwrite(os.path.join(debug_dir, "processed_mask_cleaned.png"), processed_mask_cleaned)
+        
+        # Continue with alignment using cleaned masks
+        # Binary threshold cleaned masks if needed
+        _, source_mask_bin = cv2.threshold(source_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
+        _, processed_mask_bin = cv2.threshold(processed_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
         
         # Make copies to modify
         aligned_mask = processed_mask.copy()
