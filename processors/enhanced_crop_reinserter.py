@@ -377,66 +377,129 @@ class EnhancedCropReinserter:
         """
         # Ensure source_mask is not None
         if source_mask is None:
+            # If source mask is None, return the original processed mask and image
             return processed_mask, processed_img
         
-        # Binary threshold both masks
-        _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
-        _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
-        
-        # Use passed vertical bias and soft edge width
-        def compute_vertical_bias(source_mask, processed_mask):
-            source_points = np.argwhere(source_mask > 0)
-            processed_points = np.argwhere(processed_mask > 0)
+        try:
+            # Binary threshold both masks
+            _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
+            _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
             
-            if len(source_points) == 0 or len(processed_points) == 0:
-                return 0
+            # Compute vertical bias dynamically
+            def compute_vertical_bias(source_mask, processed_mask):
+                source_points = np.argwhere(source_mask > 0)
+                processed_points = np.argwhere(processed_mask > 0)
+                
+                if len(source_points) == 0 or len(processed_points) == 0:
+                    return 0
+                
+                source_top = source_points[:, 0].min()
+                processed_top = processed_points[:, 0].min()
+                
+                # Compute vertical difference with additional upward bias
+                vertical_diff = source_top - processed_top
+                upward_bias = vertical_bias  # Use the passed vertical bias
+                
+                return vertical_diff - upward_bias
             
-            source_top = source_points[:, 0].min()
-            processed_top = processed_points[:, 0].min()
+            # Soft mask edge function
+            def soft_mask_edge(mask, feather_pixels=15):
+                # Ensure mask is binary
+                if len(mask.shape) > 2:
+                    mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+                
+                # Threshold to ensure binary
+                _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+                
+                # Create distance transforms
+                dist_inside = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 5)
+                dist_outside = cv2.distanceTransform(255 - binary_mask, cv2.DIST_L2, 5)
+                
+                # Normalize distance transforms
+                max_dist = max(dist_inside.max(), dist_outside.max())
+                if max_dist == 0:
+                    return binary_mask.astype(np.float32) / 255.0
+                
+                dist_inside_norm = dist_inside / max_dist
+                dist_outside_norm = dist_outside / max_dist
+                
+                # Create soft mask
+                soft_mask = np.zeros_like(binary_mask, dtype=np.float32)
+                
+                # Inside mask: fade from 1.0 at center to 0.5 at border
+                soft_mask[binary_mask > 0] = 1.0 - 0.5 * dist_inside_norm[binary_mask > 0]
+                
+                # Outside mask: fade from 0.5 at border to 0.0 outside
+                soft_mask[binary_mask == 0] = 0.5 * (1.0 - dist_outside_norm[binary_mask == 0])
+                
+                return soft_mask
             
-            # Use the passed vertical_bias instead of hardcoded value
-            return source_top - processed_top - vertical_bias
-        # Soft mask edge function
-    def soft_mask_edge(mask, feather_pixels=15):
-        """
-        Create a soft-edged mask with gradual transition.
+            # Compute intelligent vertical bias
+            vertical_bias_adjustment = compute_vertical_bias(source_mask_bin, processed_mask_bin)
+            
+            # Make copies to modify
+            aligned_mask = processed_mask.copy()
+            aligned_img = processed_img.copy()
+            
+            # Alignment methods with improved vertical handling
+            if alignment_method in ["centroid", "landmarks", "contour", "bbox"]:
+                try:
+                    # Compute moments or contours
+                    if alignment_method == "centroid":
+                        source_moments = cv2.moments(source_mask_bin)
+                        processed_moments = cv2.moments(processed_mask_bin)
+                        
+                        source_cx = int(source_moments["m10"] / source_moments["m00"])
+                        source_cy = int(source_moments["m01"] / source_moments["m00"])
+                        processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
+                        processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
+                        
+                        dx = source_cx - processed_cx
+                        dy = source_cy - processed_cy + vertical_bias_adjustment
+                    
+                    elif alignment_method in ["landmarks", "contour"]:
+                        source_points = np.argwhere(source_mask_bin > 0)
+                        processed_points = np.argwhere(processed_mask_bin > 0)
+                        
+                        source_top_x = np.median(source_points[source_points[:, 0].min() == source_points[:, 0], 1])
+                        processed_top_x = np.median(processed_points[processed_points[:, 0].min() == processed_points[:, 0], 1])
+                        
+                        dx = int(source_top_x - processed_top_x)
+                        dy = vertical_bias_adjustment
+                    
+                    elif alignment_method == "bbox":
+                        source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        
+                        source_x, _, _, _ = cv2.boundingRect(max(source_contours, key=cv2.contourArea))
+                        processed_x, _, _, _ = cv2.boundingRect(max(processed_contours, key=cv2.contourArea))
+                        
+                        dx = source_x - processed_x
+                        dy = vertical_bias_adjustment
+                    
+                    # Apply transformation
+                    M = np.float32([[1, 0, dx], [0, 1, dy]])
+                    aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                    aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+                
+                except Exception as e:
+                    print(f"Alignment error: {e}")
+                    # If alignment fails, return original mask and image
+                    return processed_mask, processed_img
+            
+            # Apply soft mask edge
+            aligned_soft_mask = soft_mask_edge(aligned_mask, feather_pixels=soft_edge_width)
+            
+            # Debug visualization
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "aligned_soft_mask.png"), (aligned_soft_mask * 255).astype(np.uint8))
+            
+            return aligned_soft_mask, aligned_img
         
-        Args:
-            mask: Input binary mask
-            feather_pixels: Width of soft edge transition
-        
-        Returns:
-            numpy.ndarray: Soft-edged mask with float values
-        """
-        # Ensure mask is binary
-        if len(mask.shape) > 2:
-            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-        
-        # Threshold to ensure binary
-        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        
-        # Create distance transforms
-        dist_inside = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 5)
-        dist_outside = cv2.distanceTransform(255 - binary_mask, cv2.DIST_L2, 5)
-        
-        # Normalize distance transforms
-        max_dist = max(dist_inside.max(), dist_outside.max())
-        if max_dist == 0:
-            return binary_mask.astype(np.float32) / 255.0
-        
-        dist_inside_norm = dist_inside / max_dist
-        dist_outside_norm = dist_outside / max_dist
-        
-        # Create soft mask
-        soft_mask = np.zeros_like(binary_mask, dtype=np.float32)
-        
-        # Inside mask: fade from 1.0 at center to 0.5 at border
-        soft_mask[binary_mask > 0] = 1.0 - 0.5 * dist_inside_norm[binary_mask > 0]
-        
-        # Outside mask: fade from 0.5 at border to 0.0 outside
-        soft_mask[binary_mask == 0] = 0.5 * (1.0 - dist_outside_norm[binary_mask == 0])
-        
-        return soft_mask
+        except Exception as e:
+            print(f"Unexpected error in _align_masks: {e}")
+            # If any unexpected error occurs, return original mask and image
+            return processed_mask, processed_img
 
     def _preserve_image_edges(self, source_img, result_img, mask):
         """
