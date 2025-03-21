@@ -647,7 +647,7 @@ class ConfigTab:
             variable=self.parent.reinsert_mask_only
         ).pack(anchor=tk.W, padx=5, pady=5)
         
-        # Add hair-specific options directly in basic frame instead of a separate frame
+        # Add hair-specific options if they exist
         if hasattr(self.parent, 'hair_color_correction'):
             ttk.Checkbutton(
                 basic_frame,
@@ -669,7 +669,7 @@ class ConfigTab:
         # Vertical Alignment slider
         if hasattr(self.parent, 'vertical_alignment_bias'):
             ttk.Label(vertical_frame, text="Vertical Position:").pack(side=tk.LEFT, padx=5)
-            slider = ttk.Scale(
+            vertical_bias_slider = ttk.Scale(
                 vertical_frame,
                 from_=-50,
                 to=50,
@@ -677,88 +677,28 @@ class ConfigTab:
                 variable=self.parent.vertical_alignment_bias,
                 length=200
             )
-            slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-
-
-
-
-        # Important guidance note
-        reminder_frame = ttk.Frame(content, padding=5, relief="groove")
-        reminder_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        ttk.Label(
-            reminder_frame,
-            text="INPUT DIRECTORY (set in the Input/Output tab): Your PROCESSED/CROPPED images.\n"
-                "SOURCE DIRECTORY (set above): Your ORIGINAL UNCROPPED images.",
-            foreground="blue",
-            font=("Helvetica", 9, "bold"),
-            wraplength=600
-        ).pack(pady=5)
-        
-        # Hair-specific settings
-        hair_frame = ttk.LabelFrame(content, text="Hair Replacement Settings", padding=5)
-        hair_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        # Hair presets
-        preset_frame = ttk.Frame(hair_frame)
-        preset_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(preset_frame, text="Quick Presets:").pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            preset_frame, 
-            text="Natural Hair",
-            command=lambda: self._apply_hair_preset("natural")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            preset_frame, 
-            text="Anime Hair",
-            command=lambda: self._apply_hair_preset("anime")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(
-            preset_frame, 
-            text="Updo/Ponytail",
-            command=lambda: self._apply_hair_preset("updo")
-        ).pack(side=tk.LEFT, padx=5)
-        
-        # Vertical Alignment Bias slider
-        vertical_bias_frame = ttk.Frame(hair_frame)
-        vertical_bias_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(vertical_bias_frame, text="Vertical Position:").pack(side=tk.LEFT, padx=5)
-        vertical_bias_slider = ttk.Scale(
-            vertical_bias_frame,
-            from_=-50,
-            to=50,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.vertical_alignment_bias,
-            length=200
-        )
-        vertical_bias_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Label to show current bias value
-        self.vertical_bias_label = ttk.Label(vertical_bias_frame, text="0")
-        self.vertical_bias_label.pack(side=tk.LEFT, padx=5)
-        
-        # Update label when slider moves
-        def update_vertical_bias_label(*args):
-            bias = self.parent.vertical_alignment_bias.get()
-            direction = "up" if bias < 0 else "down" if bias > 0 else "center"
-            strength = abs(bias)
-            if strength == 0:
-                self.vertical_bias_label.config(text="Centered")
-            else:
-                self.vertical_bias_label.config(text=f"{direction} {strength}")
-        
-        self.parent.vertical_alignment_bias.trace_add("write", update_vertical_bias_label)
-        update_vertical_bias_label()  # Initial update
+            vertical_bias_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+            
+            # Label to show current bias value
+            self.vertical_bias_label = ttk.Label(vertical_frame, text="0")
+            self.vertical_bias_label.pack(side=tk.LEFT, padx=5)
+            
+            # Update label when slider moves
+            def update_vertical_bias_label(*args):
+                bias = self.parent.vertical_alignment_bias.get()
+                direction = "up" if bias < 0 else "down" if bias > 0 else "center"
+                strength = abs(bias)
+                if strength == 0:
+                    self.vertical_bias_label.config(text="Centered")
+                else:
+                    self.vertical_bias_label.config(text=f"{direction} {strength}")
+            
+            self.parent.vertical_alignment_bias.trace_add("write", update_vertical_bias_label)
+            update_vertical_bias_label()  # Initial update
         
         # Soft Edge Width slider
-        edge_frame = ttk.Frame(hair_frame)
-        edge_frame.pack(fill=tk.X, pady=5)
+        edge_frame = ttk.LabelFrame(content, text="Soft Edge Settings", padding=5)
+        edge_frame.pack(fill=tk.X, pady=5, padx=5)
         
         ttk.Label(edge_frame, text="Edge Softness:").pack(side=tk.LEFT, padx=5)
         edge_slider = ttk.Scale(
@@ -788,108 +728,6 @@ class ConfigTab:
         
         self.parent.soft_edge_width.trace_add("write", update_edge_label)
         update_edge_label()  # Initial update
-        
-        # Color correction checkbox
-        ttk.Checkbutton(
-            hair_frame,
-            text="Enable automatic color correction for hair",
-            variable=self.parent.hair_color_correction
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Advanced settings in a collapsible section
-        self.advanced_frame = self._create_collapsible_section(
-            content, 
-            "Advanced Settings", 
-            "advanced_reinsertion",
-            False  # Start collapsed
-        )
-        
-        # Options that used to be separate checkboxes
-        ttk.Checkbutton(
-            self.advanced_frame,
-            text="Only reinsert masked regions (preserve rest of image)",
-            variable=self.parent.reinsert_mask_only
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Hidden - enable by default and keep out of UI
-        self.parent.reinsert_handle_different_masks.set(True)
-        
-        # Method selection (with simplified, clearer labels)
-        method_frame = ttk.Frame(self.advanced_frame)
-        method_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Label(method_frame, text="Alignment Strategy:").pack(side=tk.LEFT, padx=5)
-        
-        method_combo = ttk.Combobox(
-            method_frame,
-            textvariable=self.parent.reinsert_alignment_method,
-            values=["centroid", "landmarks", "bbox"],
-            width=15,
-            state="readonly"
-        )
-        method_combo.pack(side=tk.LEFT, padx=5)
-        
-        # Map the method names to more user-friendly descriptions
-        method_descriptions = {
-            "centroid": "Center of mass (balanced)",
-            "landmarks": "Feature matching (detailed)",
-            "bbox": "Bounding box (simpler)"
-        }
-        
-        # Update description when method changes
-        method_description_label = ttk.Label(method_frame, text="", foreground="gray")
-        method_description_label.pack(side=tk.LEFT, padx=5)
-        
-        def update_method_description(*args):
-            method = self.parent.reinsert_alignment_method.get()
-            if method in method_descriptions:
-                method_description_label.config(text=method_descriptions[method])
-        
-        self.parent.reinsert_alignment_method.trace_add("write", update_method_description)
-        update_method_description()  # Initial update
-        
-        # Tips section at the bottom
-        tips_frame = ttk.LabelFrame(content, text="Quick Tips", padding=5)
-        tips_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        tips_text = (
-            "• Negative vertical position moves hair up, positive moves it down\n"
-            "• Increase edge softness for more gradual transitions\n"
-            "• Use the 'Natural Hair' preset as a starting point\n"
-            "• Preview Processing to test settings before running"
-        )
-        
-        ttk.Label(
-            tips_frame,
-            text=tips_text,
-            wraplength=600
-        ).pack(padx=5, pady=5, anchor=tk.W)
-        # Soft Edge Frame
-        soft_edge_frame = ttk.LabelFrame(content, text="Soft Edge Settings", padding=5)
-        soft_edge_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        # Feather Pixels Slider
-        ttk.Label(soft_edge_frame, text="Soft Edge Width:").pack(side=tk.LEFT, padx=5)
-        feather_slider = ttk.Scale(
-            soft_edge_frame,
-            from_=0,
-            to=30,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.soft_edge_width,
-            length=200
-        )
-        feather_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        
-        # Label to show current feather value
-        self.feather_label = ttk.Label(soft_edge_frame, text="15")
-        self.feather_label.pack(side=tk.LEFT, padx=5)
-        
-        # Update label when slider moves
-        def update_feather_label(*args):
-            width = self.parent.soft_edge_width.get()
-            self.feather_label.config(text=f"{width:.0f}")
-        
-        self.parent.soft_edge_width.trace_add("write", update_feather_label)
         
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
@@ -929,7 +767,40 @@ class ConfigTab:
             wraplength=600
         ).pack(pady=5)
         
-        # Advanced settings frame 
+        # Hair Settings frame
+        if hasattr(self.parent, 'use_smart_hair_reinserter'):
+            self.hair_reinserter_frame = ttk.LabelFrame(content, text="Hair Replacement Settings", padding=5)
+            self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5)
+            
+            # Hair presets
+            preset_frame = ttk.Frame(self.hair_reinserter_frame)
+            preset_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(preset_frame, text="Quick Presets:").pack(side=tk.LEFT, padx=5)
+            
+            ttk.Button(
+                preset_frame, 
+                text="Natural Hair",
+                command=lambda: self._apply_hair_preset("natural")
+            ).pack(side=tk.LEFT, padx=5)
+            
+            ttk.Button(
+                preset_frame, 
+                text="Anime Hair",
+                command=lambda: self._apply_hair_preset("anime")
+            ).pack(side=tk.LEFT, padx=5)
+            
+            ttk.Button(
+                preset_frame, 
+                text="Updo/Ponytail",
+                command=lambda: self._apply_hair_preset("updo")
+            ).pack(side=tk.LEFT, padx=5)
+            
+            # Initially hide the hair reinserter options if not enabled
+            if not self.parent.use_smart_hair_reinserter.get():
+                self.hair_reinserter_frame.pack_forget()
+        
+        # Advanced settings frame
         self.advanced_frame = ttk.LabelFrame(content, text="Advanced Mask Alignment Options", padding=5)
         self.advanced_frame.pack(fill=tk.X, pady=5, padx=5)
         
@@ -939,90 +810,106 @@ class ConfigTab:
         
         ttk.Label(alignment_frame, text="Alignment Method:").pack(side=tk.LEFT, padx=5)
         
-        alignment_combo = ttk.Combobox(
+        method_combo = ttk.Combobox(
             alignment_frame,
             textvariable=self.parent.reinsert_alignment_method,
-            values=["none", "centroid", "bbox", "landmarks", "contour", "iou"],
+            values=["centroid", "landmarks", "bbox"],
             width=15,
             state="readonly"
         )
-        alignment_combo.pack(side=tk.LEFT, padx=5)
+        method_combo.pack(side=tk.LEFT, padx=5)
         
-        # Blend mode selection
-        blend_frame = ttk.Frame(self.advanced_frame)
-        blend_frame.pack(fill=tk.X, pady=5)
+        # Map the method names to more user-friendly descriptions
+        method_descriptions = {
+            "centroid": "Center of mass (balanced)",
+            "landmarks": "Feature matching (detailed)",
+            "bbox": "Bounding box (simpler)"
+        }
         
-        ttk.Label(blend_frame, text="Blend Mode:").pack(side=tk.LEFT, padx=5)
+        # Update description when method changes
+        method_description_label = ttk.Label(alignment_frame, text="", foreground="gray")
+        method_description_label.pack(side=tk.LEFT, padx=5)
         
-        blend_combo = ttk.Combobox(
-            blend_frame,
-            textvariable=self.parent.reinsert_blend_mode,
-            values=["alpha", "poisson", "feathered"],
-            width=15,
-            state="readonly"
-        )
-        blend_combo.pack(side=tk.LEFT, padx=5)
+        def update_method_description(*args):
+            method = self.parent.reinsert_alignment_method.get()
+            if method in method_descriptions:
+                method_description_label.config(text=method_descriptions[method])
         
-        # Blend extent slider
-        extent_frame = ttk.Frame(self.advanced_frame)
-        extent_frame.pack(fill=tk.X, pady=5)
+        self.parent.reinsert_alignment_method.trace_add("write", update_method_description)
+        update_method_description()  # Initial update
         
-        ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
+        # Blend mode selection if available
+        if hasattr(self.parent, 'reinsert_blend_mode'):
+            blend_frame = ttk.Frame(self.advanced_frame)
+            blend_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(blend_frame, text="Blend Mode:").pack(side=tk.LEFT, padx=5)
+            
+            blend_combo = ttk.Combobox(
+                blend_frame,
+                textvariable=self.parent.reinsert_blend_mode,
+                values=["alpha", "poisson", "feathered"],
+                width=15,
+                state="readonly"
+            )
+            blend_combo.pack(side=tk.LEFT, padx=5)
         
-        extent_slider = ttk.Scale(
-            extent_frame,
-            from_=0,
-            to=20,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.reinsert_blend_extent,
-            length=200
-        )
-        extent_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        # Blend extent slider if available
+        if hasattr(self.parent, 'reinsert_blend_extent'):
+            extent_frame = ttk.Frame(self.advanced_frame)
+            extent_frame.pack(fill=tk.X, pady=5)
+            
+            ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
+            
+            extent_slider = ttk.Scale(
+                extent_frame,
+                from_=0,
+                to=20,
+                orient=tk.HORIZONTAL,
+                variable=self.parent.reinsert_blend_extent,
+                length=200
+            )
+            extent_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+            
+            # Label to show value
+            self.extent_value_label = ttk.Label(extent_frame, text=f"{self.parent.reinsert_blend_extent.get()} px")
+            self.extent_value_label.pack(side=tk.LEFT, padx=5)
+            
+            # Update label when slider is moved
+            def update_extent_label(*args):
+                self.extent_value_label.config(text=f"{self.parent.reinsert_blend_extent.get()} px")
+            
+            self.parent.reinsert_blend_extent.trace_add("write", update_extent_label)
         
-        # Label to show value
-        self.extent_value_label = ttk.Label(extent_frame, text=f"{self.parent.reinsert_blend_extent.get()} px")
-        self.extent_value_label.pack(side=tk.LEFT, padx=5)
+        # Preserve edges option if available
+        if hasattr(self.parent, 'reinsert_preserve_edges'):
+            ttk.Checkbutton(
+                self.advanced_frame,
+                text="Preserve original image edges",
+                variable=self.parent.reinsert_preserve_edges
+            ).pack(anchor=tk.W, padx=5, pady=5)
         
-        # Update label when slider is moved
-        def update_extent_label(*args):
-            self.extent_value_label.config(text=f"{self.parent.reinsert_blend_extent.get()} px")
+        # Tips section
+        tips_frame = ttk.LabelFrame(content, text="Quick Tips", padding=5)
+        tips_frame.pack(fill=tk.X, pady=5, padx=5)
         
-        self.parent.reinsert_blend_extent.trace_add("write", update_extent_label)
-        
-        # Preserve edges option
-        ttk.Checkbutton(
-            self.advanced_frame,
-            text="Preserve original image edges",
-            variable=self.parent.reinsert_preserve_edges
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        # Explanation section
-        explanation_frame = ttk.LabelFrame(content, text="Tips for Hair Reinsertion", padding=5)
-        explanation_frame.pack(fill=tk.X, pady=5, padx=5)
-        
-        explanation_text = (
-            "• Use Smart Hair Reinserter for best results with hair replacement\n"
-            "• Positive vertical bias values move hair downward, negative values move hair upward\n"
-            "• Increase soft edge width for more gradual blending between original and processed hair\n"
-            "• For best results, ensure hair masks don't include the face or other features\n"
-            "• Try different preset options if default alignment doesn't work well"
+        tips_text = (
+            "• Negative vertical position moves hair up, positive moves it down\n"
+            "• Increase edge softness for more gradual transitions\n"
+            "• Use the 'Natural Hair' preset as a starting point\n"
+            "• Preview Processing to test settings before running"
         )
         
         ttk.Label(
-            explanation_frame,
-            text=explanation_text,
+            tips_frame,
+            text=tips_text,
             wraplength=600
         ).pack(padx=5, pady=5, anchor=tk.W)
         
         # Initially hide the advanced options if different masks handling is disabled
-        if not self.parent.reinsert_handle_different_masks.get():
+        if hasattr(self.parent, 'reinsert_handle_different_masks') and not self.parent.reinsert_handle_different_masks.get():
             self.advanced_frame.pack_forget()
-        
-        # Initially hide the hair reinserter options if not enabled
-        if not self.parent.use_smart_hair_reinserter.get():
-            self.hair_reinserter_frame.pack_forget()
-
-
+    # Add this method to toggle hair reinserter controls
     # Add this method to toggle hair reinserter controls
     def _toggle_hair_reinserter_controls(self):
         """Show or hide Smart Hair Reinserter controls based on the checkbox state."""
@@ -1037,30 +924,7 @@ class ConfigTab:
                 # Hide the hair reinserter controls
                 self.hair_reinserter_frame.pack_forget()
 
-    # Add this method for hair presets
-    def _apply_hair_preset(self, preset_type):
-        """Apply predefined settings for different hair types."""
-        if preset_type == "natural":
-            # Natural hair settings
-            self.parent.vertical_alignment_bias.set(10)
-            self.parent.soft_edge_width.set(15)
-            self.parent.reinsert_blend_mode.set("feathered")
-            self.parent.hair_color_correction.set(True)
-            self.parent.hair_top_alignment.set(True)
-        elif preset_type == "anime":
-            # Anime hair settings - usually needs more prominent edges
-            self.parent.vertical_alignment_bias.set(5)
-            self.parent.soft_edge_width.set(8)
-            self.parent.reinsert_blend_mode.set("alpha")
-            self.parent.hair_color_correction.set(True)
-            self.parent.hair_top_alignment.set(True)
-        elif preset_type == "updo":
-            # Updo/ponytail settings - higher alignment for vertical hairstyles
-            self.parent.vertical_alignment_bias.set(-20)
-            self.parent.soft_edge_width.set(12)
-            self.parent.reinsert_blend_mode.set("feathered")
-            self.parent.hair_color_correction.set(True)
-            self.parent.hair_top_alignment.set(True)
+    # Add this method to toggle mask alignment controls 
     def _toggle_mask_alignment_controls(self):
         """Show or hide advanced mask alignment controls based on the checkbox state."""
         if hasattr(self, 'advanced_frame'):
@@ -1073,7 +937,39 @@ class ConfigTab:
             else:
                 self.advanced_frame.pack_forget()
 
-
+    # Add this method for hair presets
+    def _apply_hair_preset(self, preset_type):
+        """Apply predefined settings for different hair types."""
+        if preset_type == "natural":
+            # Natural hair settings
+            self.parent.vertical_alignment_bias.set(10)
+            self.parent.soft_edge_width.set(15)
+            if hasattr(self.parent, 'reinsert_blend_mode'):
+                self.parent.reinsert_blend_mode.set("feathered")
+            if hasattr(self.parent, 'hair_color_correction'):
+                self.parent.hair_color_correction.set(True)
+            if hasattr(self.parent, 'hair_top_alignment'):
+                self.parent.hair_top_alignment.set(True)
+        elif preset_type == "anime":
+            # Anime hair settings - usually needs more prominent edges
+            self.parent.vertical_alignment_bias.set(5)
+            self.parent.soft_edge_width.set(8)
+            if hasattr(self.parent, 'reinsert_blend_mode'):
+                self.parent.reinsert_blend_mode.set("alpha")
+            if hasattr(self.parent, 'hair_color_correction'):
+                self.parent.hair_color_correction.set(True)
+            if hasattr(self.parent, 'hair_top_alignment'):
+                self.parent.hair_top_alignment.set(True)
+        elif preset_type == "updo":
+            # Updo/ponytail settings - higher alignment for vertical hairstyles
+            self.parent.vertical_alignment_bias.set(-20)
+            self.parent.soft_edge_width.set(12)
+            if hasattr(self.parent, 'reinsert_blend_mode'):
+                self.parent.reinsert_blend_mode.set("feathered")
+            if hasattr(self.parent, 'hair_color_correction'):
+                self.parent.hair_color_correction.set(True)
+            if hasattr(self.parent, 'hair_top_alignment'):
+                self.parent.hair_top_alignment.set(True)
     
     def _create_debug_section(self):
         """Create debug options section."""
