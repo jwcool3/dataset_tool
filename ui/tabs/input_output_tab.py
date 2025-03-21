@@ -180,6 +180,8 @@ class InputOutputTab:
 
 # Update to input_output_tab.py to add Smart Hair Reinserter to processing pipeline
 
+# Fix for the reinsert_idx variable error in input_output_tab.py
+
     def _create_pipeline_section(self):
         """Create the processing pipeline section with checkboxes."""
         pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
@@ -194,16 +196,21 @@ class InputOutputTab:
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
             ("Add padding to make images square", self.parent.square_pad_images),
-            ("Reinsert processed regions", self.parent.reinsert_crops_option)  # Renamed for clarity
+            ("Reinsert processed regions", self.parent.reinsert_crops_option)
         ]
         
         # Create checkboxes in a grid layout
+        reinsert_widget = None  # Initialize a variable to store the reinsert checkbox widget
+        
         for i, (text, var) in enumerate(processing_options):
             row = i % 3  # 3 options per row
             col = i // 3
-            checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var, 
-                                        command=lambda v=var: self._on_processing_option_changed(v))
+            checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
             checkbutton.grid(column=col, row=row, sticky=tk.W, padx=10, pady=5)
+            
+            # Store the widget if it's the reinsert option
+            if text == "Reinsert processed regions":
+                reinsert_widget = checkbutton
         
         # Add the Smart Hair Reinserter option in a special frame
         hair_frame = ttk.Frame(pipeline_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
@@ -214,7 +221,7 @@ class InputOutputTab:
             hair_frame,
             text="✨ Hair Replacement Mode ✨",
             font=("Helvetica", 10, "bold"),
-            foreground="#8E44AD"
+            foreground="#8E44AD"  # Purple color for emphasis
         ).pack(anchor=tk.W, padx=5, pady=(0, 5))
         
         # Single checkbox for Smart Hair Reinserter
@@ -234,13 +241,6 @@ class InputOutputTab:
             pipeline_frame, text="Debug Mode (Save visualization images)", 
             variable=self.parent.debug_mode
         ).grid(column=0, row=4, columnspan=2, sticky=tk.W, padx=10, pady=5)
-
-
-        # Debug mode checkbox (separate for visibility)
-        ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
-                    variable=self.parent.debug_mode).grid(
-            column=0, row=4, columnspan=2, sticky=tk.W, padx=10, pady=5
-        )
         
         # Add hint about standalone processing
         hint_frame = ttk.Frame(self.frame, padding="10")
@@ -253,6 +253,7 @@ class InputOutputTab:
         hint_label = ttk.Label(hint_frame, text=hint_text, foreground="gray", wraplength=600)
         hint_label.pack(anchor=tk.W)
 
+        # Function to handle when reinsertion is toggled
         def on_reinsert_toggle():
             """Called when the reinsertion option is toggled"""
             if self.parent.reinsert_crops_option.get():
@@ -270,6 +271,12 @@ class InputOutputTab:
                 # Hide the hint
                 self.reinsert_hint_label.grid_forget()
 
+        # Add command to reinsert checkbox widget if it exists
+        if reinsert_widget:
+            reinsert_widget.configure(command=on_reinsert_toggle)
+
+        # Update the state of hair reinserter
+        self._update_hair_reinserter_state()
         # Add a command to the reinsert checkbox
         for i, (text, var) in enumerate(processing_options):
             if text == "Reinsert cropped images":
