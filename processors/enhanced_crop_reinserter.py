@@ -513,9 +513,17 @@ class EnhancedCropReinserter:
         Returns:
             numpy.ndarray: Result image with preserved edges
         """
-        # Ensure mask is same size as images
-        if mask.shape[:2] != source_img.shape[:2]:
-            mask = cv2.resize(mask, (source_img.shape[1], source_img.shape[0]), 
+        # Ensure all images are the same size
+        target_height, target_width = source_img.shape[:2]
+        
+        # Resize result_img and mask to match source_img if needed
+        if result_img.shape[:2] != (target_height, target_width):
+            result_img = cv2.resize(result_img, (target_width, target_height), 
+                                interpolation=cv2.INTER_LANCZOS4)
+        
+        # Ensure mask is same size as source_img
+        if mask.shape[:2] != (target_height, target_width):
+            mask = cv2.resize(mask, (target_width, target_height), 
                             interpolation=cv2.INTER_NEAREST)
         
         # Convert mask to binary
@@ -528,13 +536,23 @@ class EnhancedCropReinserter:
         # Dilate edges to make them more prominent
         edge_mask = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
         
-        # Ensure edge_mask is same size as mask_binary
+        # Resize edge_mask to match mask_binary if needed
         if edge_mask.shape != mask_binary.shape:
-            edge_mask = cv2.resize(edge_mask, (mask_binary.shape[1], mask_binary.shape[0]), 
+            edge_mask = cv2.resize(edge_mask, (target_width, target_height), 
                                 interpolation=cv2.INTER_NEAREST)
         
+        # Ensure edge_mask is the same type as mask_binary
+        edge_mask = edge_mask.astype(mask_binary.dtype)
+        
         # Only preserve edges outside the mask
-        edge_mask = cv2.bitwise_and(edge_mask, cv2.bitwise_not(mask_binary))
+        try:
+            edge_mask = cv2.bitwise_and(edge_mask, cv2.bitwise_not(mask_binary))
+        except cv2.error:
+            # Fallback method if bitwise_and fails
+            print("Bitwise AND failed, using manual edge preservation")
+            edge_mask = np.zeros_like(edge_mask)
+            non_mask_edges = (edges > 0) & (mask_binary == 0)
+            edge_mask[non_mask_edges] = 255
         
         # Convert edge mask to 3 channels
         edge_mask_3d = cv2.cvtColor(edge_mask, cv2.COLOR_GRAY2BGR)
