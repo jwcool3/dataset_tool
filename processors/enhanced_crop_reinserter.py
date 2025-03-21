@@ -328,10 +328,44 @@ class EnhancedCropReinserter:
                 blend_extent
             )
         elif blend_mode == "poisson":
-            result_img = self._poisson_blend(
-                source_img, aligned_img, 
-                aligned_mask
-            )
+            try:
+                # Convert mask to correct format
+                mask_uint8 = aligned_mask.astype(np.uint8)
+                
+                # Find center of mask
+                moments = cv2.moments(mask_uint8)
+                if moments["m00"] > 0:
+                    center_x = int(moments["m10"] / moments["m00"])
+                    center_y = int(moments["m01"] / moments["m00"])
+                    
+                    # Make sure center point is within safe boundaries
+                    # (at least 1/4 of the image dimensions from any edge)
+                    h, w = source_img.shape[:2]
+                    min_distance = min(w, h) // 4
+                    
+                    center_x = max(min_distance, min(w - min_distance, center_x))
+                    center_y = max(min_distance, min(h - min_distance, center_y))
+                    
+                    center = (center_x, center_y)
+                    
+                    # Ensure the mask has non-zero values (required for seamlessClone)
+                    if np.any(mask_uint8 > 0):
+                        # Apply seamless cloning
+                        result_img = cv2.seamlessClone(
+                            aligned_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE
+                        )
+                    else:
+                        # Fallback to alpha blending if mask is empty
+                        raise ValueError("Mask has no non-zero values")
+                else:
+                    # Fallback to alpha blending if moments are zero
+                    raise ValueError("Mask moments are zero")
+            except Exception as e:
+                print(f"Poisson blending failed: {str(e)}, falling back to alpha blending")
+                # Fall back to alpha blending
+                mask_float = aligned_mask.astype(float) / 255.0
+                mask_float_3d = np.stack([mask_float] * 3, axis=2)
+                result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
         elif blend_mode == "feathered":
             result_img = self._feathered_blend(
                 source_img, aligned_img, 
