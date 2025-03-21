@@ -332,11 +332,8 @@ class InputOutputTab:
     def _on_hair_reinserter_changed(self):
         """Handle changes to the hair reinserter option."""
         if self.parent.use_smart_hair_reinserter.get():
-            # When enabling hair reinserter, switch to Config tab and show settings
+            # When enabling hair reinserter, switch to Config tab
             self.parent.notebook.select(1)  # Config tab
-            
-            # Highlight the hair settings in Config tab
-            self._highlight_hair_options()
             
             # Enable relevant settings for hair processing
             self.parent.reinsert_handle_different_masks.set(True)
@@ -358,28 +355,11 @@ class InputOutputTab:
         )
         
         # Switch to the Config tab
-        self.parent.notebook.select(1)  # Config tab is usually index 1
+        self.parent.notebook.select(1)  # Config tab
         
-        # Try to highlight the hair options section
         try:
-            # Find Config tab instance
-            config_tab = self.parent.config_tab
-            
-            # Check if hair_reinserter_frame attribute exists before using it
-            if hasattr(config_tab, 'hair_reinserter_frame'):
-                config_tab.hair_reinserter_frame.configure(background="#f0e6f5")  # Light purple highlight
-                
-                # Reset background after a delay
-                self.parent.root.after(2000, lambda: config_tab.hair_reinserter_frame.configure(background=""))
-            else:
-                # If the frame doesn't exist, just highlight the general reinsertion section
-                if hasattr(config_tab, 'sections') and 'reinsertion' in config_tab.sections:
-                    reinsertion_frame = config_tab.sections['reinsertion']['frame']
-                    reinsertion_frame.configure(background="#f0e6f5")  # Light purple highlight
-                    
-                    # Reset background after a delay
-                    self.parent.root.after(2000, lambda: reinsertion_frame.configure(background=""))
-        except Exception as e:
-            # If any error occurs, just continue without highlighting
-            print(f"Unable to highlight hair options: {e}")
+            # Just switching to the Config tab is enough if we can't highlight anything
+            # No need to highlight specific frames that might not exist
             pass
+        except Exception as e:
+            print(f"Error during tab switching: {e}")
