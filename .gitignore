@@ -2,3 +2,4 @@ processors/__pycache__/enhanced_crop_reinserter.cpython-310.pyc
 ui/tabs/__pycache__/simplified_reinsertion_ui.cpython-310.pyc
 processors/__pycache__/__init__.cpython-310.pyc
 processors/__pycache__/crop_reinserter.cpython-310.pyc
+models/shape_predictor_68_face_landmarks.dat

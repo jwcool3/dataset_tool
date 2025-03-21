@@ -27,6 +27,32 @@ class EnhancedCropReinserter:
             app: The main application with shared variables and UI controls
         """
         self.app = app
+        
+        # Initialize face detection if dlib is available
+        try:
+            self.face_detector = dlib.get_frontal_face_detector()
+            
+            # Look for the shape predictor file in a few common locations
+            predictor_paths = [
+                os.path.join(os.path.dirname(__file__), "shape_predictor_68_face_landmarks.dat"),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "shape_predictor_68_face_landmarks.dat"),
+                os.path.join(os.path.expanduser("~"), ".dataset_preparation_tool", "models", "shape_predictor_68_face_landmarks.dat")
+            ]
+            
+            self.landmark_predictor = None
+            for path in predictor_paths:
+                if os.path.exists(path):
+                    self.landmark_predictor = dlib.shape_predictor(path)
+                    print(f"Found landmark predictor at: {path}")
+                    break
+                    
+            if self.landmark_predictor is None:
+                print("WARNING: Facial landmark predictor file not found. Landmark-based alignment will not be available.")
+                print("Please download shape_predictor_68_face_landmarks.dat and place it in the processors directory.")
+        except Exception as e:
+            print(f"Could not initialize facial landmark detection: {str(e)}")
+            self.face_detector = None
+            self.landmark_predictor = None
     
     def reinsert_crops(self, input_dir, output_dir):
         """
@@ -388,11 +414,36 @@ class EnhancedCropReinserter:
 
         # Inside _reinsert_with_resolution_handling method, before applying blending:
 
-        # Use landmark-based alignment if selected
+        # Use landmark-based alignment if selected and landmarks are available
         if self.app.reinsert_alignment_method.get() == "landmarks":
-            aligned_mask, aligned_img = self._align_with_landmarks(
-                source_img, processed_img_resized, source_mask, mask_resized, debug_dir
-            )
+            if hasattr(self, 'face_detector') and self.face_detector is not None and \
+               hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
+                source_landmarks = self._get_landmarks(source_img)
+                processed_landmarks = self._get_landmarks(processed_img_resized)
+                
+                if source_landmarks is not None and processed_landmarks is not None:
+                    aligned_mask, aligned_img = self._align_with_landmarks(
+                        source_img, processed_img_resized, source_mask, mask_resized, 
+                        source_landmarks, processed_landmarks, debug_dir
+                    )
+                else:
+                    print("Could not detect landmarks in one or both images, falling back to default alignment")
+                    # Use existing alignment method...
+                    aligned_mask, aligned_img = self._align_masks(
+                        source_mask, mask_resized, 
+                        source_img, processed_img_resized, 
+                        alignment_method, 
+                        debug_dir
+                    )
+            else:
+                print("Landmark detection not available, falling back to default alignment")
+                # Use existing alignment method...
+                aligned_mask, aligned_img = self._align_masks(
+                    source_mask, mask_resized, 
+                    source_img, processed_img_resized, 
+                    alignment_method, 
+                    debug_dir
+                )
         else:
             # Use existing alignment method...
             aligned_mask, aligned_img = self._align_masks(
@@ -1011,35 +1062,45 @@ class EnhancedCropReinserter:
         Returns:
             list: List of (x, y) landmark coordinates or None if detection fails
         """
+        # Check if detector and predictor are available
+        if self.face_detector is None or self.landmark_predictor is None:
+            print("Facial landmark detection not available")
+            return None
+            
         # Convert to grayscale for detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         
         # Detect faces
-        faces = self.face_detector(gray)
-        if not faces:
+        try:
+            faces = self.face_detector(gray)
+            if not faces:
+                print("No faces detected in image")
+                return None
+            
+            # Get largest face
+            largest_face = faces[0]
+            largest_area = (largest_face.right() - largest_face.left()) * (largest_face.bottom() - largest_face.top())
+            
+            for face in faces[1:]:
+                area = (face.right() - face.left()) * (face.bottom() - face.top())
+                if area > largest_area:
+                    largest_face = face
+                    largest_area = area
+            
+            # Get landmarks for the face
+            shape = self.landmark_predictor(gray, largest_face)
+            
+            # Convert landmarks to list of (x, y) coordinates
+            landmarks = []
+            for i in range(68):  # 68 landmarks in the standard model
+                x = shape.part(i).x
+                y = shape.part(i).y
+                landmarks.append((x, y))
+            
+            return landmarks
+        except Exception as e:
+            print(f"Error detecting landmarks: {str(e)}")
             return None
-        
-        # Get largest face
-        largest_face = faces[0]
-        largest_area = (largest_face.right() - largest_face.left()) * (largest_face.bottom() - largest_face.top())
-        
-        for face in faces[1:]:
-            area = (face.right() - face.left()) * (face.bottom() - face.top())
-            if area > largest_area:
-                largest_face = face
-                largest_area = area
-        
-        # Get landmarks for the face
-        shape = self.landmark_predictor(gray, largest_face)
-        
-        # Convert landmarks to list of (x, y) coordinates
-        landmarks = []
-        for i in range(68):  # 68 landmarks in the standard model
-            x = shape.part(i).x
-            y = shape.part(i).y
-            landmarks.append((x, y))
-        
-        return landmarks
     
     def _detect_hair_parting(self, mask, landmarks=None):
         """
