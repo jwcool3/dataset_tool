@@ -199,18 +199,19 @@ class InputOutputTab:
             ("Reinsert processed regions", self.parent.reinsert_crops_option)
         ]
         
-        # Create checkboxes in a grid layout
-        reinsert_widget = None  # Initialize a variable to store the reinsert checkbox widget
+        # Find the index of reinsert option before creating widgets
+        reinsert_idx = None
+        for i, (text, var) in enumerate(processing_options):
+            if text == "Reinsert processed regions":
+                reinsert_idx = i
+                break
         
+        # Create checkboxes in a grid layout
         for i, (text, var) in enumerate(processing_options):
             row = i % 3  # 3 options per row
             col = i // 3
             checkbutton = ttk.Checkbutton(pipeline_frame, text=text, variable=var)
             checkbutton.grid(column=col, row=row, sticky=tk.W, padx=10, pady=5)
-            
-            # Store the widget if it's the reinsert option
-            if text == "Reinsert processed regions":
-                reinsert_widget = checkbutton
         
         # Add the Smart Hair Reinserter option in a special frame
         hair_frame = ttk.Frame(pipeline_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
@@ -232,9 +233,6 @@ class InputOutputTab:
             command=self._on_hair_reinserter_changed
         )
         self.hair_reinserter_cb.pack(anchor=tk.W, padx=20, pady=0)
-        
-        # This checkbox should only be enabled when reinsert_crops_option is checked
-        self._update_hair_reinserter_state()
         
         # Debug checkbox at the bottom
         ttk.Checkbutton(
@@ -271,24 +269,22 @@ class InputOutputTab:
                 # Hide the hint
                 self.reinsert_hint_label.grid_forget()
 
-        # Add command to reinsert checkbox widget if it exists
-        if reinsert_widget:
-            reinsert_widget.configure(command=on_reinsert_toggle)
-
         # Update the state of hair reinserter
         self._update_hair_reinserter_state()
-        # Add a command to the reinsert checkbox
-        for i, (text, var) in enumerate(processing_options):
-            if text == "Reinsert cropped images":
-                reinsert_idx = i
-                break
-                
-        # Find the reinsert checkbutton widget
-        for widget in pipeline_frame.winfo_children():
-            if isinstance(widget, ttk.Checkbutton) and widget.grid_info()['row'] == reinsert_idx % 3 and widget.grid_info()['column'] == reinsert_idx // 3:
-                widget.configure(command=on_reinsert_toggle)
-                break
-
+        
+        # Find and configure the reinsertion checkbox widget
+        if reinsert_idx is not None:
+            # Calculate grid position
+            row = reinsert_idx % 3
+            col = reinsert_idx // 3
+            
+            # Find the widget at this position
+            for widget in pipeline_frame.winfo_children():
+                if (isinstance(widget, ttk.Checkbutton) and 
+                    widget.grid_info().get('row') == row and 
+                    widget.grid_info().get('column') == col):
+                    widget.configure(command=on_reinsert_toggle)
+                    break
     # Add handlers for checkbox state management
     def _on_processing_option_changed(self, changed_var):
         """Handle changes to processing options."""
