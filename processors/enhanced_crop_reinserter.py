@@ -250,11 +250,11 @@ class EnhancedCropReinserter:
             extension_amount = self.app.bangs_extension_amount.get()
             width_ratio = self.app.bangs_width_ratio.get()
             
-            # Apply the extension
             mask = self._extend_bangs_area(
                 mask, 
                 extend_pixels=extension_amount,
-                forehead_ratio=width_ratio
+                forehead_ratio=width_ratio,
+                min_opacity=self.app.bangs_min_opacity.get()
             )
             
             # Save debug image
@@ -783,14 +783,15 @@ class EnhancedCropReinserter:
         
         return np.clip(preserved_result, 0, 255).astype(np.uint8)
     
-    def _extend_bangs_area(self, mask, extend_pixels=30, forehead_ratio=0.2):
+    def _extend_bangs_area(self, mask, extend_pixels=30, forehead_ratio=0.3, min_opacity=0.7):
         """
-        Extend the mask downward in the bangs/forehead area.
+        Extend the mask downward in the bangs/forehead area with higher opacity.
         
         Args:
             mask: The binary mask image
             extend_pixels: How many pixels to extend downward
             forehead_ratio: What portion of the width to consider as forehead (centered)
+            min_opacity: Minimum opacity value at the edges of extension (0.0-1.0)
             
         Returns:
             numpy.ndarray: Extended mask
@@ -830,14 +831,18 @@ class EnhancedCropReinserter:
                 # Extend downward by extend_pixels, but don't go out of bounds
                 extend_to_y = min(height, top_y + extend_pixels)
                 
-                # Create a gradually decreasing alpha value for smoother transition
+                # Create a gradually decreasing alpha value with a minimum opacity
                 for y in range(top_y, extend_to_y):
-                    # Calculate fade factor (1.0 at top, decreasing to 0.0)
-                    fade = 1.0 - (y - top_y) / float(extend_pixels)
+                    # Calculate fade factor (1.0 at top, decreasing to min_opacity)
+                    progress = (y - top_y) / float(extend_pixels)
+                    fade = 1.0 - (progress * (1.0 - min_opacity))
                     fade_value = int(255 * fade)
                     
-                    # Don't overwrite existing mask pixels
+                    # Don't overwrite existing mask pixels with lower values
                     if extended_mask[y, x] < fade_value:
                         extended_mask[y, x] = fade_value
+        
+        # Apply a small amount of blur to smooth the extended edges
+        extended_mask = cv2.GaussianBlur(extended_mask, (3, 3), 0)
         
         return extended_mask

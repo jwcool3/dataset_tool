@@ -855,6 +855,31 @@ class ConfigTab:
 
 
 
+        # Add this to your UI controls for bangs extension
+        opacity_frame = ttk.Frame(bangs_frame)
+        opacity_frame.pack(fill=tk.X, pady=5, padx=20)
+
+        ttk.Label(opacity_frame, text="Minimum opacity:").pack(side=tk.LEFT, padx=2)
+        opacity_slider = ttk.Scale(
+            opacity_frame,
+            from_=0.3,
+            to=1.0,
+            orient=tk.HORIZONTAL,
+            variable=self.parent.bangs_min_opacity,  # Add this variable to your _init_variables method
+            length=150
+        )
+        opacity_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        # Label to show value
+        opacity_value_label = ttk.Label(opacity_frame, text=f"{self.parent.bangs_min_opacity.get():.2f}")
+        opacity_value_label.pack(side=tk.LEFT, padx=5)
+
+        # Update label when slider is moved
+        def update_opacity_label(*args):
+            opacity_value_label.config(text=f"{self.parent.bangs_min_opacity.get():.2f}")
+
+        self.parent.bangs_min_opacity.trace_add("write", update_opacity_label)
+
         ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
         
         extent_slider = ttk.Scale(

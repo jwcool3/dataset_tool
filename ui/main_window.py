@@ -144,6 +144,8 @@ class MainWindow:
         self.bangs_extension_amount = tk.IntVar(value=30)
         self.bangs_width_ratio = tk.DoubleVar(value=0.3)
 
+        self.bangs_min_opacity = tk.DoubleVar(value=0.7)
+
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
         self.mask_expand_kernel_size = tk.IntVar(value=3)
