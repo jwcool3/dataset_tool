@@ -178,6 +178,8 @@ class InputOutputTab:
         self.parent.preview_tab.generate_preview()
 
 
+# Update to input_output_tab.py to add Smart Hair Reinserter to processing pipeline
+
     def _create_pipeline_section(self):
         """Create the processing pipeline section with checkboxes."""
         pipeline_frame = ttk.LabelFrame(self.frame, text="Processing Pipeline", padding="10")
@@ -187,7 +189,7 @@ class InputOutputTab:
         processing_options = [
             ("Extract frames from videos", self.parent.extract_frames),
             ("Detect and crop mask regions", self.parent.crop_mask_regions),
-            ("Expand mask regions", self.parent.expand_masks),  # Ensure this exists
+            ("Expand mask regions", self.parent.expand_masks),
             ("Resize images and masks", self.parent.resize_images),
             ("Organize and rename files", self.parent.organize_files),
             ("Convert images to video", self.parent.convert_to_video),
@@ -206,10 +208,41 @@ class InputOutputTab:
             if text == "Expand mask regions":
                 checkbutton.configure(style="Accent.TCheckbutton")
         
+        # Add a special highlight for the Smart Hair Reinserter
+        hair_reinserter_frame = ttk.Frame(pipeline_frame, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
+        hair_reinserter_frame.grid(column=0, row=3, columnspan=3, sticky=tk.W+tk.E, padx=10, pady=5)
+        
+        # Create a custom styled heading
+        hair_heading = ttk.Label(
+            hair_reinserter_frame,
+            text="✨ Smart Hair Reinsertion ✨",
+            font=("Helvetica", 10, "bold"),
+            foreground="#8E44AD"  # Purple color for emphasis
+        )
+        hair_heading.pack(anchor=tk.W, padx=5, pady=(5, 0))
+        
+        # Add the Smart Hair Reinserter checkbox
+        smart_hair_cb = ttk.Checkbutton(
+            hair_reinserter_frame,
+            text="Use Smart Hair Reinserter (optimized for hair replacement)",
+            variable=self.parent.use_smart_hair_reinserter,
+            command=self._highlight_hair_options
+        )
+        smart_hair_cb.pack(anchor=tk.W, padx=20, pady=5)
+        
+        # Add descriptive text
+        ttk.Label(
+            hair_reinserter_frame,
+            text="Specialized processor for AI-generated hair reinsertion with intelligent alignment",
+            font=("Helvetica", 9, "italic"),
+            foreground="#555555",
+            wraplength=550
+        ).pack(anchor=tk.W, padx=20, pady=(0, 5))
+        
         # Debug mode checkbox (separate for visibility)
         ttk.Checkbutton(pipeline_frame, text="Debug Mode (Save visualization images)", 
                     variable=self.parent.debug_mode).grid(
-            column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
+            column=0, row=4, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
         
         # Add hint about standalone processing
@@ -234,7 +267,7 @@ class InputOutputTab:
                         foreground="blue"
                     )
                     self.reinsert_hint_label.grid(
-                        column=0, row=4, columnspan=3, sticky=tk.W, padx=20, pady=5
+                        column=0, row=5, columnspan=3, sticky=tk.W, padx=20, pady=5
                     )
             elif hasattr(self, 'reinsert_hint_label'):
                 # Hide the hint
@@ -251,3 +284,32 @@ class InputOutputTab:
             if isinstance(widget, ttk.Checkbutton) and widget.grid_info()['row'] == reinsert_idx % 3 and widget.grid_info()['column'] == reinsert_idx // 3:
                 widget.configure(command=on_reinsert_toggle)
                 break
+
+    def _highlight_hair_options(self):
+        """Highlight Smart Hair Reinserter options in the Config tab when enabled."""
+        # Check if Smart Hair Reinserter is enabled
+        if not self.parent.use_smart_hair_reinserter.get():
+            return
+        
+        # Show a notification to user
+        self.parent.status_label.config(
+            text="Smart Hair Reinserter enabled! Check Configuration tab for hair-specific settings."
+        )
+        
+        # Switch to the Config tab
+        self.parent.notebook.select(1)  # Config tab is usually index 1
+        
+        # Try to highlight the hair options section
+        try:
+            # Find Config tab instance
+            config_tab = self.parent.config_tab
+            
+            # Highlight the hair reinserter section
+            if hasattr(config_tab, 'hair_reinserter_frame'):
+                config_tab.hair_reinserter_frame.configure(background="#f0e6f5")  # Light purple highlight
+                
+                # Reset background after a delay
+                self.parent.root.after(2000, lambda: config_tab.hair_reinserter_frame.configure(background=""))
+        except:
+            # If any error occurs, just continue without highlighting
+            pass

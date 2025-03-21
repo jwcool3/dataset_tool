@@ -134,6 +134,14 @@ class MainWindow:
         self.vertical_alignment_bias = tk.IntVar(value=10)  # Default upward bias
         self.soft_edge_width = tk.IntVar(value=15)  # Default soft edge width
 
+        # Add new variables for Smart Hair Reinserter
+        self.use_smart_hair_reinserter = tk.BooleanVar(value=False)
+        self.hair_color_correction = tk.BooleanVar(value=True)
+        self.hair_top_alignment = tk.BooleanVar(value=True)
+        
+
+
+
 
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
@@ -532,7 +540,7 @@ class MainWindow:
             from processors.crop_reinserter import CropReinserter
             from processors.mask_expander import MaskExpander
             from processors.enhanced_crop_reinserter import EnhancedCropReinserter
-
+            from processors.smart_hair_reinserter import SmartHairReinserter
 
             # Initialize processor instances
             frame_extractor = FrameExtractor(self)
@@ -544,7 +552,8 @@ class MainWindow:
             crop_reinserter = CropReinserter(self)
             mask_expander = MaskExpander(self)
             enhanced_crop_reinserter = EnhancedCropReinserter(self)
-
+            smart_hair_reinserter = SmartHairReinserter(self)
+            
 
             # Define pipeline steps in order
             pipeline_steps = []

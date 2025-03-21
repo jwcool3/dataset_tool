@@ -625,6 +625,10 @@ class ConfigTab:
             wraplength=600
         ).pack(anchor=tk.W, padx=5, pady=5)
     
+# This is a patch to add Smart Hair Reinserter settings to the Config Tab
+
+# Add this method to the ConfigTab class by updating _create_reinsertion_section:
+
     def _create_reinsertion_section(self):
         """Create the UI for crop reinsertion settings."""
         content = self._create_section("Crop Reinsertion", "reinsertion")
@@ -638,6 +642,14 @@ class ConfigTab:
             basic_frame,
             text="Use mask-only reinsertion (only reinsert masked regions)",
             variable=self.parent.reinsert_mask_only
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Add Smart Hair Reinserter option - NEW
+        ttk.Checkbutton(
+            basic_frame,
+            text="Use Smart Hair Reinserter (optimized for hair replacement)",
+            variable=self.parent.use_smart_hair_reinserter,
+            command=self._toggle_hair_reinserter_controls
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Add enhanced reinsertion option
@@ -654,6 +666,47 @@ class ConfigTab:
             variable=self.parent.reinsert_handle_different_masks,
             command=self._toggle_mask_alignment_controls
         ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # NEW: Smart Hair Reinserter options frame
+        self.hair_reinserter_frame = ttk.LabelFrame(content, text="Smart Hair Reinserter Options", padding=5)
+        self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Add hair-specific options
+        ttk.Checkbutton(
+            self.hair_reinserter_frame,
+            text="Enable automatic color correction for hair",
+            variable=self.parent.hair_color_correction
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        ttk.Checkbutton(
+            self.hair_reinserter_frame,
+            text="Prioritize top alignment for hair (recommended)",
+            variable=self.parent.hair_top_alignment
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Hair alignment preset selector
+        preset_frame = ttk.Frame(self.hair_reinserter_frame)
+        preset_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(preset_frame, text="Quick Presets:").pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            preset_frame, 
+            text="Natural Hair",
+            command=lambda: self._apply_hair_preset("natural")
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            preset_frame, 
+            text="Anime Hair",
+            command=lambda: self._apply_hair_preset("anime")
+        ).pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(
+            preset_frame, 
+            text="Updo/Ponytail",
+            command=lambda: self._apply_hair_preset("updo")
+        ).pack(side=tk.LEFT, padx=5)
         
         # Vertical Alignment Bias Frame
         vertical_bias_frame = ttk.LabelFrame(content, text="Vertical Alignment", padding=5)
@@ -708,6 +761,7 @@ class ConfigTab:
             self.feather_label.config(text=f"{width:.0f}")
         
         self.parent.soft_edge_width.trace_add("write", update_feather_label)
+        
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
@@ -814,15 +868,15 @@ class ConfigTab:
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Explanation section
-        explanation_frame = ttk.LabelFrame(content, text="Tips for Different Masks", padding=5)
+        explanation_frame = ttk.LabelFrame(content, text="Tips for Hair Reinsertion", padding=5)
         explanation_frame.pack(fill=tk.X, pady=5, padx=5)
         
         explanation_text = (
-            "• Use 'centroid' alignment when hair shape is similar but positioned differently\n"
-            "• Use 'bbox' alignment when dealing with very different hair sizes\n"
-            "• 'feathered' blending helps smooth transitions between original and new hair\n"
-            "• Increase 'Blend Extent' for more gradual blending at mask edges\n"
-            "• Try different alignment methods if hair positioning seems off"
+            "• Use Smart Hair Reinserter for best results with hair replacement\n"
+            "• Positive vertical bias values move hair downward, negative values move hair upward\n"
+            "• Increase soft edge width for more gradual blending between original and processed hair\n"
+            "• For best results, ensure hair masks don't include the face or other features\n"
+            "• Try different preset options if default alignment doesn't work well"
         )
         
         ttk.Label(
@@ -834,7 +888,49 @@ class ConfigTab:
         # Initially hide the advanced options if different masks handling is disabled
         if not self.parent.reinsert_handle_different_masks.get():
             self.advanced_frame.pack_forget()
+        
+        # Initially hide the hair reinserter options if not enabled
+        if not self.parent.use_smart_hair_reinserter.get():
+            self.hair_reinserter_frame.pack_forget()
 
+    # Add this method to toggle hair reinserter controls
+    def _toggle_hair_reinserter_controls(self):
+        """Show or hide Smart Hair Reinserter controls based on the checkbox state."""
+        if hasattr(self, 'hair_reinserter_frame'):
+            if self.parent.use_smart_hair_reinserter.get():
+                # Show the hair reinserter controls
+                try:
+                    self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5, after=self.note_frame)
+                except:
+                    self.hair_reinserter_frame.pack(fill=tk.X, pady=5, padx=5)
+            else:
+                # Hide the hair reinserter controls
+                self.hair_reinserter_frame.pack_forget()
+
+    # Add this method for hair presets
+    def _apply_hair_preset(self, preset_type):
+        """Apply predefined settings for different hair types."""
+        if preset_type == "natural":
+            # Natural hair settings
+            self.parent.vertical_alignment_bias.set(10)
+            self.parent.soft_edge_width.set(15)
+            self.parent.reinsert_blend_mode.set("feathered")
+            self.parent.hair_color_correction.set(True)
+            self.parent.hair_top_alignment.set(True)
+        elif preset_type == "anime":
+            # Anime hair settings - usually needs more prominent edges
+            self.parent.vertical_alignment_bias.set(5)
+            self.parent.soft_edge_width.set(8)
+            self.parent.reinsert_blend_mode.set("alpha")
+            self.parent.hair_color_correction.set(True)
+            self.parent.hair_top_alignment.set(True)
+        elif preset_type == "updo":
+            # Updo/ponytail settings - higher alignment for vertical hairstyles
+            self.parent.vertical_alignment_bias.set(-20)
+            self.parent.soft_edge_width.set(12)
+            self.parent.reinsert_blend_mode.set("feathered")
+            self.parent.hair_color_correction.set(True)
+            self.parent.hair_top_alignment.set(True)
     def _toggle_mask_alignment_controls(self):
         """Show or hide advanced mask alignment controls based on the checkbox state."""
         if hasattr(self, 'advanced_frame'):
