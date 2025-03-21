@@ -682,18 +682,7 @@ class ConfigTab:
 
 
 
-        ttk.Entry(
-            source_dir_frame,
-            textvariable=self.parent.source_images_dir,
-            width=40
-        ).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
-        
-        ttk.Button(
-            source_dir_frame,
-            text="Browse...",
-            command=self._browse_source_dir
-        ).pack(side=tk.RIGHT, padx=5)
-        
+
         # Important guidance note
         reminder_frame = ttk.Frame(content, padding=5, relief="groove")
         reminder_frame.pack(fill=tk.X, pady=5, padx=5)
