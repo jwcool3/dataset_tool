@@ -580,45 +580,6 @@ class EnhancedCropReinserter:
         
         return np.clip(result_img, 0, 255).astype(np.uint8)
 
-    def _preserve_image_edges(self, source_img, result_img, mask):
-        """
-        Preserve original image edges outside the mask region.
-        
-        Args:
-            source_img: Original source image
-            result_img: Blended result image
-            mask: Blending mask
-        
-        Returns:
-            numpy.ndarray: Result image with preserved edges
-        """
-        # Ensure mask is same size as images and is binary
-        if mask.shape[:2] != source_img.shape[:2]:
-            mask = cv2.resize(mask, (source_img.shape[1], source_img.shape[0]), 
-                            interpolation=cv2.INTER_NEAREST)
-        
-        # Convert mask to binary
-        _, mask_binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        
-        # Detect edges in source image
-        gray_source = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
-        edges = cv2.Canny(gray_source, 50, 150)
-        
-        # Dilate edges to make them more prominent
-        edge_mask = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
-        
-        # Only preserve edges outside the mask
-        edge_mask = cv2.bitwise_and(edge_mask, cv2.bitwise_not(mask_binary))
-        
-        # Convert edge mask to 3 channels
-        edge_mask_3d = cv2.cvtColor(edge_mask, cv2.COLOR_GRAY2BGR)
-        edge_mask_3d = edge_mask_3d.astype(float) / 255.0
-        
-        # Keep original pixel values at edges
-        preserved_result = source_img * edge_mask_3d + result_img * (1 - edge_mask_3d)
-        
-        return np.clip(preserved_result, 0, 255).astype(np.uint8)
-    
 
     def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
         """
