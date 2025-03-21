@@ -681,15 +681,7 @@ class ConfigTab:
         
 
 
-        ttk.Label(
-            source_frame,
-            text="Select the directory containing the ORIGINAL UNCROPPED images:",
-            font=("Helvetica", 9)
-        ).pack(anchor=tk.W, padx=5, pady=5)
-        
-        source_dir_frame = ttk.Frame(source_frame)
-        source_dir_frame.pack(fill=tk.X, pady=5)
-        
+
         ttk.Entry(
             source_dir_frame,
             textvariable=self.parent.source_images_dir,
