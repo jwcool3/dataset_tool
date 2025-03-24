@@ -22,6 +22,8 @@ from utils.dataset_manager import (
     DatasetAnalyzer,
     DatasetManagerTab
 )
+from processors.crop_exporter import CropExporter
+
 
 class MainWindow:
     def __init__(self, root):
@@ -146,6 +148,15 @@ class MainWindow:
         self.bangs_width_ratio = tk.DoubleVar(value=0.3)
 
         self.bangs_min_opacity = tk.DoubleVar(value=0.7)
+
+        # New option for exporting just cropped areas
+        self.export_cropped_only = tk.BooleanVar(value=False)
+        self.export_cropped_video = tk.BooleanVar(value=False)
+        self.cropped_video_fps = tk.DoubleVar(value=30.0)
+        self.cropped_video_format = tk.StringVar(value="mp4")
+        self.export_with_alpha = tk.BooleanVar(value=True)  # Export with transparency
+
+
 
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
@@ -512,6 +523,14 @@ class MainWindow:
         if self.reinsert_crops_option.get():
             steps_selected.append(f"- Reinsert cropped images (source dir: {os.path.basename(self.source_images_dir.get())})")
         
+        if self.export_cropped_only.get():
+            export_type = "with transparency" if self.export_with_alpha.get() else "without transparency"
+            video_info = ""
+            if self.export_cropped_video.get():
+                video_info = f" and as video ({self.cropped_video_fps.get()} fps, {self.cropped_video_format.get()})"
+            steps_selected.append(f"- Export cropped areas only {export_type}{video_info}")
+
+
         # Check if only mask expansion is selected
         if len(steps_selected) == 1 and self.expand_masks.get():
             confirmation_message = f"You are running Mask Expansion as a standalone process.\n\n"
@@ -556,7 +575,7 @@ class MainWindow:
             crop_reinserter = CropReinserter(self)
             mask_expander = MaskExpander(self)
             enhanced_crop_reinserter = EnhancedCropReinserter(self)
-
+            crop_exporter = CropExporter(self)
 
             # Define pipeline steps in order
             pipeline_steps = []
@@ -585,6 +604,8 @@ class MainWindow:
                 else:
                     print("Using original reinserter")
                     success = crop_reinserter.reinsert_crops(current_input, self.output_dir.get())
+            if self.export_cropped_only.get():
+                pipeline_steps.append(("export_cropped_only", crop_exporter.export_cropped_areas))
 
 
 
@@ -602,7 +623,8 @@ class MainWindow:
                 "resized": os.path.join(self.output_dir.get(), "resized"),
                 "organized": os.path.join(self.output_dir.get(), "organized"),
                 "videos": os.path.join(self.output_dir.get(), "videos"),
-                "reinserted": os.path.join(self.output_dir.get(), "reinserted")
+                "reinserted": os.path.join(self.output_dir.get(), "reinserted"),
+                "cropped_only": os.path.join(self.output_dir.get(), "cropped_only")
             }
             
             # Keep track of which directory to use as input for each step
@@ -645,6 +667,10 @@ class MainWindow:
                             current_input = output_directories["resized"]
                         elif step_name == "organize_files" and os.path.exists(output_directories["organized"]):
                             current_input = output_directories["organized"]
+
+                        elif step_name == "export_cropped_only" and os.path.exists(output_directories["cropped_only"]):
+                            current_input = output_directories["cropped_only"]
+
                                 # Inside the pipeline steps loop
                         elif step_name == "reinsert_crops":
                             # Validate that source directories are set correctly

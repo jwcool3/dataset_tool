@@ -211,6 +211,13 @@ class InputOutputTab:
                     variable=self.parent.debug_mode).grid(
             column=0, row=3, columnspan=2, sticky=tk.W, padx=10, pady=5
         )
+
+
+        ttk.Checkbutton(
+        pipeline_frame, 
+        text="Export cropped areas only (no reinsertion)", 
+        variable=self.parent.export_cropped_only
+    ).grid(column=col, row=row+1, sticky=tk.W, padx=10, pady=5)
         
         # Add hint about standalone processing
         hint_frame = ttk.Frame(self.frame, padding="10")

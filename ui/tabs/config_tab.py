@@ -158,6 +158,7 @@ class ConfigTab:
         self._create_organization_section()
         self._create_video_conversion_section()
         self._create_reinsertion_section()
+        self._create_export_cropped_section()  # Add this line
         self._create_debug_section()
         
         # Initially hide all sections
@@ -197,7 +198,9 @@ class ConfigTab:
             self.parent.convert_to_video.get(): ["video_conversion"],
             
             # Reinsert crops selected
-            self.parent.reinsert_crops_option.get(): ["reinsertion"]
+            self.parent.reinsert_crops_option.get(): ["reinsertion"],
+
+            self.parent.export_cropped_only.get(): ["export_cropped"]
         }
         
         # Populate visible sections based on selected processing steps
@@ -1238,3 +1241,85 @@ class ConfigTab:
                     arrow=tk.LAST, width=2, fill="#0078d7"
                 )
 
+
+
+    # Add this method to ConfigTab class in ui/tabs/config_tab.py
+    def _create_export_cropped_section(self):
+        """Create settings section for exporting cropped areas."""
+        content = self._create_section("Export Cropped Areas", "export_cropped")
+        
+        # Basic options
+        options_frame = ttk.Frame(content)
+        options_frame.pack(fill=tk.X, pady=5)
+        
+        # Add transparency option
+        ttk.Checkbutton(
+            options_frame,
+            text="Export with transparency (PNG)",
+            variable=self.parent.export_with_alpha
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Video export option
+        video_frame = ttk.LabelFrame(content, text="Video Export", padding=5)
+        video_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        ttk.Checkbutton(
+            video_frame,
+            text="Export cropped areas as video",
+            variable=self.parent.export_cropped_video,
+            command=self._toggle_video_export_controls
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # FPS setting
+        fps_frame = ttk.Frame(video_frame)
+        fps_frame.pack(fill=tk.X, pady=5, padx=20)
+        
+        ttk.Label(fps_frame, text="Video FPS:").pack(side=tk.LEFT, padx=5)
+        self.cropped_fps_spinbox = ttk.Spinbox(
+            fps_frame,
+            from_=1,
+            to=60,
+            increment=1,
+            textvariable=self.parent.cropped_video_fps,
+            width=5
+        )
+        self.cropped_fps_spinbox.pack(side=tk.LEFT, padx=5)
+        
+        # Video format
+        format_frame = ttk.Frame(video_frame)
+        format_frame.pack(fill=tk.X, pady=5, padx=20)
+        
+        ttk.Label(format_frame, text="Video Format:").pack(side=tk.LEFT, padx=5)
+        self.video_format_combo = ttk.Combobox(
+            format_frame,
+            textvariable=self.parent.cropped_video_format,
+            values=["mp4", "avi", "mov"],
+            width=5,
+            state="readonly"
+        )
+        self.video_format_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Add explanation text
+        explanation_frame = ttk.Frame(content, padding=5, relief="groove")
+        explanation_frame.pack(fill=tk.X, pady=5)
+        
+        explanation_text = (
+            "This will export only the cropped mask regions without reinserting them. "
+            "Useful for creating alpha matte videos or extracting specific areas of interest. "
+            "Images can be saved with transparency or as a video file."
+        )
+        ttk.Label(
+            explanation_frame,
+            text=explanation_text,
+            wraplength=600
+        ).pack(padx=5, pady=5)
+
+    def _toggle_video_export_controls(self):
+        """Enable or disable video export controls based on checkbox state."""
+        if hasattr(self, 'cropped_fps_spinbox') and hasattr(self, 'video_format_combo'):
+            if self.parent.export_cropped_video.get():
+                self.cropped_fps_spinbox.configure(state="normal")
+                self.video_format_combo.configure(state="readonly")
+            else:
+                self.cropped_fps_spinbox.configure(state="disabled")
+                self.video_format_combo.configure(state="disabled")
