@@ -456,10 +456,10 @@ class MainWindow:
         
         # Check if any processing steps are selected - INCLUDE expand_masks
         if not any([self.extract_frames.get(), self.crop_mask_regions.get(), 
-                self.expand_masks.get(),  # Make sure this line is included
-                self.square_pad_images.get(), self.resize_images.get(), 
-                self.organize_files.get(), self.convert_to_video.get(),
-                self.reinsert_crops_option.get()]):
+                    self.expand_masks.get(), self.square_pad_images.get(), 
+                    self.resize_images.get(), self.organize_files.get(), 
+                    self.convert_to_video.get(), self.reinsert_crops_option.get(),
+                    self.export_cropped_only.get()]):  # Add this line
             messagebox.showerror("Error", "Please select at least one processing step.")
             return
         
