@@ -822,7 +822,29 @@ class ConfigTab:
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
 
+        # Rotation control
+        rotation_frame = ttk.Frame(self.advanced_frame)
+        rotation_frame.pack(fill=tk.X, pady=5)
 
+        ttk.Label(rotation_frame, text="Rotation:").pack(side=tk.LEFT, padx=5)
+        rotation_spinner = ttk.Spinbox(
+            rotation_frame,
+            from_=-45,
+            to=45,
+            increment=1,
+            width=5,
+            textvariable=self.parent.reinsert_manual_rotation
+        )
+        rotation_spinner.pack(side=tk.LEFT, padx=2)
+        ttk.Label(rotation_frame, text="degrees").pack(side=tk.LEFT, padx=2)
+
+        # Add a tip about rotation
+        ttk.Label(
+            rotation_frame, 
+            text="(positive = clockwise, negative = counter-clockwise)",
+            font=("Helvetica", 8),
+            foreground="gray"
+        ).pack(side=tk.LEFT, padx=5)
         # Create a separator
         ttk.Separator(self.advanced_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 

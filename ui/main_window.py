@@ -156,7 +156,8 @@ class MainWindow:
         self.cropped_video_format = tk.StringVar(value="mp4")
         self.export_with_alpha = tk.BooleanVar(value=True)  # Export with transparency
 
-
+        # Add this to MainWindow._init_variables method:
+        self.reinsert_manual_rotation = tk.DoubleVar(value=0.0)
 
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)

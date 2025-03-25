@@ -417,15 +417,25 @@ class EnhancedCropReinserter:
         # Use landmark-based alignment if selected and landmarks are available
         if self.app.reinsert_alignment_method.get() == "landmarks":
             if hasattr(self, 'face_detector') and self.face_detector is not None and \
-               hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
+            hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
+                
+                # Get landmarks for both images
                 source_landmarks = self._get_landmarks(source_img)
                 processed_landmarks = self._get_landmarks(processed_img_resized)
                 
                 if source_landmarks is not None and processed_landmarks is not None:
+                    print("Using improved landmark-based alignment for reinsertion")
+                    
+                    # Use the improved landmark alignment method
                     aligned_mask, aligned_img = self._align_with_landmarks(
                         source_img, processed_img_resized, source_mask, mask_resized, 
                         source_landmarks, processed_landmarks, debug_dir
                     )
+                    
+                    # Save additional debug visualization
+                    if debug_dir:
+                        landmark_debug = np.hstack((source_img, processed_img_resized, aligned_img))
+                        cv2.imwrite(os.path.join(debug_dir, "landmark_alignment_process.png"), landmark_debug)
                 else:
                     print("Could not detect landmarks in one or both images, falling back to default alignment")
                     # Use existing alignment method...
@@ -940,15 +950,114 @@ class EnhancedCropReinserter:
         return extended_mask
     
 
-    def _align_with_landmarks(self, source_img, processed_img, source_mask, processed_mask, 
-                            source_landmarks, processed_landmarks, debug_dir=None):
+    def _improve_landmark_alignment(self, source_landmarks, processed_landmarks):
         """
-        Align processed hair mask and image based on facial landmarks from both images.
+        Calculate a more robust transformation matrix based on facial landmarks
+        to handle face rotation and position changes.
+        
+        Args:
+            source_landmarks: List of (x, y) landmarks from the source image
+            processed_landmarks: List of (x, y) landmarks from the processed image
+            
+        Returns:
+            tuple: (transformation_matrix, success_flag)
+        """
+        import numpy as np
+        import cv2
+        
+        # Validate input landmarks
+        if not source_landmarks or not processed_landmarks:
+            print("Error: Missing landmarks for alignment")
+            return None, False
+        
+        try:
+            # Convert landmarks to numpy arrays if they aren't already
+            source_points = np.array(source_landmarks)
+            processed_points = np.array(processed_landmarks)
+            
+            # Select key landmark points that are robust for alignment
+            # These points cover the face contour, eyes, nose, and mouth
+            key_indices = [
+                0, 8, 16,           # Jaw line (chin and sides)
+                19, 24,             # Eyebrows
+                27, 30, 33,         # Nose
+                36, 39, 42, 45,     # Eyes
+                48, 54              # Mouth
+            ]
+            
+            # Extract the selected landmarks
+            source_key_points = np.array([source_landmarks[i] for i in key_indices], dtype=np.float32)
+            processed_key_points = np.array([processed_landmarks[i] for i in key_indices], dtype=np.float32)
+            
+            # Estimate an affine transformation that allows for rotation, scaling, and translation
+            # Use RANSAC for robustness against outliers
+            transformation_matrix, inliers = cv2.estimateAffinePartial2D(
+                processed_key_points, source_key_points, 
+                method=cv2.RANSAC, 
+                ransacReprojThreshold=3.0,  # Maximum allowed reprojection error
+                confidence=0.99,            # Confidence level
+                maxIters=2000               # Maximum iterations
+            )
+            
+            # Check if we got a valid transformation
+            if transformation_matrix is None or inliers is None or np.sum(inliers) < 4:
+                print("Warning: Could not estimate a good transformation matrix, falling back to simpler alignment")
+                return None, False
+            
+            # Debug info about the transformation
+            print(f"Estimated transformation matrix with {np.sum(inliers)} inliers out of {len(key_indices)} points")
+            print(f"Transformation matrix:\n{transformation_matrix}")
+            
+            # Decompose the matrix to understand the transformation better
+            scale_x = np.sqrt(transformation_matrix[0, 0]**2 + transformation_matrix[0, 1]**2)
+            scale_y = np.sqrt(transformation_matrix[1, 0]**2 + transformation_matrix[1, 1]**2)
+            theta = np.arctan2(transformation_matrix[0, 1], transformation_matrix[0, 0]) * 180 / np.pi
+            tx, ty = transformation_matrix[0, 2], transformation_matrix[1, 2]
+            
+            print(f"Translation: ({tx:.2f}, {ty:.2f}), Rotation: {theta:.2f}°, Scale: ({scale_x:.2f}, {scale_y:.2f})")
+            
+            # If the transformation seems too extreme, limit it
+            max_scale = 1.5
+            min_scale = 0.5
+            max_rotation = 30.0  # degrees
+            
+            if (scale_x > max_scale or scale_y > max_scale or 
+                scale_x < min_scale or scale_y < min_scale or 
+                abs(theta) > max_rotation):
+                
+                print("Warning: Limiting extreme transformation values")
+                
+                # Limit scaling
+                scale_x = np.clip(scale_x, min_scale, max_scale)
+                scale_y = np.clip(scale_y, min_scale, max_scale)
+                
+                # Limit rotation
+                theta = np.clip(theta, -max_rotation, max_rotation)
+                theta_rad = theta * np.pi / 180.0
+                
+                # Reconstruct the rotation/scaling part of the matrix
+                transformation_matrix[0, 0] = scale_x * np.cos(theta_rad)
+                transformation_matrix[0, 1] = scale_x * np.sin(theta_rad)
+                transformation_matrix[1, 0] = -scale_y * np.sin(theta_rad)
+                transformation_matrix[1, 1] = scale_y * np.cos(theta_rad)
+            
+            return transformation_matrix, True
+            
+        except Exception as e:
+            print(f"Error in landmark alignment: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None, False
+
+    def _apply_landmark_transform(self, source_img, processed_img, source_mask, processed_mask, 
+                                source_landmarks, processed_landmarks, debug_dir=None):
+        """
+        Apply improved landmark-based alignment to align processed image and mask with source.
         
         Args:
             source_img: Original source image
-            processed_img: Processed image with hair to insert
-            source_mask: Mask for source image
+            processed_img: Processed image to align
+            source_mask: Mask for source image (or None)
             processed_mask: Mask for processed image
             source_landmarks: Pre-computed landmarks for source image
             processed_landmarks: Pre-computed landmarks for processed image
@@ -957,67 +1066,98 @@ class EnhancedCropReinserter:
         Returns:
             tuple: (aligned_mask, aligned_image)
         """
-        # Convert landmarks to numpy arrays
-        source_points = np.array(source_landmarks)
-        processed_points = np.array(processed_landmarks)
-
-        if source_landmarks is None or processed_landmarks is None:
-            print("Could not detect landmarks in one or both images")
+        import numpy as np
+        import cv2
+        import os
+        
+        h, w = source_img.shape[:2]
+        
+        # Get the transformation matrix using improved landmark alignment
+        transform_matrix, success = self._improve_landmark_alignment(source_landmarks, processed_landmarks)
+        
+        if not success or transform_matrix is None:
+            print("Could not calculate transformation matrix. Falling back to default alignment.")
+            # Return the unmodified inputs as fallback
             return processed_mask, processed_img
         
-        # Convert landmarks to numpy arrays
-        source_points = np.array(source_landmarks)
-        processed_points = np.array(processed_landmarks)
+        # Apply the transformation to the processed image and mask
+        aligned_img = cv2.warpAffine(
+            processed_img, transform_matrix, (w, h), 
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+        )
         
-        # Get facial measurements for scaling
-        # We'll use a subset of landmarks that define the face shape
-        # Typically points: 0-16 (jaw line), 17-26 (eyebrows), 27-35 (nose), 36-47 (eyes), 48-67 (mouth)
-        face_shape_indices = list(range(17))  # Jaw line and forehead
+        aligned_mask = cv2.warpAffine(
+            processed_mask, transform_matrix, (w, h), 
+            flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+        )
         
-        source_face_points = source_points[face_shape_indices]
-        processed_face_points = processed_points[face_shape_indices]
+        # Apply manual offsets if specified
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
         
-        # Calculate face width and height ratios
-        source_width = np.max(source_face_points[:, 0]) - np.min(source_face_points[:, 0])
-        source_height = np.max(source_face_points[:, 1]) - np.min(source_face_points[:, 1])
+        if manual_offset_x != 0 or manual_offset_y != 0:
+            print(f"Applying manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+            offset_matrix = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+            
+            aligned_img = cv2.warpAffine(
+                aligned_img, offset_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, offset_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
         
-        processed_width = np.max(processed_face_points[:, 0]) - np.min(processed_face_points[:, 0])
-        processed_height = np.max(processed_face_points[:, 1]) - np.min(processed_face_points[:, 1])
+        # Apply manual scaling if specified
+        scale_x = self.app.reinsert_manual_scale_x.get()
+        scale_y = self.app.reinsert_manual_scale_y.get()
         
-        # Calculate scaling factors
-        scale_x = source_width / processed_width if processed_width > 0 else 1.0
-        scale_y = source_height / processed_height if processed_height > 0 else 1.0
+        if scale_x != 1.0 or scale_y != 1.0:
+            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
+            
+            # Calculate center for scaling
+            center_x = w // 2
+            center_y = h // 2
+            
+            # Create transformation matrix for scaling around the center
+            scale_matrix = np.float32([
+                [scale_x, 0, center_x * (1 - scale_x)],
+                [0, scale_y, center_y * (1 - scale_y)]
+            ])
+            
+            aligned_img = cv2.warpAffine(
+                aligned_img, scale_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, scale_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
         
-        # Calculate face centers
-        source_center = np.mean(source_face_points, axis=0)
-        processed_center = np.mean(processed_face_points, axis=0)
-        
-        # Create transformation matrix for scaling around center and translation
-        # First scale, then translate
-        scale_matrix = np.array([
-            [scale_x, 0, processed_center[0] * (1 - scale_x)],
-            [0, scale_y, processed_center[1] * (1 - scale_y)]
-        ], dtype=np.float32)
-        
-        # Calculate translation to align face centers
-        tx = source_center[0] - processed_center[0] * scale_x
-        ty = source_center[1] - processed_center[1] * scale_y
-        
-        translation_matrix = np.array([
-            [1, 0, tx],
-            [0, 1, ty]
-        ], dtype=np.float32)
-        
-        # Combine transformations
-        M = translation_matrix.copy()
-        M[:, 2] += scale_matrix[:, 2]
-        M[0, 0] = scale_matrix[0, 0]
-        M[1, 1] = scale_matrix[1, 1]
-        
-        # Apply transformation
-        h, w = processed_img.shape[:2]
-        aligned_img = cv2.warpAffine(processed_img, M, (w, h), flags=cv2.INTER_LANCZOS4)
-        aligned_mask = cv2.warpAffine(processed_mask, M, (w, h), flags=cv2.INTER_NEAREST)
+        # Apply manual rotation if specified
+        rotation_angle = self.app.reinsert_manual_rotation.get()
+        if rotation_angle != 0:
+            print(f"Applying manual rotation: {rotation_angle} degrees")
+            
+            # Calculate center of rotation
+            center_x = w // 2
+            center_y = h // 2
+            
+            # Get rotation matrix
+            rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), -rotation_angle, 1.0)
+            
+            # Apply rotation
+            aligned_img = cv2.warpAffine(
+                aligned_img, rotation_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, rotation_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
         
         # Save debug visualization
         if debug_dir:
@@ -1027,19 +1167,204 @@ class EnhancedCropReinserter:
             aligned_vis = aligned_img.copy()
             
             # Draw source landmarks
-            for (x, y) in source_points:
+            for i, (x, y) in enumerate(source_landmarks):
                 cv2.circle(source_vis, (int(x), int(y)), 2, (0, 255, 0), -1)
-                
+                if i in [0, 8, 16, 27, 30, 36, 39, 42, 45, 48, 54]:  # Key points
+                    cv2.circle(source_vis, (int(x), int(y)), 4, (255, 0, 0), -1)
+                    
+                    
             # Draw processed landmarks
-            for (x, y) in processed_points:
+            for i, (x, y) in enumerate(processed_landmarks):
                 cv2.circle(processed_vis, (int(x), int(y)), 2, (0, 0, 255), -1)
+                if i in [0, 8, 16, 27, 30, 36, 39, 42, 45, 48, 54]:  # Key points
+                    cv2.circle(processed_vis, (int(x), int(y)), 4, (255, 0, 0), -1)
             
             # Create visualization of the alignment
             combined = np.hstack((source_vis, processed_vis, aligned_vis))
-            cv2.imwrite(os.path.join(debug_dir, "landmark_alignment.png"), combined)
+            cv2.imwrite(os.path.join(debug_dir, "improved_landmark_alignment.png"), combined)
             
             # Save the aligned mask
-            cv2.imwrite(os.path.join(debug_dir, "aligned_mask_landmarks.png"), aligned_mask)
+            cv2.imwrite(os.path.join(debug_dir, "aligned_mask_improved_landmarks.png"), aligned_mask)
+            
+            # Overlay visualization showing source and aligned masks
+            mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
+            if source_mask is not None:
+                mask_overlay[source_mask > 127] = [0, 0, 255]  # Source mask in red
+            mask_overlay[aligned_mask > 127] = [0, 255, 0]    # Aligned mask in green
+            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_comparison.png"), mask_overlay)
+        
+        return aligned_mask, aligned_img
+
+
+    def _align_with_landmarks(self, source_img, processed_img, source_mask, processed_mask, 
+                                source_landmarks, processed_landmarks, debug_dir=None):
+        """
+        Align processed hair mask and image based on facial landmarks from both images.
+        Uses improved transformation calculation to handle face rotations better.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image with hair to insert
+            source_mask: Mask for source image
+            processed_mask: Mask for processed image
+            source_landmarks: Pre-computed landmarks for source image
+            processed_landmarks: Pre-computed landmarks for processed image
+            debug_dir: Directory to save debug visualizations
+                
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        if source_landmarks is None or processed_landmarks is None:
+            print("Could not detect landmarks in one or both images")
+            return processed_mask, processed_img
+        
+        # Calculate improved transformation matrix
+        transformation_matrix, success = self._improve_landmark_alignment(
+            source_landmarks, processed_landmarks
+        )
+        
+        if not success or transformation_matrix is None:
+            print("Could not calculate transformation matrix, falling back to basic alignment")
+            # Do basic alignment by matching certain points
+            
+            # Convert landmarks to numpy arrays
+            source_points = np.array(source_landmarks)
+            processed_points = np.array(processed_landmarks)
+            
+            # Get facial measurements for scaling
+            # Typically points: 0-16 (jaw line), 17-26 (eyebrows), 27-35 (nose), 36-47 (eyes), 48-67 (mouth)
+            face_shape_indices = list(range(17))  # Jaw line and forehead
+            
+            source_face_points = source_points[face_shape_indices]
+            processed_face_points = processed_points[face_shape_indices]
+            
+            # Calculate face width and height ratios
+            source_width = np.max(source_face_points[:, 0]) - np.min(source_face_points[:, 0])
+            source_height = np.max(source_face_points[:, 1]) - np.min(source_face_points[:, 1])
+            
+            processed_width = np.max(processed_face_points[:, 0]) - np.min(processed_face_points[:, 0])
+            processed_height = np.max(processed_face_points[:, 1]) - np.min(processed_face_points[:, 1])
+            
+            # Calculate scaling factors
+            scale_x = source_width / processed_width if processed_width > 0 else 1.0
+            scale_y = source_height / processed_height if processed_height > 0 else 1.0
+            
+            # Calculate face centers
+            source_center = np.mean(source_face_points, axis=0)
+            processed_center = np.mean(processed_face_points, axis=0)
+            
+            # Create transformation matrix for scaling around center and translation
+            M = np.array([
+                [scale_x, 0, source_center[0] - processed_center[0] * scale_x],
+                [0, scale_y, source_center[1] - processed_center[1] * scale_y]
+            ], dtype=np.float32)
+            
+            transformation_matrix = M
+        
+        # Apply the transformation to align the processed image and mask
+        h, w = processed_img.shape[:2]
+        
+        # Apply transformation
+        aligned_img = cv2.warpAffine(
+            processed_img, transformation_matrix, (w, h), 
+            flags=cv2.INTER_LANCZOS4,
+            borderMode=cv2.BORDER_REPLICATE
+        )
+        
+        aligned_mask = cv2.warpAffine(
+            processed_mask, transformation_matrix, (w, h), 
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_REPLICATE
+        )
+        
+        # Handle manual offsets after the transformation
+        if hasattr(self.app, 'reinsert_manual_offset_x') and hasattr(self.app, 'reinsert_manual_offset_y'):
+            manual_offset_x = self.app.reinsert_manual_offset_x.get()
+            manual_offset_y = self.app.reinsert_manual_offset_y.get()
+            
+            if manual_offset_x != 0 or manual_offset_y != 0:
+                print(f"Applying additional manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+                
+                # Create transformation matrix for the offset
+                M_offset = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+                
+                # Apply to aligned image and mask
+                aligned_img = cv2.warpAffine(aligned_img, M_offset, (w, h), 
+                                        flags=cv2.INTER_LANCZOS4,
+                                        borderMode=cv2.BORDER_REPLICATE)
+                
+                aligned_mask = cv2.warpAffine(aligned_mask, M_offset, (w, h), 
+                                        flags=cv2.INTER_NEAREST,
+                                        borderMode=cv2.BORDER_REPLICATE)
+        
+        # Save debug visualization
+        if debug_dir:
+            # Draw landmarks on images
+            source_vis = source_img.copy()
+            processed_vis = processed_img.copy()
+            aligned_vis = aligned_img.copy()
+            
+            # Draw source landmarks
+            for i, (x, y) in enumerate(source_landmarks):
+                cv2.circle(source_vis, (int(x), int(y)), 2, (0, 255, 0), -1)
+                # Add landmark number every 5 points for reference
+                if i % 5 == 0:
+                    cv2.putText(source_vis, str(i), (int(x)+3, int(y)+3), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 0), 1)
+                    
+            # Draw processed landmarks
+            for i, (x, y) in enumerate(processed_landmarks):
+                cv2.circle(processed_vis, (int(x), int(y)), 2, (0, 0, 255), -1)
+                if i % 5 == 0:
+                    cv2.putText(processed_vis, str(i), (int(x)+3, int(y)+3), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 0, 255), 1)
+            
+            # Create visualization of the alignment
+            # Create a row for original images
+            top_row = np.hstack((source_vis, processed_vis))
+            
+            # Create a row for transformation visualization
+            # Apply the transformation to a grid image to visualize deformation
+            grid_img = np.zeros((h, w, 3), dtype=np.uint8)
+            grid_size = 20
+            for i in range(0, h, grid_size):
+                cv2.line(grid_img, (0, i), (w, i), (64, 64, 64), 1)
+            for i in range(0, w, grid_size):
+                cv2.line(grid_img, (i, 0), (i, h), (64, 64, 64), 1)
+            
+            # Add some key points to the grid for better visualization
+            for i in range(0, h, grid_size*5):
+                for j in range(0, w, grid_size*5):
+                    cv2.circle(grid_img, (j, i), 3, (0, 255, 255), -1)
+            
+            # Transform the grid
+            transformed_grid = cv2.warpAffine(
+                grid_img, transformation_matrix, (w, h),
+                flags=cv2.INTER_LINEAR
+            )
+            
+            # Create second row with transformed grid and aligned image
+            bottom_row = np.hstack((transformed_grid, aligned_vis))
+            
+            # Stack the rows
+            combined = np.vstack((top_row, bottom_row))
+            cv2.imwrite(os.path.join(debug_dir, "improved_landmark_alignment.png"), combined)
+            
+            # Save the aligned mask
+            cv2.imwrite(os.path.join(debug_dir, "aligned_mask_improved.png"), aligned_mask)
+            
+            # Create a more detailed comparison
+            # Create a 3-channel mask visualization
+            source_mask_vis = cv2.cvtColor(source_mask, cv2.COLOR_GRAY2BGR) if len(source_mask.shape) == 2 else source_mask.copy()
+            aligned_mask_vis = cv2.cvtColor(aligned_mask, cv2.COLOR_GRAY2BGR) if len(aligned_mask.shape) == 2 else aligned_mask.copy()
+            
+            # Overlay masks on images
+            source_overlay = cv2.addWeighted(source_img, 0.7, source_mask_vis, 0.3, 0)
+            aligned_overlay = cv2.addWeighted(source_img, 0.7, aligned_mask_vis, 0.3, 0)
+            
+            # Save comparison
+            mask_comparison = np.hstack((source_overlay, aligned_overlay))
+            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_comparison.png"), mask_comparison)
         
         return aligned_mask, aligned_img
 
