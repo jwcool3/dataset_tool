@@ -159,6 +159,9 @@ class MainWindow:
         # Add this to MainWindow._init_variables method:
         self.reinsert_manual_rotation = tk.DoubleVar(value=0.0)
 
+        self.use_translation_only = tk.BooleanVar(value=True)  # Default to translation-only
+
+
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
         self.mask_expand_kernel_size = tk.IntVar(value=3)

@@ -822,6 +822,39 @@ class ConfigTab:
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
 
+
+        transform_frame = ttk.Frame(self.advanced_frame)
+        transform_frame.pack(fill=tk.X, pady=5)
+
+
+        ttk.Label(transform_frame, text="Transform Type:").pack(side=tk.LEFT, padx=5)
+
+        ttk.Radiobutton(
+            transform_frame,
+            text="Translation Only (preserve orientation)",
+            variable=self.parent.use_translation_only,
+            value=True
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Radiobutton(
+            transform_frame,
+            text="Full Transform (with rotation)",
+            variable=self.parent.use_translation_only,
+            value=False
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Add a help label
+        transform_help_frame = ttk.Frame(self.advanced_frame)
+        transform_help_frame.pack(fill=tk.X, pady=5, padx=20)
+
+        ttk.Label(
+            transform_help_frame,
+            text="• Translation Only: Keeps hair at original angle but adjusts position\n• Full Transform: Rotates hair to match face orientation",
+            foreground="gray",
+            wraplength=400,
+            justify="left"
+        ).pack(anchor=tk.W)
+
         # Rotation control
         rotation_frame = ttk.Frame(self.advanced_frame)
         rotation_frame.pack(fill=tk.X, pady=5)
