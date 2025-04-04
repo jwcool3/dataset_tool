@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import messagebox
 import sys
 import traceback
+import customtkinter as ctk
 
 def check_dependencies():
     """Check if all required packages are installed."""

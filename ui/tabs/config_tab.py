@@ -1,6 +1,7 @@
 import tkinter as tk
-import customtkinter as ctk
+from ui.compatibility import ctk, get_widget
 from tkinter import filedialog
+
 
 class ConfigTab:
     """Tab for configuring processing options with dynamic UI based on selected processing steps."""
@@ -302,8 +303,9 @@ class ConfigTab:
     
     def _create_section(self, title, section_id, default_expanded=True):
         """Create a section with toggle capability and store it."""
-        # Create a labeled frame for the section
-        section_frame = ctk.CTkLabel(self.content_frame, text=title, padding=10)
+        # Create a labeled frame for the section - use CTkFrame instead of CTkLabel
+        section_frame = ctk.CTkFrame(self.content_frame)
+        section_frame.pack(fill=tk.X, padx=10, pady=10)  # Apply padding here
         
         # Create a variable to track expanded/collapsed state
         expanded = tk.BooleanVar(value=default_expanded)
@@ -352,7 +354,7 @@ class ConfigTab:
         padding_frame.pack(fill=tk.X, pady=5)
         
         ctk.CTkLabel(padding_frame, text="Mask padding (%):").pack(side=tk.LEFT, padx=5)
-        ctk.CTkSpinbox(
+        tk.Spinbox(
             padding_frame,
             from_=0,
             to=100,
@@ -378,7 +380,7 @@ class ConfigTab:
         width_frame = ctk.CTkFrame(resolution_frame)
         width_frame.pack(side=tk.LEFT, padx=5)
         
-        self.width_spinbox = ctk.CTkSpinbox(
+        self.width_spinbox = tk.Spinbox(
             width_frame,
             from_=64,
             to=2048,
@@ -390,7 +392,7 @@ class ConfigTab:
         
         ctk.CTkLabel(width_frame, text="x").pack(side=tk.LEFT, padx=2)
         
-        self.height_spinbox = ctk.CTkSpinbox(
+        self.height_spinbox = tk.Spinbox(
             width_frame,
             from_=64,
             to=2048,
@@ -409,7 +411,7 @@ class ConfigTab:
         frame_rate_frame.pack(fill=tk.X, pady=5)
         
         ctk.CTkLabel(frame_rate_frame, text="Frame extraction rate (fps):").pack(side=tk.LEFT, padx=5)
-        ctk.CTkSpinbox(
+        tk.Spinbox(
             frame_rate_frame,
             from_=0.1,
             to=30.0,
@@ -478,7 +480,7 @@ class ConfigTab:
         iterations_frame.pack(fill=tk.X, pady=5)
         
         ctk.CTkLabel(iterations_frame, text="Dilation Iterations:").pack(side=tk.LEFT, padx=5)
-        ctk.CTkSpinbox(
+        tk.Spinbox(
             iterations_frame,
             from_=1,
             to=50,
@@ -492,7 +494,7 @@ class ConfigTab:
         kernel_frame.pack(fill=tk.X, pady=5)
         
         ctk.CTkLabel(kernel_frame, text="Kernel Size:").pack(side=tk.LEFT, padx=5)
-        ctk.CTkSpinbox(
+        tk.Spinbox(
             kernel_frame,
             from_=3,
             to=21,
@@ -532,7 +534,7 @@ class ConfigTab:
         resize_frame.pack(fill=tk.X, pady=5, padx=20)
         
         ctk.CTkLabel(resize_frame, text="Max Width:").pack(side=tk.LEFT)
-        self.max_width_spinbox = ctk.CTkSpinbox(
+        self.max_width_spinbox = tk.Spinbox(
             resize_frame,
             from_=64,
             to=4096,
@@ -543,7 +545,7 @@ class ConfigTab:
         self.max_width_spinbox.pack(side=tk.LEFT, padx=2)
         
         ctk.CTkLabel(resize_frame, text="Max Height:").pack(side=tk.LEFT, padx=5)
-        self.max_height_spinbox = ctk.CTkSpinbox(
+        self.max_height_spinbox = tk.Spinbox(
             resize_frame,
             from_=64,
             to=4096,
@@ -583,7 +585,7 @@ class ConfigTab:
         target_frame.pack(fill=tk.X, pady=5)
         
         ctk.CTkLabel(target_frame, text="Target Size:").pack(side=tk.LEFT, padx=5)
-        self.square_target_spinbox = ctk.CTkSpinbox(
+        self.square_target_spinbox = tk.Spinbox(
             target_frame,
             from_=64,
             to=2048,
@@ -623,7 +625,7 @@ class ConfigTab:
         fps_frame.pack(fill=tk.X, pady=5)
         
         ctk.CTkLabel(fps_frame, text="Video output FPS:").pack(side=tk.LEFT, padx=5)
-        ctk.CTkSpinbox(
+        tk.Spinbox(
             fps_frame,
             from_=1,
             to=60,
@@ -745,221 +747,6 @@ class ConfigTab:
         extent_frame = ctk.CTkFrame(self.advanced_frame)
         extent_frame.pack(fill=tk.X, pady=5)
         
-
-        # Add to the advanced frame in ConfigTab._create_reinsertion_section
-        ctk.CTkCheckbutton(
-            self.advanced_frame,
-            text="Preserve hair parting (experimental)",
-            variable=self.parent.preserve_hair_parting
-        ).pack(anchor=tk.W, padx=5, pady=5)
-
-        # And initialize the variable in MainWindow._init_variables
-        self.preserve_hair_parting = tk.BooleanVar(value=False)
-
-
-        # Manual offset controls
-        offset_frame = ctk.CTkFrame(self.advanced_frame)
-        offset_frame.pack(fill=tk.X, pady=5)
-
-        ctk.CTkLabel(offset_frame, text="Manual Offset:").pack(side=tk.LEFT, padx=5)
-
-        # Horizontal offset
-        ctk.CTkLabel(offset_frame, text="X:").pack(side=tk.LEFT, padx=2)
-        x_spinner = ctk.CTkSpinbox(
-            offset_frame,
-            from_=-100,
-            to=100,
-            increment=1,
-            width=5,
-            textvariable=self.parent.reinsert_manual_offset_x
-        )
-        x_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Vertical offset
-        ctk.CTkLabel(offset_frame, text="Y:").pack(side=tk.LEFT, padx=5)
-        y_spinner = ctk.CTkSpinbox(
-            offset_frame,
-            from_=-100,
-            to=100,
-            increment=1,
-            width=5,
-            textvariable=self.parent.reinsert_manual_offset_y
-        )
-        y_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Add a tip about negative Y values raising the hair
-        ctk.CTkLabel(
-            offset_frame, 
-            text="(negative Y values raise the hair)",
-            font=ctk.CTkFont(size=8),
-            foreground="gray"
-        ).pack(side=tk.LEFT, padx=5)
-
-        # Scale controls
-        scale_frame = ctk.CTkFrame(self.advanced_frame)
-        scale_frame.pack(fill=tk.X, pady=5)
-
-        ctk.CTkLabel(scale_frame, text="Scale Factor:").pack(side=tk.LEFT, padx=5)
-
-        # Horizontal scale
-        ctk.CTkLabel(scale_frame, text="X:").pack(side=tk.LEFT, padx=2)
-        x_scale_spinner = ctk.CTkSpinbox(
-            scale_frame,
-            from_=0.5,
-            to=2.0,
-            increment=0.05,
-            width=5,
-            textvariable=self.parent.reinsert_manual_scale_x
-        )
-        x_scale_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Vertical scale
-        ctk.CTkLabel(scale_frame, text="Y:").pack(side=tk.LEFT, padx=5)
-        y_scale_spinner = ctk.CTkSpinbox(
-            scale_frame,
-            from_=0.5,
-            to=2.0,
-            increment=0.05,
-            width=5,
-            textvariable=self.parent.reinsert_manual_scale_y
-        )
-        y_scale_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Add a tip about scaling
-        ctk.CTkLabel(
-            scale_frame, 
-            text="(values > 1 enlarge, < 1 shrink)",
-            font=ctk.CTkFont(size=8),
-            foreground="gray"
-        ).pack(side=tk.LEFT, padx=5)
-
-
-        transform_frame = ctk.CTkFrame(self.advanced_frame)
-        transform_frame.pack(fill=tk.X, pady=5)
-
-
-        ctk.CTkLabel(transform_frame, text="Transform Type:").pack(side=tk.LEFT, padx=5)
-
-        ctk.CTkRadiobutton(
-            transform_frame,
-            text="Translation Only (preserve orientation)",
-            variable=self.parent.use_translation_only,
-            value=True
-        ).pack(side=tk.LEFT, padx=5)
-
-        ctk.CTkRadiobutton(
-            transform_frame,
-            text="Full Transform (with rotation)",
-            variable=self.parent.use_translation_only,
-            value=False
-        ).pack(side=tk.LEFT, padx=5)
-
-        # Add a help label
-        transform_help_frame = ctk.CTkFrame(self.advanced_frame)
-        transform_help_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ctk.CTkLabel(
-            transform_help_frame,
-            text="• Translation Only: Keeps hair at original angle but adjusts position\n• Full Transform: Rotates hair to match face orientation",
-            foreground="gray",
-            wraplength=400,
-            justify="left"
-        ).pack(anchor=tk.W)
-
-        # Rotation control
-        rotation_frame = ctk.CTkFrame(self.advanced_frame)
-        rotation_frame.pack(fill=tk.X, pady=5)
-
-        ctk.CTkLabel(rotation_frame, text="Rotation:").pack(side=tk.LEFT, padx=5)
-        rotation_spinner = ctk.CTkSpinbox(
-            rotation_frame,
-            from_=-45,
-            to=45,
-            increment=1,
-            width=5,
-            textvariable=self.parent.reinsert_manual_rotation
-        )
-        rotation_spinner.pack(side=tk.LEFT, padx=2)
-        ctk.CTkLabel(rotation_frame, text="degrees").pack(side=tk.LEFT, padx=2)
-
-        # Add a tip about rotation
-        ctk.CTkLabel(
-            rotation_frame, 
-            text="(positive = clockwise, negative = counter-clockwise)",
-            font=ctk.CTkFont(size=8),
-            foreground="gray"
-        ).pack(side=tk.LEFT, padx=5)
-        # Create a separator
-        ctk.CTkSeparator(self.advanced_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-
-        # Bangs extension frame
-        bangs_frame = ctk.CTkFrame(self.advanced_frame)
-        bangs_frame.pack(fill=tk.X, pady=5)
-
-        # Checkbox to enable bangs extension
-        ctk.CTkCheckbutton(
-            bangs_frame,
-            text="Extend mask in bangs/forehead area",
-            variable=self.parent.extend_bangs
-        ).pack(anchor=tk.W, padx=5, pady=5)
-
-        # Extension amount
-        extension_frame = ctk.CTkFrame(bangs_frame)
-        extension_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ctk.CTkLabel(extension_frame, text="Extension amount:").pack(side=tk.LEFT, padx=2)
-        ctk.CTkSpinbox(
-            extension_frame,
-            from_=10,
-            to=100,
-            increment=5,
-            width=5,
-            textvariable=self.parent.bangs_extension_amount
-        ).pack(side=tk.LEFT, padx=2)
-        ctk.CTkLabel(extension_frame, text="pixels").pack(side=tk.LEFT, padx=2)
-
-        # Width ratio
-        width_frame = ctk.CTkFrame(bangs_frame)
-        width_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ctk.CTkLabel(width_frame, text="Forehead width:").pack(side=tk.LEFT, padx=2)
-        ctk.CTkSpinbox(
-            width_frame,
-            from_=0.1,
-            to=1.0,
-            increment=0.05,
-            width=5,
-            textvariable=self.parent.bangs_width_ratio
-        ).pack(side=tk.LEFT, padx=2)
-        ctk.CTkLabel(width_frame, text="(ratio of total width)").pack(side=tk.LEFT, padx=2)
-
-
-
-        # Add this to your UI controls for bangs extension
-        opacity_frame = ctk.CTkFrame(bangs_frame)
-        opacity_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ctk.CTkLabel(opacity_frame, text="Minimum opacity:").pack(side=tk.LEFT, padx=2)
-        opacity_slider = ctk.CTkScale(
-            opacity_frame,
-            from_=0.3,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.bangs_min_opacity,  # Add this variable to your _init_variables method
-            length=150
-        )
-        opacity_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        # Label to show value
-        opacity_value_label = ctk.CTkLabel(opacity_frame, text=f"{self.parent.bangs_min_opacity.get():.2f}")
-        opacity_value_label.pack(side=tk.LEFT, padx=5)
-
-        # Update label when slider is moved
-        def update_opacity_label(*args):
-            opacity_value_label.config(text=f"{self.parent.bangs_min_opacity.get():.2f}")
-
-        self.parent.bangs_min_opacity.trace_add("write", update_opacity_label)
-
         ctk.CTkLabel(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
         
         extent_slider = ctk.CTkScale(
@@ -1023,8 +810,6 @@ class ConfigTab:
             else:
                 self.advanced_frame.pack_forget()
 
-
-    
     def _create_debug_section(self):
         """Create debug options section."""
         content = self._create_section("Debug Options", "general_debug", default_expanded=False)
@@ -1307,8 +1092,6 @@ class ConfigTab:
                     arrow=tk.LAST, width=2, fill="#0078d7"
                 )
 
-
-
     # Add this method to ConfigTab class in ui/tabs/config_tab.py
     def _create_export_cropped_section(self):
         """Create settings section for exporting cropped areas."""
@@ -1341,7 +1124,7 @@ class ConfigTab:
         fps_frame.pack(fill=tk.X, pady=5, padx=20)
         
         ctk.CTkLabel(fps_frame, text="Video FPS:").pack(side=tk.LEFT, padx=5)
-        self.cropped_fps_spinbox = ctk.CTkSpinbox(
+        self.cropped_fps_spinbox = tk.Spinbox(
             fps_frame,
             from_=1,
             to=60,
