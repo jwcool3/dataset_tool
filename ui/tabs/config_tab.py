@@ -5,16 +5,28 @@ from tkinter import filedialog
 class ConfigTab:
     """Tab for configuring processing options with dynamic UI based on selected processing steps."""
     
-    def __init__(self, parent):
+    def __init__(self, parent, main_window=None):
         """
         Initialize the configuration tab with adaptive UI.
         
         Args:
-            parent: Parent window containing shared variables and functions
+            parent: Parent frame to contain this tab's content
+            main_window: Reference to the main window (for access to variables and methods)
         """
         # Store the parent reference
-        self.parent = parent
-        self.root = parent.root
+        self.parent_frame = parent
+        
+        # Use provided main_window or try to find it
+        if main_window:
+            self.parent = main_window  # Keep parent for compatibility with existing code
+            self.root = main_window.root
+        elif hasattr(parent, 'master') and hasattr(parent.master, 'master'):
+            self.parent = parent.master.master
+            self.root = self.parent.root
+        else:
+            # Fallback for testing/direct instantiation
+            self.parent = parent
+            self.root = parent.root if hasattr(parent, 'root') else None
         
         # Create the main frame that will be added to the notebook
         self.frame = ctk.CTkFrame(parent)

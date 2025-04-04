@@ -11,18 +11,21 @@ import customtkinter as ctk
 class InputOutputTab:
     """Tab for input/output directory selection and pipeline configuration."""
     
-    def __init__(self, parent):
+    def __init__(self, parent, main_window=None):
         """
         Initialize the input/output tab.
         
         Args:
             parent: Parent frame to contain this tab's content
+            main_window: Reference to the main window (for access to variables and methods)
         """
         # Store the parent frame reference
         self.parent_frame = parent
         
-        # Get reference to the main window (needed for variables and methods)
-        if hasattr(parent, 'master') and hasattr(parent.master, 'master'):
+        # Use provided main_window or try to find it
+        if main_window:
+            self.main_window = main_window
+        elif hasattr(parent, 'master') and hasattr(parent.master, 'master'):
             self.main_window = parent.master.master  # tab_content_frame -> notebook_frame -> MainWindow
         else:
             # Fallback for testing/direct instantiation

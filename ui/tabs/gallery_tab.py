@@ -14,15 +14,28 @@ from ui.comparison_dialog import ComparisonDialog
 class GalleryTab:
     """Tab for viewing and comparing multiple versions of the same image."""
     
-    def __init__(self, parent):
+    def __init__(self, parent, main_window=None):
         """
         Initialize the gallery tab.
         
         Args:
-            parent: Parent window containing shared variables and functions
+            parent: Parent frame to contain this tab's content
+            main_window: Reference to the main window (for access to variables and methods)
         """
-        self.parent = parent
-        self.frame = ttk.Frame(parent.notebook, padding="10")
+        # Store references
+        self.parent_frame = parent
+        
+        # Use provided main_window or try to find it
+        if main_window:
+            self.parent = main_window  # Keep parent for compatibility with existing code
+        elif hasattr(parent, 'master') and hasattr(parent.master, 'master'):
+            self.parent = parent.master.master
+        else:
+            # Fallback for testing/direct instantiation
+            self.parent = parent
+        
+        # Create the main frame with CustomTkinter
+        self.frame = ttk.Frame(parent)
         
         # State variables
         self.current_image_index = 0
@@ -98,9 +111,6 @@ class GalleryTab:
         ttk.Radiobutton(self.view_mode_frame, text="Large Preview Mode", 
                        value="large", variable=self.view_mode,
                        command=self._switch_view_mode).pack(side=tk.LEFT, padx=5)
-        
-
-
         
         # Create a paned window for dynamic resizing
         self.gallery_paned = ttk.PanedWindow(self.gallery_outer_frame, orient=tk.VERTICAL)
@@ -872,64 +882,6 @@ class GalleryTab:
         # Launch comparison dialog
         ComparisonDialog(self.parent, image_paths)
 
-    # Then add a button to the control section of the Gallery Tab
-    # Add this code to the _create_control_section method
-    def _create_control_section(self):
-        """Create the control panel for the gallery view."""
-        control_frame = ttk.LabelFrame(self.frame, text="Gallery Controls", padding="10")
-        control_frame.pack(fill=tk.X, pady=5)
-        
-        # Create a grid layout for controls
-        grid_frame = ttk.Frame(control_frame)
-        grid_frame.pack(fill=tk.X)
-        
-        # Add refresh button
-        self.refresh_button = ttk.Button(grid_frame, text="Refresh Gallery", command=self.load_gallery)
-        self.refresh_button.grid(column=0, row=0, padx=5, pady=5, sticky=tk.W)
-        
-        # Add navigation buttons
-        nav_frame = ttk.Frame(grid_frame)
-        nav_frame.grid(column=1, row=0, padx=5, pady=5)
-        
-        self.prev_button = ttk.Button(nav_frame, text="← Previous", command=self._show_previous_image)
-        self.prev_button.pack(side=tk.LEFT, padx=5)
-        
-        self.image_counter_label = ttk.Label(nav_frame, text="Image 0/0")
-        self.image_counter_label.pack(side=tk.LEFT, padx=10)
-        
-        self.next_button = ttk.Button(nav_frame, text="Next →", command=self._show_next_image)
-        self.next_button.pack(side=tk.LEFT, padx=5)
-        
-        # Add delete button and compare button
-        buttons_frame = ttk.Frame(grid_frame)
-        buttons_frame.grid(column=2, row=0, padx=5, pady=5, sticky=tk.E)
-        
-        self.compare_button = ttk.Button(buttons_frame, text="Compare Images", command=self._compare_current_group)
-        self.compare_button.pack(side=tk.LEFT, padx=5)
-        
-        self.delete_button = ttk.Button(buttons_frame, text="Delete Selected", command=self._delete_selected_images)
-        self.delete_button.pack(side=tk.LEFT, padx=5)
-        
-
-        # Add outlier detection button (add this where you add other buttons)
-        self.outlier_button = ttk.Button(
-            buttons_frame,  # Use your actual frame name for buttons
-            text="Find Outlier Groups",
-            command=self._find_outlier_groups
-        )
-        self.outlier_button.pack(side=tk.LEFT, padx=5)  # or use grid() based on your layout
-
-        # Add a separator
-        ttk.Separator(control_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-        
-        # Add info section
-        info_frame = ttk.Frame(control_frame)
-        info_frame.pack(fill=tk.X, pady=5)
-        
-        self.info_label = ttk.Label(info_frame, text="Select a folder with image versions to begin.")
-        self.info_label.pack(side=tk.LEFT, padx=5)
-
-
     def _find_outlier_groups(self):
         """Launch the outlier group detection."""
         from utils.outlier_detection import OutlierGroupDetector, run_outlier_scan
@@ -939,7 +891,6 @@ class GalleryTab:
         
         # Run the outlier scan
         run_outlier_scan(self.parent, detector)
-
 
     def _delete_selected_images(self):
         """Delete the selected images."""

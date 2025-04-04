@@ -327,11 +327,11 @@ class MainWindow:
         self.tab_header.add("Dataset Manager")
         
         # Create the tab content frames
-        self.input_output_tab = InputOutputTab(self.tab_content_frame)
-        self.config_tab = ConfigTab(self.tab_content_frame)
-        self.preview_tab = PreviewTab(self.tab_content_frame)
-        self.gallery_tab = GalleryTab(self.tab_content_frame)
-        self.dataset_manager = DatasetManagerTab(self.tab_content_frame)
+        self.input_output_tab = InputOutputTab(self.tab_content_frame, self)
+        self.config_tab = ConfigTab(self.tab_content_frame, self)
+        self.preview_tab = PreviewTab(self.tab_content_frame, self)
+        self.gallery_tab = GalleryTab(self.tab_content_frame, self)
+        self.dataset_manager = DatasetManagerTab(self.tab_content_frame, self)
         
         # Store all tab frames in a dictionary
         self.tab_frames = {

@@ -17,17 +17,19 @@ from utils.dataset_manager.analyzer import DatasetAnalyzer
 class DatasetManagerTab:
     """Dataset Manager tab for the main application with CustomTkinter support."""
     
-    def __init__(self, app):
+    def __init__(self, parent, main_window=None):
         """
         Initialize the Dataset Manager tab.
         
         Args:
-            app: The main application
+            parent: Parent frame to contain this tab's content
+            main_window: Reference to the main window (for access to variables and methods)
         """
-        self.app = app
+        # Store the main app reference
+        self.app = main_window if main_window else parent
         
         # Create registry
-        self.registry = DatasetRegistry(app)
+        self.registry = DatasetRegistry(self.app)
         
         # Create operations handler
         self.operations = DatasetOperations(self.registry)
@@ -35,8 +37,8 @@ class DatasetManagerTab:
         # Create analyzer
         self.analyzer = DatasetAnalyzer(self.registry)
         
-        # Create the tab frame with CustomTkinter (directly use app instead of app.notebook)
-        self.frame = ctk.CTkFrame(app)
+        # Create the tab frame with CustomTkinter (directly use parent)
+        self.frame = ctk.CTkFrame(parent)
         
         # Create the UI components
         self._create_ui()

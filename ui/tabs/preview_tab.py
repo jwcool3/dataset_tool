@@ -8,19 +8,33 @@ from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
 import numpy as np
+import customtkinter as ctk
 
 class PreviewTab:
     """Tab for previewing processing effects on images."""
     
-    def __init__(self, parent):
+    def __init__(self, parent, main_window=None):
         """
         Initialize the preview tab.
         
         Args:
-            parent: Parent window containing shared variables and functions
+            parent: Parent frame to contain this tab's content
+            main_window: Reference to the main window (for access to variables and methods)
         """
-        self.parent = parent
-        self.frame = ttk.Frame(parent.notebook, padding="10")
+        # Store references
+        self.parent_frame = parent
+        
+        # Use provided main_window or try to find it
+        if main_window:
+            self.parent = main_window  # Keep parent for compatibility with existing code
+        elif hasattr(parent, 'master') and hasattr(parent.master, 'master'):
+            self.parent = parent.master.master
+        else:
+            # Fallback for testing/direct instantiation
+            self.parent = parent
+        
+        # Create the main frame with CustomTkinter
+        self.frame = ctk.CTkFrame(parent)
         
         # Create the preview section
         self._create_preview_section()
