@@ -1,5 +1,6 @@
 import tkinter as tk
-from tkinter import ttk, filedialog
+import customtkinter as ctk
+from tkinter import filedialog
 
 class ConfigTab:
     """Tab for configuring processing options with dynamic UI based on selected processing steps."""
@@ -16,7 +17,7 @@ class ConfigTab:
         self.root = parent.root
         
         # Create the main frame that will be added to the notebook
-        self.frame = ttk.Frame(parent.notebook)
+        self.frame = ctk.CTkFrame(parent)
         
         # Initialize storage for sections and UI elements
         self.sections = {}
@@ -38,93 +39,88 @@ class ConfigTab:
         self.update_ui_visibility()
     
     def _create_scrollable_frame(self):
-        """Create the main scrollable frame for content."""
-        # Create a canvas with scrollbar for the main content
-        self.canvas = tk.Canvas(self.frame)
-        self.scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
+        """Create the main scrollable frame for content using CustomTkinter."""
+        # Create a scrollable frame directly (CustomTkinter has this built-in)
+        self.scrollable_frame = ctk.CTkScrollableFrame(
+            self.frame,
+            width=900,
+            corner_radius=0,
+            fg_color="transparent"
+        )
+        self.scrollable_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Pack scrollbar and canvas
-        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Set the content frame to the scrollable frame 
+        self.content_frame = self.scrollable_frame
         
-        # Configure canvas to use scrollbar
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        # Create a frame inside the canvas for content
-        self.content_frame = ttk.Frame(self.canvas)
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
-        
-        # Configure canvas behavior
-        self.canvas.bind("<Configure>", self._on_canvas_resize)
-        self.content_frame.bind("<Configure>", self._on_frame_configure)
-        
-        # Bind mouse wheel for scrolling
-        self._bind_mousewheel()
-    
-    def _on_canvas_resize(self, event):
-        """Update the inner frame width when canvas resizes."""
-        self.canvas.itemconfig(self.canvas_window, width=event.width)
-    
-    def _on_frame_configure(self, event):
-        """Update scroll region when the inner frame changes size."""
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-    
-    def _bind_mousewheel(self):
-        """Bind mousewheel to scrolling."""
-        def _on_mousewheel(event):
-            # Cross-platform mouse wheel handling
-            if event.delta:
-                # Windows/macOS
-                self.canvas.yview_scroll(int(-1 * (event.delta/120)), "units")
-            else:
-                # Linux
-                if event.num == 4:
-                    self.canvas.yview_scroll(-1, "units")
-                elif event.num == 5:
-                    self.canvas.yview_scroll(1, "units")
-        
-        # Bind events
-        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
-        self.canvas.bind_all("<Button-4>", _on_mousewheel)
-        self.canvas.bind_all("<Button-5>", _on_mousewheel)
+        # No need to manually bind mousewheel as CTkScrollableFrame handles this
     
     def _create_show_all_option(self):
         """Create the option to show all settings regardless of processing steps."""
-        # Add an info bar at the top
-        info_frame = ttk.Frame(self.content_frame, relief=tk.GROOVE, borderwidth=1)
+        # Add an info bar at the top with modern styling
+        info_frame = ctk.CTkFrame(
+            self.content_frame, 
+            corner_radius=6,
+            fg_color=("gray95", "gray20"),
+            border_width=1,
+            border_color=("gray85", "gray30")
+        )
         info_frame.pack(fill=tk.X, padx=10, pady=5)
         
         # Create "show all settings" variable
         self.show_all_settings = tk.BooleanVar(value=False)
         
-        # Create checkbox
-        show_all_cb = ttk.Checkbutton(
+        # Create checkbox with modern styling
+        show_all_cb = ctk.CTkCheckBox(
             info_frame,
             text="Show all settings (Advanced mode)",
             variable=self.show_all_settings,
-            command=self.update_ui_visibility
+            command=self.update_ui_visibility,
+            corner_radius=4,
+            checkbox_width=20,
+            checkbox_height=20
         )
-        show_all_cb.pack(side=tk.LEFT, padx=10, pady=5)
+        show_all_cb.pack(side=tk.LEFT, padx=15, pady=10)
         
-        # Add help text
-        help_text = ttk.Label(
+        # Add help text with improved styling
+        help_text = ctk.CTkLabel(
             info_frame,
             text="By default, only settings related to your selected processing steps are shown.",
-            font=("Helvetica", 9),
-            foreground="#555555"
+            font=ctk.CTkFont(size=11),
+            text_color=("gray50", "gray70")
         )
-        help_text.pack(side=tk.RIGHT, padx=10, pady=5)
+        help_text.pack(side=tk.RIGHT, padx=15, pady=10)
         
-        # Add a separator
-        ttk.Separator(self.content_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=5)
+        # Add a separator with modern styling
+        separator = ctk.CTkFrame(self.content_frame, height=1, fg_color=("gray85", "gray30"))
+        separator.pack(fill=tk.X, padx=10, pady=10)
         
-        # Add currently selected processes display
-        self.active_processes_frame = ttk.LabelFrame(self.content_frame, text="Active Processing Steps")
+        # Add currently selected processes display with improved styling
+        self.active_processes_frame = ctk.CTkFrame(
+            self.content_frame,
+            corner_radius=6,
+            fg_color=("gray95", "gray20"),
+            border_width=1,
+            border_color=("gray85", "gray30") 
+        )
         self.active_processes_frame.pack(fill=tk.X, padx=10, pady=5)
         
+        # Header for active processes
+        processes_header = ctk.CTkLabel(
+            self.active_processes_frame,
+            text="Active Processing Steps",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            anchor="w"
+        )
+        processes_header.pack(fill=tk.X, padx=15, pady=(10, 5), anchor="w")
+        
         # This will be filled dynamically in update_ui_visibility
-        self.active_processes_label = ttk.Label(self.active_processes_frame, text="None selected")
-        self.active_processes_label.pack(fill=tk.X, padx=10, pady=5)
+        self.active_processes_label = ctk.CTkLabel(
+            self.active_processes_frame, 
+            text="None selected",
+            font=ctk.CTkFont(size=12),
+            anchor="w"
+        )
+        self.active_processes_label.pack(fill=tk.X, padx=15, pady=(0, 10))
     
     def _connect_processing_steps(self):
         """Connect processing step variables to UI updates."""
@@ -137,7 +133,8 @@ class ConfigTab:
             self.parent.organize_files,
             self.parent.convert_to_video,
             self.parent.square_pad_images,
-            self.parent.reinsert_crops_option
+            self.parent.reinsert_crops_option,
+            self.parent.export_cropped_only
         ]
         
         # Connect each variable to update UI when changed
@@ -199,54 +196,56 @@ class ConfigTab:
             
             # Reinsert crops selected
             self.parent.reinsert_crops_option.get(): ["reinsertion"],
-
+            
+            # Export cropped only selected
             self.parent.export_cropped_only.get(): ["export_cropped"]
         }
         
-        # Populate visible sections based on selected processing steps
-        for is_selected, section_ids in section_mapping.items():
-            if is_selected:
-                for section_id in section_ids:
-                    visible_sections.add(section_id)
-        
-        # If "show all settings" is enabled, show everything regardless
+        # Show all if requested
         if self.show_all_settings.get():
-            visible_sections = set(self.sections.keys())
+            for section_list in section_mapping.values():
+                visible_sections.update(section_list)
+        else:
+            # Otherwise, only show sections for active steps
+            for is_active, sections in section_mapping.items():
+                if is_active:
+                    visible_sections.update(sections)
         
-        # Update visibility of each section
-        for section_id, section_info in self.sections.items():
+        # Update which sections are visible
+        for section_id in self.sections:
             if section_id in visible_sections:
                 self._show_section(section_id)
             else:
                 self._hide_section(section_id)
         
         # Update the active processes label
-        active_steps = []
+        active_processes = []
         if self.parent.extract_frames.get():
-            active_steps.append("Extract Frames")
+            active_processes.append("Extract Frames")
         if self.parent.crop_mask_regions.get():
-            active_steps.append("Crop Mask Regions")
+            active_processes.append("Crop Mask Regions")
         if self.parent.expand_masks.get():
-            active_steps.append("Expand Masks")
+            active_processes.append("Expand Mask Regions")
         if self.parent.resize_images.get():
-            active_steps.append("Resize Images")
-        if self.parent.square_pad_images.get():
-            active_steps.append("Square Padding")
+            active_processes.append("Resize Images")
         if self.parent.organize_files.get():
-            active_steps.append("Organize Files")
+            active_processes.append("Organize Files")
         if self.parent.convert_to_video.get():
-            active_steps.append("Convert to Video")
+            active_processes.append("Convert to Video")
+        if self.parent.square_pad_images.get():
+            active_processes.append("Square Padding")
         if self.parent.reinsert_crops_option.get():
-            active_steps.append("Reinsert Crops")
+            active_processes.append("Reinsert Crops")
+        if self.parent.export_cropped_only.get():
+            active_processes.append("Export Cropped Areas")
         
-        if active_steps:
-            self.active_processes_label.config(text=", ".join(active_steps))
+        if active_processes:
+            self.active_processes_label.configure(text=", ".join(active_processes))
         else:
-            self.active_processes_label.config(text="None selected")
+            self.active_processes_label.configure(text="None selected")
         
-        # Force update of scroll region
+        # Refresh UI
         self.content_frame.update_idletasks()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def _show_section(self, section_id):
         """Show a section by its ID."""
@@ -292,13 +291,13 @@ class ConfigTab:
     def _create_section(self, title, section_id, default_expanded=True):
         """Create a section with toggle capability and store it."""
         # Create a labeled frame for the section
-        section_frame = ttk.LabelFrame(self.content_frame, text=title, padding=10)
+        section_frame = ctk.CTkLabel(self.content_frame, text=title, padding=10)
         
         # Create a variable to track expanded/collapsed state
         expanded = tk.BooleanVar(value=default_expanded)
         
         # Create a frame to hold the content
-        content_frame = ttk.Frame(section_frame)
+        content_frame = ctk.CTkFrame(section_frame)
         
         # Function to toggle expand/collapse
         def toggle_section():
@@ -310,7 +309,7 @@ class ConfigTab:
                 toggle_button.configure(text="► " + title)
         
         # Create toggle button
-        toggle_button = ttk.Button(
+        toggle_button = ctk.CTkButton(
             section_frame,
             text=("▼ " if default_expanded else "► ") + title,
             command=lambda: [expanded.set(not expanded.get()), toggle_section()]
@@ -337,11 +336,11 @@ class ConfigTab:
         content = self._create_section("Core Settings", "core_settings")
         
         # Create a frame for mask padding
-        padding_frame = ttk.Frame(content)
+        padding_frame = ctk.CTkFrame(content)
         padding_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(padding_frame, text="Mask padding (%):").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(
+        ctk.CTkLabel(padding_frame, text="Mask padding (%):").pack(side=tk.LEFT, padx=5)
+        ctk.CTkSpinbox(
             padding_frame,
             from_=0,
             to=100,
@@ -351,7 +350,7 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
         
         # Use source resolution
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             content,
             text="Use source resolution",
             variable=self.parent.use_source_resolution,
@@ -359,15 +358,15 @@ class ConfigTab:
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Resolution
-        resolution_frame = ttk.Frame(content)
+        resolution_frame = ctk.CTkFrame(content)
         resolution_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(resolution_frame, text="Output resolution:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(resolution_frame, text="Output resolution:").pack(side=tk.LEFT, padx=5)
         
-        width_frame = ttk.Frame(resolution_frame)
+        width_frame = ctk.CTkFrame(resolution_frame)
         width_frame.pack(side=tk.LEFT, padx=5)
         
-        self.width_spinbox = ttk.Spinbox(
+        self.width_spinbox = ctk.CTkSpinbox(
             width_frame,
             from_=64,
             to=2048,
@@ -377,9 +376,9 @@ class ConfigTab:
         )
         self.width_spinbox.pack(side=tk.LEFT)
         
-        ttk.Label(width_frame, text="x").pack(side=tk.LEFT, padx=2)
+        ctk.CTkLabel(width_frame, text="x").pack(side=tk.LEFT, padx=2)
         
-        self.height_spinbox = ttk.Spinbox(
+        self.height_spinbox = ctk.CTkSpinbox(
             width_frame,
             from_=64,
             to=2048,
@@ -394,11 +393,11 @@ class ConfigTab:
         content = self._create_section("Frame Extraction", "frame_extraction")
         
         # Frame rate
-        frame_rate_frame = ttk.Frame(content)
+        frame_rate_frame = ctk.CTkFrame(content)
         frame_rate_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(frame_rate_frame, text="Frame extraction rate (fps):").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(
+        ctk.CTkLabel(frame_rate_frame, text="Frame extraction rate (fps):").pack(side=tk.LEFT, padx=5)
+        ctk.CTkSpinbox(
             frame_rate_frame,
             from_=0.1,
             to=30.0,
@@ -408,25 +407,25 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
         
         # Mask video settings
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             content,
             text="Use mask video for all source videos",
             variable=self.parent.use_mask_video,
             command=self._toggle_mask_video_controls
         ).pack(anchor=tk.W, padx=5, pady=5)
         
-        mask_path_frame = ttk.Frame(content)
+        mask_path_frame = ctk.CTkFrame(content)
         mask_path_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(mask_path_frame, text="Mask video:").pack(side=tk.LEFT, padx=5)
-        self.mask_video_entry = ttk.Entry(
+        ctk.CTkLabel(mask_path_frame, text="Mask video:").pack(side=tk.LEFT, padx=5)
+        self.mask_video_entry = ctk.CTkEntry(
             mask_path_frame,
             textvariable=self.parent.mask_video_path,
             width=40
         )
         self.mask_video_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
-        self.mask_video_button = ttk.Button(
+        self.mask_video_button = ctk.CTkButton(
             mask_path_frame,
             text="Browse...",
             command=self._browse_mask_video
@@ -434,7 +433,7 @@ class ConfigTab:
         self.mask_video_button.pack(side=tk.RIGHT, padx=5)
         
         # Help text
-        ttk.Label(
+        ctk.CTkLabel(
             content,
             text="This will extract frames from the mask video and copy them to the masks subfolder of each source video.",
             wraplength=600
@@ -445,10 +444,10 @@ class ConfigTab:
         content = self._create_section("Mask Detection & Cropping", "mask_detection")
         
         # Add information about mask detection
-        info_frame = ttk.Frame(content, padding=5, relief="groove")
+        info_frame = ctk.CTkFrame(content, padding=5, relief="groove")
         info_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(
+        ctk.CTkLabel(
             info_frame,
             text="This will detect regions in the mask and crop the corresponding areas in the source image.",
             wraplength=600
@@ -459,15 +458,15 @@ class ConfigTab:
         content = self._create_section("Mask Expansion", "mask_expansion")
         
         # Make the label more eye-catching
-        header_label = ttk.Label(content, text="Mask Expansion Settings", font=("Helvetica", 10, "bold"))
+        header_label = ctk.CTkLabel(content, text="Mask Expansion Settings", font=ctk.CTkFont(size=10, weight="bold"))
         header_label.pack(anchor=tk.W, padx=5, pady=(0, 10))
         
         # Iterations control
-        iterations_frame = ttk.Frame(content)
+        iterations_frame = ctk.CTkFrame(content)
         iterations_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(iterations_frame, text="Dilation Iterations:").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(
+        ctk.CTkLabel(iterations_frame, text="Dilation Iterations:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkSpinbox(
             iterations_frame,
             from_=1,
             to=50,
@@ -477,11 +476,11 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
         
         # Kernel size control
-        kernel_frame = ttk.Frame(content)
+        kernel_frame = ctk.CTkFrame(content)
         kernel_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(kernel_frame, text="Kernel Size:").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(
+        ctk.CTkLabel(kernel_frame, text="Kernel Size:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkSpinbox(
             kernel_frame,
             from_=3,
             to=21,
@@ -491,37 +490,37 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
         
         # Preserve directory structure option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             content,
             text="Preserve directory structure",
             variable=self.parent.mask_expand_preserve_structure
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Help text with more visible styling
-        help_frame = ttk.Frame(content, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
+        help_frame = ctk.CTkFrame(content, padding=(5, 10, 5, 5), relief="groove", borderwidth=1)
         help_frame.pack(fill=tk.X, padx=5, pady=10)
         
         help_text = ("Dilates mask regions to make them larger. Higher iteration values create larger expansions. "
                     "Kernel size controls the shape of the expansion (odd numbers only).")
-        ttk.Label(help_frame, text=help_text, wraplength=600).pack(padx=5, pady=5)
+        ctk.CTkLabel(help_frame, text=help_text, wraplength=600).pack(padx=5, pady=5)
     
     def _create_resolution_section(self):
         """Create resolution settings section."""
         content = self._create_section("Image Resizing Options", "resolution")
         
         # Conditional resize option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             content,
             text="Only resize if image is larger than:",
             variable=self.parent.resize_if_larger,
             command=self._toggle_conditional_resize_controls
         ).pack(anchor=tk.W, padx=5, pady=5)
         
-        resize_frame = ttk.Frame(content)
+        resize_frame = ctk.CTkFrame(content)
         resize_frame.pack(fill=tk.X, pady=5, padx=20)
         
-        ttk.Label(resize_frame, text="Max Width:").pack(side=tk.LEFT)
-        self.max_width_spinbox = ttk.Spinbox(
+        ctk.CTkLabel(resize_frame, text="Max Width:").pack(side=tk.LEFT)
+        self.max_width_spinbox = ctk.CTkSpinbox(
             resize_frame,
             from_=64,
             to=4096,
@@ -531,8 +530,8 @@ class ConfigTab:
         )
         self.max_width_spinbox.pack(side=tk.LEFT, padx=2)
         
-        ttk.Label(resize_frame, text="Max Height:").pack(side=tk.LEFT, padx=5)
-        self.max_height_spinbox = ttk.Spinbox(
+        ctk.CTkLabel(resize_frame, text="Max Height:").pack(side=tk.LEFT, padx=5)
+        self.max_height_spinbox = ctk.CTkSpinbox(
             resize_frame,
             from_=64,
             to=4096,
@@ -547,11 +546,11 @@ class ConfigTab:
         content = self._create_section("Square Padding Options", "square_padding")
         
         # Padding color
-        padding_frame = ttk.Frame(content)
+        padding_frame = ctk.CTkFrame(content)
         padding_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(padding_frame, text="Padding Color:").pack(side=tk.LEFT, padx=5)
-        ttk.Combobox(
+        ctk.CTkLabel(padding_frame, text="Padding Color:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkCombobox(
             padding_frame,
             textvariable=self.parent.padding_color,
             values=["black", "white", "gray"],
@@ -560,7 +559,7 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
         
         # Source resolution for padding
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             content,
             text="Use source resolution for padding",
             variable=self.parent.use_source_resolution_padding,
@@ -568,11 +567,11 @@ class ConfigTab:
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Target size
-        target_frame = ttk.Frame(content)
+        target_frame = ctk.CTkFrame(content)
         target_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(target_frame, text="Target Size:").pack(side=tk.LEFT, padx=5)
-        self.square_target_spinbox = ttk.Spinbox(
+        ctk.CTkLabel(target_frame, text="Target Size:").pack(side=tk.LEFT, padx=5)
+        self.square_target_spinbox = ctk.CTkSpinbox(
             target_frame,
             from_=64,
             to=2048,
@@ -587,18 +586,18 @@ class ConfigTab:
         content = self._create_section("File Organization", "organization")
         
         # Naming pattern
-        naming_frame = ttk.Frame(content)
+        naming_frame = ctk.CTkFrame(content)
         naming_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(naming_frame, text="Naming pattern:").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(
+        ctk.CTkLabel(naming_frame, text="Naming pattern:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkEntry(
             naming_frame,
             textvariable=self.parent.naming_pattern,
             width=20
         ).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
         # Pattern help
-        ttk.Label(
+        ctk.CTkLabel(
             content,
             text="Use {index} for sequential numbering. Example: image_{index:04d}.png"
         ).pack(anchor=tk.W, padx=5, pady=5)
@@ -608,11 +607,11 @@ class ConfigTab:
         content = self._create_section("Video Conversion", "video_conversion")
         
         # Video FPS
-        fps_frame = ttk.Frame(content)
+        fps_frame = ctk.CTkFrame(content)
         fps_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(fps_frame, text="Video output FPS:").pack(side=tk.LEFT, padx=5)
-        ttk.Spinbox(
+        ctk.CTkLabel(fps_frame, text="Video output FPS:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkSpinbox(
             fps_frame,
             from_=1,
             to=60,
@@ -622,7 +621,7 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
         
         # Help text
-        ttk.Label(
+        ctk.CTkLabel(
             content,
             text="This will convert processed image sequences into video files with the specified frame rate.",
             wraplength=600
@@ -633,25 +632,25 @@ class ConfigTab:
         content = self._create_section("Crop Reinsertion", "reinsertion")
         
         # Basic options
-        basic_frame = ttk.LabelFrame(content, text="Basic Options", padding=5)
+        basic_frame = ctk.CTkLabelFrame(content, text="Basic Options", padding=5)
         basic_frame.pack(fill=tk.X, pady=5, padx=5)
         
         # Add mask-only option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             basic_frame,
             text="Use mask-only reinsertion (only reinsert masked regions)",
             variable=self.parent.reinsert_mask_only
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Add enhanced reinsertion option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             basic_frame,
             text="Use enhanced resolution handling for reinsertion",
             variable=self.parent.use_enhanced_reinserter
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Add handling for different masks option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             basic_frame,
             text="Handle different masks between source and cropped images",
             variable=self.parent.reinsert_handle_different_masks,
@@ -659,54 +658,54 @@ class ConfigTab:
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Source directory
-        source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
+        source_frame = ctk.CTkLabelFrame(content, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(
+        ctk.CTkLabel(
             source_frame,
             text="Select the directory containing the ORIGINAL UNCROPPED images:",
-            font=("Helvetica", 9, "bold")
+            font=ctk.CTkFont(size=9, weight="bold")
         ).pack(anchor=tk.W, padx=5, pady=5)
         
-        source_dir_frame = ttk.Frame(source_frame)
+        source_dir_frame = ctk.CTkFrame(source_frame)
         source_dir_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Entry(
+        ctk.CTkEntry(
             source_dir_frame,
             textvariable=self.parent.source_images_dir,
             width=40
         ).pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         
-        ttk.Button(
+        ctk.CTkButton(
             source_dir_frame,
             text="Browse...",
             command=self._browse_source_dir
         ).pack(side=tk.RIGHT, padx=5)
         
         # Important note
-        self.note_frame = ttk.Frame(content, padding=5, relief="groove")
+        self.note_frame = ctk.CTkFrame(content, padding=5, relief="groove")
         self.note_frame.pack(fill=tk.X, pady=10)
         
-        ttk.Label(
+        ctk.CTkLabel(
             self.note_frame,
             text="IMPORTANT: The Input Directory (set in the Input/Output tab) should contain your CROPPED IMAGES.\n"
                 "The directory above should contain your ORIGINAL UNCROPPED IMAGES.",
             foreground="blue",
-            font=("Helvetica", 9, "bold"),
+            font=ctk.CTkFont(size=9, weight="bold"),
             wraplength=600
         ).pack(pady=5)
         
         # Advanced settings frame 
-        self.advanced_frame = ttk.LabelFrame(content, text="Advanced Mask Alignment Options", padding=5)
+        self.advanced_frame = ctk.CTkLabelFrame(content, text="Advanced Mask Alignment Options", padding=5)
         self.advanced_frame.pack(fill=tk.X, pady=5, padx=5)
         
         # Alignment method selection
-        alignment_frame = ttk.Frame(self.advanced_frame)
+        alignment_frame = ctk.CTkFrame(self.advanced_frame)
         alignment_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(alignment_frame, text="Alignment Method:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(alignment_frame, text="Alignment Method:").pack(side=tk.LEFT, padx=5)
         
-        alignment_combo = ttk.Combobox(
+        alignment_combo = ctk.CTkCombobox(
             alignment_frame,
             textvariable=self.parent.reinsert_alignment_method,
             values=["none", "centroid", "bbox", "landmarks", "contour", "iou"],
@@ -716,12 +715,12 @@ class ConfigTab:
         alignment_combo.pack(side=tk.LEFT, padx=5)
         
         # Blend mode selection
-        blend_frame = ttk.Frame(self.advanced_frame)
+        blend_frame = ctk.CTkFrame(self.advanced_frame)
         blend_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(blend_frame, text="Blend Mode:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(blend_frame, text="Blend Mode:").pack(side=tk.LEFT, padx=5)
         
-        blend_combo = ttk.Combobox(
+        blend_combo = ctk.CTkCombobox(
             blend_frame,
             textvariable=self.parent.reinsert_blend_mode,
             values=["alpha", "poisson", "feathered"],
@@ -731,12 +730,12 @@ class ConfigTab:
         blend_combo.pack(side=tk.LEFT, padx=5)
         
         # Blend extent slider
-        extent_frame = ttk.Frame(self.advanced_frame)
+        extent_frame = ctk.CTkFrame(self.advanced_frame)
         extent_frame.pack(fill=tk.X, pady=5)
         
 
         # Add to the advanced frame in ConfigTab._create_reinsertion_section
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             self.advanced_frame,
             text="Preserve hair parting (experimental)",
             variable=self.parent.preserve_hair_parting
@@ -747,14 +746,14 @@ class ConfigTab:
 
 
         # Manual offset controls
-        offset_frame = ttk.Frame(self.advanced_frame)
+        offset_frame = ctk.CTkFrame(self.advanced_frame)
         offset_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(offset_frame, text="Manual Offset:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(offset_frame, text="Manual Offset:").pack(side=tk.LEFT, padx=5)
 
         # Horizontal offset
-        ttk.Label(offset_frame, text="X:").pack(side=tk.LEFT, padx=2)
-        x_spinner = ttk.Spinbox(
+        ctk.CTkLabel(offset_frame, text="X:").pack(side=tk.LEFT, padx=2)
+        x_spinner = ctk.CTkSpinbox(
             offset_frame,
             from_=-100,
             to=100,
@@ -765,8 +764,8 @@ class ConfigTab:
         x_spinner.pack(side=tk.LEFT, padx=2)
 
         # Vertical offset
-        ttk.Label(offset_frame, text="Y:").pack(side=tk.LEFT, padx=5)
-        y_spinner = ttk.Spinbox(
+        ctk.CTkLabel(offset_frame, text="Y:").pack(side=tk.LEFT, padx=5)
+        y_spinner = ctk.CTkSpinbox(
             offset_frame,
             from_=-100,
             to=100,
@@ -777,22 +776,22 @@ class ConfigTab:
         y_spinner.pack(side=tk.LEFT, padx=2)
 
         # Add a tip about negative Y values raising the hair
-        ttk.Label(
+        ctk.CTkLabel(
             offset_frame, 
             text="(negative Y values raise the hair)",
-            font=("Helvetica", 8),
+            font=ctk.CTkFont(size=8),
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
 
         # Scale controls
-        scale_frame = ttk.Frame(self.advanced_frame)
+        scale_frame = ctk.CTkFrame(self.advanced_frame)
         scale_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(scale_frame, text="Scale Factor:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(scale_frame, text="Scale Factor:").pack(side=tk.LEFT, padx=5)
 
         # Horizontal scale
-        ttk.Label(scale_frame, text="X:").pack(side=tk.LEFT, padx=2)
-        x_scale_spinner = ttk.Spinbox(
+        ctk.CTkLabel(scale_frame, text="X:").pack(side=tk.LEFT, padx=2)
+        x_scale_spinner = ctk.CTkSpinbox(
             scale_frame,
             from_=0.5,
             to=2.0,
@@ -803,8 +802,8 @@ class ConfigTab:
         x_scale_spinner.pack(side=tk.LEFT, padx=2)
 
         # Vertical scale
-        ttk.Label(scale_frame, text="Y:").pack(side=tk.LEFT, padx=5)
-        y_scale_spinner = ttk.Spinbox(
+        ctk.CTkLabel(scale_frame, text="Y:").pack(side=tk.LEFT, padx=5)
+        y_scale_spinner = ctk.CTkSpinbox(
             scale_frame,
             from_=0.5,
             to=2.0,
@@ -815,28 +814,28 @@ class ConfigTab:
         y_scale_spinner.pack(side=tk.LEFT, padx=2)
 
         # Add a tip about scaling
-        ttk.Label(
+        ctk.CTkLabel(
             scale_frame, 
             text="(values > 1 enlarge, < 1 shrink)",
-            font=("Helvetica", 8),
+            font=ctk.CTkFont(size=8),
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
 
 
-        transform_frame = ttk.Frame(self.advanced_frame)
+        transform_frame = ctk.CTkFrame(self.advanced_frame)
         transform_frame.pack(fill=tk.X, pady=5)
 
 
-        ttk.Label(transform_frame, text="Transform Type:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(transform_frame, text="Transform Type:").pack(side=tk.LEFT, padx=5)
 
-        ttk.Radiobutton(
+        ctk.CTkRadiobutton(
             transform_frame,
             text="Translation Only (preserve orientation)",
             variable=self.parent.use_translation_only,
             value=True
         ).pack(side=tk.LEFT, padx=5)
 
-        ttk.Radiobutton(
+        ctk.CTkRadiobutton(
             transform_frame,
             text="Full Transform (with rotation)",
             variable=self.parent.use_translation_only,
@@ -844,10 +843,10 @@ class ConfigTab:
         ).pack(side=tk.LEFT, padx=5)
 
         # Add a help label
-        transform_help_frame = ttk.Frame(self.advanced_frame)
+        transform_help_frame = ctk.CTkFrame(self.advanced_frame)
         transform_help_frame.pack(fill=tk.X, pady=5, padx=20)
 
-        ttk.Label(
+        ctk.CTkLabel(
             transform_help_frame,
             text="• Translation Only: Keeps hair at original angle but adjusts position\n• Full Transform: Rotates hair to match face orientation",
             foreground="gray",
@@ -856,11 +855,11 @@ class ConfigTab:
         ).pack(anchor=tk.W)
 
         # Rotation control
-        rotation_frame = ttk.Frame(self.advanced_frame)
+        rotation_frame = ctk.CTkFrame(self.advanced_frame)
         rotation_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Label(rotation_frame, text="Rotation:").pack(side=tk.LEFT, padx=5)
-        rotation_spinner = ttk.Spinbox(
+        ctk.CTkLabel(rotation_frame, text="Rotation:").pack(side=tk.LEFT, padx=5)
+        rotation_spinner = ctk.CTkSpinbox(
             rotation_frame,
             from_=-45,
             to=45,
@@ -869,35 +868,35 @@ class ConfigTab:
             textvariable=self.parent.reinsert_manual_rotation
         )
         rotation_spinner.pack(side=tk.LEFT, padx=2)
-        ttk.Label(rotation_frame, text="degrees").pack(side=tk.LEFT, padx=2)
+        ctk.CTkLabel(rotation_frame, text="degrees").pack(side=tk.LEFT, padx=2)
 
         # Add a tip about rotation
-        ttk.Label(
+        ctk.CTkLabel(
             rotation_frame, 
             text="(positive = clockwise, negative = counter-clockwise)",
-            font=("Helvetica", 8),
+            font=ctk.CTkFont(size=8),
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
         # Create a separator
-        ttk.Separator(self.advanced_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        ctk.CTkSeparator(self.advanced_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 
         # Bangs extension frame
-        bangs_frame = ttk.Frame(self.advanced_frame)
+        bangs_frame = ctk.CTkFrame(self.advanced_frame)
         bangs_frame.pack(fill=tk.X, pady=5)
 
         # Checkbox to enable bangs extension
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             bangs_frame,
             text="Extend mask in bangs/forehead area",
             variable=self.parent.extend_bangs
         ).pack(anchor=tk.W, padx=5, pady=5)
 
         # Extension amount
-        extension_frame = ttk.Frame(bangs_frame)
+        extension_frame = ctk.CTkFrame(bangs_frame)
         extension_frame.pack(fill=tk.X, pady=5, padx=20)
 
-        ttk.Label(extension_frame, text="Extension amount:").pack(side=tk.LEFT, padx=2)
-        ttk.Spinbox(
+        ctk.CTkLabel(extension_frame, text="Extension amount:").pack(side=tk.LEFT, padx=2)
+        ctk.CTkSpinbox(
             extension_frame,
             from_=10,
             to=100,
@@ -905,14 +904,14 @@ class ConfigTab:
             width=5,
             textvariable=self.parent.bangs_extension_amount
         ).pack(side=tk.LEFT, padx=2)
-        ttk.Label(extension_frame, text="pixels").pack(side=tk.LEFT, padx=2)
+        ctk.CTkLabel(extension_frame, text="pixels").pack(side=tk.LEFT, padx=2)
 
         # Width ratio
-        width_frame = ttk.Frame(bangs_frame)
+        width_frame = ctk.CTkFrame(bangs_frame)
         width_frame.pack(fill=tk.X, pady=5, padx=20)
 
-        ttk.Label(width_frame, text="Forehead width:").pack(side=tk.LEFT, padx=2)
-        ttk.Spinbox(
+        ctk.CTkLabel(width_frame, text="Forehead width:").pack(side=tk.LEFT, padx=2)
+        ctk.CTkSpinbox(
             width_frame,
             from_=0.1,
             to=1.0,
@@ -920,16 +919,16 @@ class ConfigTab:
             width=5,
             textvariable=self.parent.bangs_width_ratio
         ).pack(side=tk.LEFT, padx=2)
-        ttk.Label(width_frame, text="(ratio of total width)").pack(side=tk.LEFT, padx=2)
+        ctk.CTkLabel(width_frame, text="(ratio of total width)").pack(side=tk.LEFT, padx=2)
 
 
 
         # Add this to your UI controls for bangs extension
-        opacity_frame = ttk.Frame(bangs_frame)
+        opacity_frame = ctk.CTkFrame(bangs_frame)
         opacity_frame.pack(fill=tk.X, pady=5, padx=20)
 
-        ttk.Label(opacity_frame, text="Minimum opacity:").pack(side=tk.LEFT, padx=2)
-        opacity_slider = ttk.Scale(
+        ctk.CTkLabel(opacity_frame, text="Minimum opacity:").pack(side=tk.LEFT, padx=2)
+        opacity_slider = ctk.CTkScale(
             opacity_frame,
             from_=0.3,
             to=1.0,
@@ -940,7 +939,7 @@ class ConfigTab:
         opacity_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         # Label to show value
-        opacity_value_label = ttk.Label(opacity_frame, text=f"{self.parent.bangs_min_opacity.get():.2f}")
+        opacity_value_label = ctk.CTkLabel(opacity_frame, text=f"{self.parent.bangs_min_opacity.get():.2f}")
         opacity_value_label.pack(side=tk.LEFT, padx=5)
 
         # Update label when slider is moved
@@ -949,9 +948,9 @@ class ConfigTab:
 
         self.parent.bangs_min_opacity.trace_add("write", update_opacity_label)
 
-        ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
+        ctk.CTkLabel(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
         
-        extent_slider = ttk.Scale(
+        extent_slider = ctk.CTkScale(
             extent_frame,
             from_=0,
             to=20,
@@ -962,7 +961,7 @@ class ConfigTab:
         extent_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
         # Label to show value
-        self.extent_value_label = ttk.Label(extent_frame, text=f"{self.parent.reinsert_blend_extent.get()} px")
+        self.extent_value_label = ctk.CTkLabel(extent_frame, text=f"{self.parent.reinsert_blend_extent.get()} px")
         self.extent_value_label.pack(side=tk.LEFT, padx=5)
         
         # Update label when slider is moved
@@ -972,14 +971,14 @@ class ConfigTab:
         self.parent.reinsert_blend_extent.trace_add("write", update_extent_label)
         
         # Preserve edges option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             self.advanced_frame,
             text="Preserve original image edges",
             variable=self.parent.reinsert_preserve_edges
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Explanation section
-        explanation_frame = ttk.LabelFrame(content, text="Tips for Different Masks", padding=5)
+        explanation_frame = ctk.CTkLabelFrame(content, text="Tips for Different Masks", padding=5)
         explanation_frame.pack(fill=tk.X, pady=5, padx=5)
         
         explanation_text = (
@@ -990,7 +989,7 @@ class ConfigTab:
             "• Try different alignment methods if hair positioning seems off"
         )
         
-        ttk.Label(
+        ctk.CTkLabel(
             explanation_frame,
             text=explanation_text,
             wraplength=600
@@ -1018,17 +1017,17 @@ class ConfigTab:
         """Create debug options section."""
         content = self._create_section("Debug Options", "general_debug", default_expanded=False)
         
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             content,
             text="Debug Mode (Save visualization images)",
             variable=self.parent.debug_mode
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Help text
-        help_frame = ttk.Frame(content, padding=5, relief="groove")
+        help_frame = ctk.CTkFrame(content, padding=5, relief="groove")
         help_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(
+        ctk.CTkLabel(
             help_frame,
             text="Debug mode saves additional images showing the processing steps, bounding boxes, and other visual aids to help troubleshoot issues.",
             wraplength=600
@@ -1085,7 +1084,7 @@ class ConfigTab:
         """Enable or disable portrait crop controls based on checkbox state."""
         # Find the crop position combobox
         for widget in self.content_frame.winfo_children():
-            if isinstance(widget, ttk.Combobox) and widget.cget("textvariable") == str(self.parent.portrait_crop_position):
+            if isinstance(widget, ctk.CTkCombobox) and widget.cget("textvariable") == str(self.parent.portrait_crop_position):
                 if self.parent.portrait_crop_enabled.get():
                     widget.configure(state="readonly")
                 else:
@@ -1138,7 +1137,7 @@ class ConfigTab:
             self.tooltip.wm_overrideredirect(True)
             self.tooltip.wm_geometry(f"+{x}+{y}")
             
-            label = ttk.Label(
+            label = ctk.CTkLabel(
                 self.tooltip, 
                 text=text, 
                 wraplength=400,
@@ -1304,21 +1303,21 @@ class ConfigTab:
         content = self._create_section("Export Cropped Areas", "export_cropped")
         
         # Basic options
-        options_frame = ttk.Frame(content)
+        options_frame = ctk.CTkFrame(content)
         options_frame.pack(fill=tk.X, pady=5)
         
         # Add transparency option
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             options_frame,
             text="Export with transparency (PNG)",
             variable=self.parent.export_with_alpha
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # Video export option
-        video_frame = ttk.LabelFrame(content, text="Video Export", padding=5)
+        video_frame = ctk.CTkLabelFrame(content, text="Video Export", padding=5)
         video_frame.pack(fill=tk.X, pady=5, padx=5)
         
-        ttk.Checkbutton(
+        ctk.CTkCheckbutton(
             video_frame,
             text="Export cropped areas as video",
             variable=self.parent.export_cropped_video,
@@ -1326,11 +1325,11 @@ class ConfigTab:
         ).pack(anchor=tk.W, padx=5, pady=5)
         
         # FPS setting
-        fps_frame = ttk.Frame(video_frame)
+        fps_frame = ctk.CTkFrame(video_frame)
         fps_frame.pack(fill=tk.X, pady=5, padx=20)
         
-        ttk.Label(fps_frame, text="Video FPS:").pack(side=tk.LEFT, padx=5)
-        self.cropped_fps_spinbox = ttk.Spinbox(
+        ctk.CTkLabel(fps_frame, text="Video FPS:").pack(side=tk.LEFT, padx=5)
+        self.cropped_fps_spinbox = ctk.CTkSpinbox(
             fps_frame,
             from_=1,
             to=60,
@@ -1341,11 +1340,11 @@ class ConfigTab:
         self.cropped_fps_spinbox.pack(side=tk.LEFT, padx=5)
         
         # Video format
-        format_frame = ttk.Frame(video_frame)
+        format_frame = ctk.CTkFrame(video_frame)
         format_frame.pack(fill=tk.X, pady=5, padx=20)
         
-        ttk.Label(format_frame, text="Video Format:").pack(side=tk.LEFT, padx=5)
-        self.video_format_combo = ttk.Combobox(
+        ctk.CTkLabel(format_frame, text="Video Format:").pack(side=tk.LEFT, padx=5)
+        self.video_format_combo = ctk.CTkCombobox(
             format_frame,
             textvariable=self.parent.cropped_video_format,
             values=["mp4", "avi", "mov"],
@@ -1355,7 +1354,7 @@ class ConfigTab:
         self.video_format_combo.pack(side=tk.LEFT, padx=5)
         
         # Add explanation text
-        explanation_frame = ttk.Frame(content, padding=5, relief="groove")
+        explanation_frame = ctk.CTkFrame(content, padding=5, relief="groove")
         explanation_frame.pack(fill=tk.X, pady=5)
         
         explanation_text = (
@@ -1363,7 +1362,7 @@ class ConfigTab:
             "Useful for creating alpha matte videos or extracting specific areas of interest. "
             "Images can be saved with transparency or as a video file."
         )
-        ttk.Label(
+        ctk.CTkLabel(
             explanation_frame,
             text=explanation_text,
             wraplength=600

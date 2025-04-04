@@ -7,6 +7,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
+import customtkinter as ctk
 
 from ui.tabs.input_output_tab import InputOutputTab
 from ui.tabs.config_tab import ConfigTab
@@ -32,6 +33,8 @@ class MainWindow:
         os.makedirs(self.config_dir, exist_ok=True)
 
         self.root = root
+        # Add the tk attribute from root for CustomTkinter to use
+        self.tk = root.tk
         
         # Initialize variables FIRST
         self._init_variables()
@@ -58,10 +61,7 @@ class MainWindow:
         self._init_image_comparison()
         self._init_outlier_detection()
         
-        # Create Dataset Manager Tab
-        self.dataset_manager = DatasetManagerTab(self)
-        self.notebook.add(self.dataset_manager.frame, text="Dataset Manager")
-# Update this method in ui/main_window.py
+        # Dataset Manager tab is now created in _create_notebook method
 
     def _init_variables(self):
         """Initialize all Tkinter variables used in the application."""
@@ -192,7 +192,7 @@ class MainWindow:
         # Add Dataset Manager to Tools menu
         tools_menu.add_command(
             label="Dataset Manager", 
-            command=lambda: self.notebook.select(self.notebook.index(self.dataset_manager.frame))
+            command=lambda: self.tab_header.set("Dataset Manager")
         )
         
         # Outlier detection option
@@ -236,7 +236,7 @@ class MainWindow:
         self.dataset_manager.explorer.refresh_datasets()
         
         # Switch to Dataset Manager tab
-        self.notebook.select(self.notebook.index(self.dataset_manager.frame))
+        self.tab_header.set("Dataset Manager")
 
 
     def _run_outlier_detection(self):
@@ -252,40 +252,123 @@ class MainWindow:
 
 
     def _create_main_content(self):
-        """Create the main content area of the window."""
-        self.main_content = ttk.Frame(self.root)
-        self.main_content.pack(fill=tk.BOTH, expand=True)
-    
+        """Create the main content area with modern styling."""
+        # Create a main frame that fills the window
+        self.main_frame = ctk.CTkFrame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Configure grid layout for the main frame
+        self.main_frame.grid_columnconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(1, weight=0)  # Status bar row
+        
+        # Create tools frame for future toolbar implementation
+        self.tools_frame = ctk.CTkFrame(self.main_frame, height=40, fg_color=("gray90", "gray20"))
+        self.tools_frame.grid(row=0, column=0, sticky="new")
+        
+        # Add Tools label to the toolbar
+        tools_label = ctk.CTkLabel(
+            self.tools_frame, 
+            text="Dataset Preparation Tool", 
+            font=ctk.CTkFont(size=16, weight="bold")
+        )
+        tools_label.pack(side=tk.LEFT, padx=15, pady=8)
+        
+        # Create content frame for notebook (will be added in _create_notebook)
+        self.content_frame = ctk.CTkFrame(self.main_frame)
+        self.content_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
     def _create_status_bar(self):
-        """Create the status bar at the bottom of the window."""
-        self.status_frame = ttk.Frame(self.root, padding="10")
-        self.status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        """Create a modern status bar at the bottom of the window."""
+        # Create a frame for the status bar with a subtle gradient look
+        self.status_frame = ctk.CTkFrame(self.main_frame, height=30, corner_radius=0)
+        self.status_frame.grid(row=1, column=0, sticky="sew")
         
-        self.progress_bar = ttk.Progressbar(self.status_frame, orient=tk.HORIZONTAL, length=400, mode='determinate')
-        self.progress_bar.pack(fill=tk.X, pady=5)
+        # Configure grid layout for status bar
+        self.status_frame.grid_columnconfigure(0, weight=1)  # Status text
+        self.status_frame.grid_columnconfigure(1, weight=0)  # Progress bar
         
-        self.status_label = ttk.Label(self.status_frame, text="Ready")
-        self.status_label.pack(side=tk.LEFT, padx=5)
-    
+        # Create status label
+        self.status_label = ctk.CTkLabel(
+            self.status_frame, 
+            text="Ready", 
+            anchor="w",
+            font=ctk.CTkFont(size=12)
+        )
+        self.status_label.grid(row=0, column=0, sticky="w", padx=15, pady=5)
+        
+        # Create progress bar
+        self.progress_bar = ctk.CTkProgressBar(self.status_frame, width=200, height=10)
+        self.progress_bar.grid(row=0, column=1, sticky="e", padx=15, pady=5)
+        self.progress_bar.set(0)  # Initialize to 0%
+        
+        # Processing flag
+        self.processing = False
+
     def _create_notebook(self):
-        """Create the notebook with tabs for different functionality."""
-        self.notebook = ttk.Notebook(self.main_content)
-        self.notebook.pack(fill=tk.BOTH, expand=True, pady=5, padx=5)
+        """Create the notebook with tabs using a custom implementation."""
+        # Create frame for the tabview
+        self.notebook_frame = ctk.CTkFrame(self.content_frame)
+        self.notebook_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Create tabs
-        self.input_output_tab = InputOutputTab(self)
-        self.config_tab = ConfigTab(self)
-        self.preview_tab = PreviewTab(self)
-        self.gallery_tab = GalleryTab(self)
+        # Create a container frame that will hold all tab content
+        self.tab_content_frame = ctk.CTkFrame(self.notebook_frame)
+        self.tab_content_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(35, 5))
         
-        # Add tabs to notebook
-        self.notebook.add(self.input_output_tab.frame, text="Input/Output")
-        self.notebook.add(self.config_tab.frame, text="Configuration")
-        self.notebook.add(self.preview_tab.frame, text="Preview")
-        self.notebook.add(self.gallery_tab.frame, text="Gallery")
+        # Create the CTkTabview for tab headers only
+        self.tab_header = ctk.CTkTabview(self.notebook_frame, corner_radius=6, height=35)
+        self.tab_header.pack(fill=tk.X, padx=5, pady=5)
         
-        # Initialize image comparison integration
-        self._init_image_comparison()
+        # Add tabs to header
+        self.tab_header.add("Input/Output")
+        self.tab_header.add("Configuration")
+        self.tab_header.add("Preview")
+        self.tab_header.add("Gallery")
+        self.tab_header.add("Dataset Manager")
+        
+        # Create the tab content frames
+        self.input_output_tab = InputOutputTab(self.tab_content_frame)
+        self.config_tab = ConfigTab(self.tab_content_frame)
+        self.preview_tab = PreviewTab(self.tab_content_frame)
+        self.gallery_tab = GalleryTab(self.tab_content_frame)
+        self.dataset_manager = DatasetManagerTab(self.tab_content_frame)
+        
+        # Store all tab frames in a dictionary
+        self.tab_frames = {
+            "Input/Output": self.input_output_tab.frame,
+            "Configuration": self.config_tab.frame,
+            "Preview": self.preview_tab.frame,
+            "Gallery": self.gallery_tab.frame,
+            "Dataset Manager": self.dataset_manager.frame
+        }
+        
+        # Pack all frames in the content frame (initially hidden)
+        for tab_name, frame in self.tab_frames.items():
+            frame.pack(fill=tk.BOTH, expand=True, in_=self.tab_content_frame)
+            frame.pack_forget()
+        
+        # Show the default tab
+        self.tab_frames["Input/Output"].pack(fill=tk.BOTH, expand=True, in_=self.tab_content_frame)
+        
+        # Connect tab change event
+        self.tab_header.configure(command=self._on_tab_change)
+        
+        # Set initial active tab
+        self.tab_header.set("Input/Output")
+        self.active_tab = "Input/Output"
+
+    def _on_tab_change(self, tab_name):
+        """Handle tab change events."""
+        # Hide previous tab content
+        if self.active_tab in self.tab_frames:
+            self.tab_frames[self.active_tab].pack_forget()
+        
+        # Show new tab content
+        if tab_name in self.tab_frames:
+            self.tab_frames[tab_name].pack(fill=tk.BOTH, expand=True, in_=self.tab_content_frame)
+        
+        # Update active tab
+        self.active_tab = tab_name
 
     def _init_image_comparison(self):
         # Import here to avoid circular imports
@@ -426,14 +509,10 @@ class MainWindow:
         """Show the usage guide dialog."""
         UsageGuideDialog(self.root)
     
-# Update to the start_processing method in ui/main_window.py
-
-# Update this method in MainWindow class to include the expand_masks option in the validation check
-
     def start_processing(self):
         """Start the processing pipeline in a separate thread."""
         
-# At the start of your processing function
+        # At the start of your processing function
         print("Current Configuration:")
         print(f"- Alignment Method: {self.reinsert_alignment_method.get()}")
         print(f"- Blend Mode: {self.reinsert_blend_mode.get()}")
@@ -502,7 +581,6 @@ class MainWindow:
         
         # Check progress periodically
         self.root.after(100, self._check_progress)
-# Update to the _confirm_processing method in ui/main_window.py
 
     def _confirm_processing(self):
         """Show a confirmation dialog with processing settings."""
