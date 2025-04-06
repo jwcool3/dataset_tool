@@ -1,10 +1,12 @@
 """
 Enhanced compatibility layer for CustomTkinter
 Provides fallback mechanisms for missing CustomTkinter widgets or versions.
+Handles parameter translation between CustomTkinter and standard tkinter widgets.
 """
 
 import tkinter as tk
 from tkinter import ttk
+import sys
 import importlib
 from functools import partial
 import inspect
@@ -25,6 +27,17 @@ except ImportError:
     HAVE_CTK_SCROLLABLE = False
     CTK_VERSION = '0.0.0'
 
+# Print a debug message at import time
+print(f"CustomTkinter compatibility layer initialized. Native CTK: {HAVE_CTK}, Version: {CTK_VERSION}")
+
+# Define CustomTkinter-specific parameters that should be filtered out
+CTK_SPECIFIC_PARAMS = [
+    'fg_color', 'text_color', 'hover_color', 'corner_radius', 
+    'border_width', 'border_color', 'checkbox_width', 'checkbox_height',
+    'scrollbar_button_color', 'scrollbar_button_hover_color', 'dropdown_hover_color',
+    'dropdown_fg_color', 'dropdown_text_color', 'dropdown_font'
+]
+
 # Parameter mappings between CustomTkinter and standard widgets
 PARAM_MAPPINGS = {
     'fg_color': 'background',
@@ -39,12 +52,34 @@ PARAM_MAPPINGS = {
     'from_': 'from_',
     'to': 'to',
     'increment': 'increment',
-    'padding': 'padding',
+    # Special handling for padding - don't map directly
+    'relief': 'relief',
     'command': 'command',
     'state': 'state',
     'width': 'width',
-    'height': 'height'
+    'height': 'height',
+    'justify': 'justify',
+    'anchor': 'anchor',
+    'wraplength': 'wraplength',
+    'orient': 'orient'
 }
+
+# Relief mapping between CustomTkinter and ttk
+RELIEF_MAPPING = {
+    'groove': 'groove',
+    'flat': 'flat',
+    'raised': 'raised',
+    'sunken': 'sunken',
+    'ridge': 'ridge',
+    'solid': 'solid'
+}
+
+def safe_get_attr(obj, attr, default=None):
+    """Safely get an attribute from an object, returning default if not present."""
+    try:
+        return getattr(obj, attr)
+    except (AttributeError, TypeError):
+        return default
 
 def transform_params(widget_class, params):
     """Transform CustomTkinter-style parameters to standard ttk/tk parameters."""
@@ -57,7 +92,40 @@ def transform_params(widget_class, params):
     except (ValueError, TypeError):
         valid_params = []  # If we can't get the signature, assume all params are valid
     
+    # Special handling for padding
+    if 'padding' in params:
+        # For ttk widgets, handle padding differently
+        if widget_class.__module__.startswith('tkinter.ttk'):
+            # ttk widgets accept padding parameter
+            transformed['padding'] = params.pop('padding')
+        else:
+            # For tk widgets, use padx and pady
+            padding_value = params.pop('padding')
+            if isinstance(padding_value, (int, float)):
+                transformed['padx'] = padding_value
+                transformed['pady'] = padding_value
+            elif isinstance(padding_value, (tuple, list)) and len(padding_value) >= 2:
+                transformed['padx'] = padding_value[0]
+                transformed['pady'] = padding_value[1]
+    
+    # Special handling for relief
+    if 'relief' in params:
+        relief_value = params.pop('relief')
+        if relief_value in RELIEF_MAPPING:
+            transformed['relief'] = RELIEF_MAPPING[relief_value]
+    
+    # Process remaining parameters
     for key, value in params.items():
+        # Skip CustomTkinter-specific parameters with no mapping
+        if key in CTK_SPECIFIC_PARAMS and (key not in PARAM_MAPPINGS or PARAM_MAPPINGS[key] is None):
+            continue
+            
+        # Special handling for tuple values in fg_color (light/dark mode)
+        if key == 'fg_color' and isinstance(value, tuple) and len(value) == 2:
+            # Just use the first value (light mode value)
+            value = value[0]
+        
+        # Check if parameter is valid for this widget
         if key in valid_params or key == 'class_' or '__' not in key:
             transformed[key] = value
         elif key in PARAM_MAPPINGS and PARAM_MAPPINGS[key] is not None:
@@ -82,6 +150,13 @@ class CustomTkinterCompat:
         
         # Initialize cache for widget factory functions
         self._widget_factories = {}
+
+        # Define constants that might be used in the application
+        self.NORMAL = "normal"
+        self.DISABLED = "disabled"
+        self.APPEARANCE_MODE_LIGHT = "Light"
+        self.APPEARANCE_MODE_DARK = "Dark"
+        self.APPEARANCE_MODE_SYSTEM = "System"
     
     def __getattr__(self, name):
         """
@@ -105,12 +180,12 @@ class CustomTkinterCompat:
             return self._widget_factories[name]
             
         # Handle commonly used functions/attributes
-        if name == 'set_appearance_mode':
-            return lambda mode: None
-        elif name == 'set_default_color_theme':
-            return lambda theme: None
+        if name in ['set_appearance_mode', 'set_default_color_theme']:
+            return lambda *args, **kwargs: None
         elif name == 'CTkFont':
-            return tk.font.Font
+            return lambda *args, **kwargs: tk.font.Font(*args, **kwargs)
+        elif name.isupper():  # Constants like NORMAL, DISABLED
+            return name
         
         # For unknown attributes, raise an error
         raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
@@ -118,6 +193,17 @@ class CustomTkinterCompat:
     def _create_widget_factory(self, widget_type):
         """Create a factory function for the specified widget type."""
         def factory(parent=None, **kwargs):
+            # If the real CustomTkinter widget exists and has this class, use it
+            if self._ctk is not None:
+                try:
+                    widget_class = getattr(self._ctk, widget_type)
+                    return widget_class(parent, **kwargs)
+                except (AttributeError, TypeError, tk.TclError) as e:
+                    # Fall back to compatibility widget if there's an error
+                    print(f"Warning: Failed to create {widget_type} with native CustomTkinter: {e}")
+                    pass
+            
+            # Otherwise use the compatibility implementation
             return self._create_widget(parent, widget_type, **kwargs)
         
         return factory
@@ -134,14 +220,49 @@ class CustomTkinterCompat:
         Returns:
             Created widget instance
         """
-        # For CustomTkinter without certain classes, or plain ttk
+        # Extract and handle special parameters
+        fg_color = kwargs.pop('fg_color', None)
+        text_color = kwargs.pop('text_color', None)
+        hover_color = kwargs.pop('hover_color', None)
+        corner_radius = kwargs.pop('corner_radius', None)
+        padding = kwargs.pop('padding', None)
+        relief = kwargs.pop('relief', None)
+        
         # Map widget types to suitable replacements
         if widget_type == 'CTkFrame':
             widget_class = ttk.Frame
+            # Apply appropriate parameters for Frame
+            if padding is not None:
+                if isinstance(padding, (int, float)):
+                    kwargs['padding'] = padding
+                elif isinstance(padding, (tuple, list)) and len(padding) >= 2:
+                    kwargs['padding'] = padding
+            if relief is not None and relief in RELIEF_MAPPING:
+                kwargs['relief'] = RELIEF_MAPPING[relief]
+            if fg_color is not None:
+                if isinstance(fg_color, tuple) and len(fg_color) == 2:
+                    kwargs['background'] = fg_color[0]  # Light mode
+                else:
+                    kwargs['background'] = fg_color
+                    
         elif widget_type == 'CTkLabel':
             widget_class = ttk.Label
+            # Map text_color to foreground
+            if text_color is not None:
+                if isinstance(text_color, tuple) and len(text_color) == 2:
+                    kwargs['foreground'] = text_color[0]
+                else:
+                    kwargs['foreground'] = text_color
+            # Apply padding if provided
+            if padding is not None:
+                kwargs['padding'] = padding
+                    
         elif widget_type == 'CTkButton':
             widget_class = ttk.Button
+            # Apply padding if provided
+            if padding is not None:
+                kwargs['padding'] = padding
+                
         elif widget_type == 'CTkEntry':
             widget_class = ttk.Entry
         elif widget_type == 'CTkCheckbox' or widget_type == 'CTkCheckbutton':
@@ -180,6 +301,22 @@ class CustomTkinterCompat:
             
             canvas.bind_all("<MouseWheel>", _on_mousewheel)
             
+            # Set background color if specified
+            if fg_color is not None:
+                if isinstance(fg_color, tuple) and len(fg_color) == 2:
+                    bg_color = fg_color[0]  # Light mode
+                else:
+                    bg_color = fg_color
+                
+                frame.configure(background=bg_color)
+                canvas.configure(background=bg_color)
+                scrollable_frame.configure(background=bg_color)
+            
+            # Add methods to simulate CTkScrollableFrame behavior
+            scrollable_frame._parent_canvas = canvas
+            scrollable_frame.configure = lambda **kw: scrollable_frame.config(**kw)
+            scrollable_frame.winfo_children = lambda: ttk.Frame.winfo_children(scrollable_frame)
+            
             # Attach the canvas and scrollbar as attributes
             scrollable_frame.canvas = canvas
             scrollable_frame.scrollbar = scrollbar
@@ -189,16 +326,62 @@ class CustomTkinterCompat:
             widget_class = tk.Canvas
         elif widget_type == 'CTkTabview':
             widget_class = ttk.Notebook
+            
+            # Create a notebook with a special add method that mimics CTkTabview
+            notebook = ttk.Notebook(parent, **kwargs)
+            
+            # Save the original add method
+            original_add = notebook.add
+            
+            # Create a new add method
+            def add_tab(name):
+                frame = ttk.Frame(notebook)
+                original_add(frame, text=name)
+                return frame
+                
+            # Replace the add method
+            notebook.add = add_tab
+            
+            # Add a set method to mimic CTkTabview
+            def set_tab(name):
+                for i, tab_id in enumerate(notebook.tabs()):
+                    tab_name = notebook.tab(tab_id, "text")
+                    if tab_name == name:
+                        notebook.select(i)
+                        break
+            
+            notebook.set = set_tab
+            
+            return notebook
+            
         elif widget_type == 'CTkOptionMenu':
-            widget_class = ttk.OptionMenu
-            # Special handling for OptionMenu which has a different constructor
-            if 'values' in kwargs and parent is not None:
-                variable = kwargs.get('variable', tk.StringVar())
-                values = kwargs.pop('values', [])
-                if not values:
-                    values = [""]  # OptionMenu needs at least one value
-                transformed_params = transform_params(widget_class, kwargs)
-                return widget_class(parent, variable, values[0], *values, **transformed_params)
+            # For CTkOptionMenu, create a Combobox which is more similar
+            widget_class = ttk.Combobox
+            
+            # Handle values specially
+            if 'values' in kwargs:
+                kwargs['values'] = kwargs['values']
+            
+            # Use the variable if provided
+            if 'variable' in kwargs:
+                kwargs['textvariable'] = kwargs['variable']
+            
+            # Create the combobox
+            combobox = ttk.Combobox(parent, **kwargs)
+            
+            # Make it read-only if not specified
+            if 'state' not in kwargs:
+                combobox.configure(state='readonly')
+            
+            # Add a set method to mimic CTkOptionMenu
+            original_set = combobox.set
+            def set_value(value):
+                original_set(value)
+                
+            combobox.set_value = set_value
+            
+            return combobox
+            
         elif widget_type == 'CTkSwitch':
             widget_class = ttk.Checkbutton  # Best approximation
         elif widget_type == 'CTkTextbox':
@@ -223,14 +406,58 @@ class CustomTkinterCompat:
             return frame
         elif widget_type == 'CTkLabelFrame':
             widget_class = ttk.LabelFrame
+            # Special handling for label frame title
+            if 'text' in kwargs:
+                kwargs['text'] = kwargs['text']
+            # Apply padding if provided
+            if padding is not None:
+                kwargs['padding'] = padding
+            # Apply relief if provided    
+            if relief is not None and relief in RELIEF_MAPPING:
+                kwargs['relief'] = RELIEF_MAPPING[relief]
         else:
             # Default fallback
             widget_class = ttk.Frame
+            # Apply padding if provided for generic frame
+            if padding is not None:
+                kwargs['padding'] = padding
+            # Apply relief if provided
+            if relief is not None and relief in RELIEF_MAPPING:
+                kwargs['relief'] = RELIEF_MAPPING[relief]
         
-        # Transform parameters for ttk/tk widgets
-        transformed_params = transform_params(widget_class, kwargs)
-        
-        return widget_class(parent, **transformed_params)
+        # Try to create the widget with parameters appropriate for its class
+        try:
+            return widget_class(parent, **kwargs)
+        except (tk.TclError, TypeError) as e:
+            # If we get an error about invalid options, try again with minimal params
+            print(f"Warning: Error creating {widget_type} with params {kwargs}: {e}")
+            try:
+                # Try with just essential parameters
+                essential_params = {}
+                if 'text' in kwargs:
+                    essential_params['text'] = kwargs['text']
+                if 'command' in kwargs:
+                    essential_params['command'] = kwargs['command']
+                if 'variable' in kwargs:
+                    essential_params['variable'] = kwargs['variable']
+                return widget_class(parent, **essential_params)
+            except Exception as e2:
+                # Last resort - create with no parameters
+                print(f"Warning: Falling back to basic widget creation: {e2}")
+                return widget_class(parent)
+
+# Create methods to mimic CustomTkinter's global configuration
+def set_appearance_mode(mode_string):
+    """Dummy method to mimic CustomTkinter's appearance mode setting."""
+    pass
+
+def set_default_color_theme(theme_string):
+    """Dummy method to mimic CustomTkinter's theme setting."""
+    pass
+
+def get_appearance_mode():
+    """Dummy method to mimic CustomTkinter's appearance mode getter."""
+    return "Light"
 
 # Create the compatibility layer
 ctk = CustomTkinterCompat()

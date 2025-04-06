@@ -7,7 +7,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-from ui.compatibility import ctk, get_widget
+import customtkinter as ctk
 
 from ui.tabs.input_output_tab import InputOutputTab
 from ui.tabs.config_tab import ConfigTab

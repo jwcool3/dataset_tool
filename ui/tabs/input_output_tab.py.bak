@@ -6,7 +6,7 @@ Contains directory selection and processing pipeline options.
 import os
 import tkinter as tk
 from tkinter import filedialog
-from ui.compatibility import ctk, get_widget
+import customtkinter as ctk
 
 class InputOutputTab:
     """Tab for input/output directory selection and pipeline configuration."""
