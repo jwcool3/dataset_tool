@@ -595,161 +595,328 @@ class EnhancedCropReinserter:
         
         return None
 
-    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
+    def _align_masks(self, source_mask, target_mask, source_img, target_img, method="centroid", debug_dir=None):
         """
-        Align masks and images based on the specified method.
+        Align two masks using different methods.
         
         Args:
-            source_mask: Mask from source image
-            processed_mask: Mask from processed image
-            source_img: Source image
-            processed_img: Processed image
-            alignment_method: Method to use for alignment
+            source_mask: Source hair mask
+            target_mask: Target hair mask
+            source_img: Source image 
+            target_img: Target image
+            method: Alignment method ('none', 'centroid', 'bbox', 'landmarks', 'contour', or 'iou')
             debug_dir: Directory to save debug visualizations
-        
+            
         Returns:
             tuple: (aligned_mask, aligned_image)
         """
-        def clean_mask(mask, threshold=50):
-            """
-            Convert pixels below threshold to black
+        if method == "none" or source_mask is None or target_mask is None:
+            return target_mask, target_img
             
-            Args:
-                mask: Input grayscale mask
-                threshold: Pixel intensity threshold (0-255)
-                    - Pixels below this will be set to black (0)
-                    - Pixels above will be preserved
-            
-            Returns:
-                Cleaned mask with darker pixels removed
-            """
-            # Create a copy of the mask
-            cleaned_mask = mask.copy()
-            
-            # Convert pixels below threshold to black
-            cleaned_mask[cleaned_mask < threshold] = 0
-            
-            return cleaned_mask
+        print(f"Using {method} alignment method")
         
-        # Clean source and processed masks
-        source_mask_cleaned = clean_mask(source_mask)
-        processed_mask_cleaned = clean_mask(processed_mask)
+        # Convert masks to binary if needed
+        if len(source_mask.shape) > 2:
+            source_mask = cv2.cvtColor(source_mask, cv2.COLOR_BGR2GRAY)
+        if len(target_mask.shape) > 2:
+            target_mask = cv2.cvtColor(target_mask, cv2.COLOR_BGR2GRAY)
+            
+        # Thresholds for binary masks
+        _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
+        _, target_mask_bin = cv2.threshold(target_mask, 127, 255, cv2.THRESH_BINARY)
         
-        # Debug: Save cleaned masks if debug directory is provided
+        # Save initial masks for debugging
         if debug_dir:
-            cv2.imwrite(os.path.join(debug_dir, "source_mask_cleaned.png"), source_mask_cleaned)
-            cv2.imwrite(os.path.join(debug_dir, "processed_mask_cleaned.png"), processed_mask_cleaned)
+            cv2.imwrite(os.path.join(debug_dir, "source_mask_before_alignment.png"), source_mask)
+            cv2.imwrite(os.path.join(debug_dir, "target_mask_before_alignment.png"), target_mask)
         
-        # Continue with alignment using cleaned masks
-        # Binary threshold cleaned masks if needed
-        _, source_mask_bin = cv2.threshold(source_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
-        _, processed_mask_bin = cv2.threshold(processed_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
+        # Initialize transformation matrices
+        h, w = target_mask.shape[:2]
+        M = np.float32([[1, 0, 0], [0, 1, 0]])  # Identity transform
+        rotation_matrix = None
         
-        # Make copies to modify
-        aligned_mask = processed_mask.copy()
-        aligned_img = processed_img.copy()
+        # Get manual offset values from UI controls
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
         
-        # Centroid alignment
-        if alignment_method == "centroid":
-            # Calculate centroids
+        # Get manual scale values from UI controls
+        manual_scale_x = self.app.reinsert_manual_scale_x.get()
+        manual_scale_y = self.app.reinsert_manual_scale_y.get()
+        
+        # Get manual rotation value from UI controls
+        manual_rotation = self.app.reinsert_manual_rotation.get() if hasattr(self.app, 'reinsert_manual_rotation') else 0.0
+        
+        # Alignment methods
+        if method == "centroid":
+            # Find centroids of both masks
             source_moments = cv2.moments(source_mask_bin)
-            processed_moments = cv2.moments(processed_mask_bin)
+            target_moments = cv2.moments(target_mask_bin)
             
-            if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
+            if source_moments["m00"] != 0 and target_moments["m00"] != 0:
                 source_cx = int(source_moments["m10"] / source_moments["m00"])
                 source_cy = int(source_moments["m01"] / source_moments["m00"])
-                processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
-                processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
                 
-                # Calculate shift
-                dx = source_cx - processed_cx
-                dy = source_cy - processed_cy
+                target_cx = int(target_moments["m10"] / target_moments["m00"])
+                target_cy = int(target_moments["m01"] / target_moments["m00"])
                 
-                # Apply shift
+                # Calculate offset to align centroids
+                dx = source_cx - target_cx
+                dy = source_cy - target_cy
+                
+                # Create transformation matrix for translation
                 M = np.float32([[1, 0, dx], [0, 1, dy]])
-                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-        
-        # Contour-based alignment (top point alignment)
-        elif alignment_method == "contour":
-            source_points = np.argwhere(source_mask_bin > 0)
-            processed_points = np.argwhere(processed_mask_bin > 0)
             
-            if len(source_points) > 0 and len(processed_points) > 0:
-                # Find the top point
-                source_top_y = source_points[:, 0].min()
-                source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
-                source_top_x = np.median(source_points[source_top_indices, 1])
-                
-                processed_top_y = processed_points[:, 0].min()
-                processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
-                processed_top_x = np.median(processed_points[processed_top_indices, 1])
-                
-                # Calculate shift
-                dx = int(source_top_x - processed_top_x)
-                dy = int(source_top_y - processed_top_y)
-                
-                # Apply shift
-                M = np.float32([[1, 0, dx], [0, 1, dy]])
-                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-        
-        # Bounding box alignment
-        elif alignment_method == "bbox":
-            source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        elif method == "bbox":
+            # Find bounding boxes of both masks
+            source_cnts, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            target_cnts, _ = cv2.findContours(target_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            if source_contours and processed_contours:
-                source_contour = max(source_contours, key=cv2.contourArea)
-                processed_contour = max(processed_contours, key=cv2.contourArea)
+            if source_cnts and target_cnts:
+                source_cnt = max(source_cnts, key=cv2.contourArea)
+                target_cnt = max(target_cnts, key=cv2.contourArea)
                 
-                source_x, source_y, source_w, source_h = cv2.boundingRect(source_contour)
-                processed_x, processed_y, processed_w, processed_h = cv2.boundingRect(processed_contour)
+                source_x, source_y, source_w, source_h = cv2.boundingRect(source_cnt)
+                target_x, target_y, target_w, target_h = cv2.boundingRect(target_cnt)
                 
-                # Calculate shifts to align top-left corners
-                dx = source_x - processed_x
-                dy = source_y - processed_y
+                # Calculate center points of bounding boxes
+                source_center = (source_x + source_w // 2, source_y + source_h // 2)
+                target_center = (target_x + target_w // 2, target_y + target_h // 2)
                 
-                # Apply shift
-                M = np.float32([[1, 0, dx], [0, 1, dy]])
-                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
-        
-        # Intersection Over Union (IoU) alignment
-        elif alignment_method == "iou":
-            best_iou = 0
-            best_mask = processed_mask.copy()
-            best_img = processed_img.copy()
-            
-            max_shift = 20  # pixels
-            for dx in range(-max_shift, max_shift + 1, 2):
-                for dy in range(-max_shift, max_shift + 1, 2):
-                    # Create shifted mask and image
+                # Calculate offset to align centers
+                dx = source_center[0] - target_center[0]
+                dy = source_center[1] - target_center[1]
+                
+                # Calculate scale factors
+                scale_x = source_w / max(1, target_w)
+                scale_y = source_h / max(1, target_h)
+                
+                # Create transformation matrix for scaling and translation
+                # First scale, then translate
+                center_x, center_y = w // 2, h // 2
+                scale_M = np.float32([
+                    [scale_x, 0, center_x * (1 - scale_x)],
+                    [0, scale_y, center_y * (1 - scale_y)]
+                ])
+                trans_M = np.float32([[1, 0, dx], [0, 1, dy]])
+                
+                # Apply scaling first
+                target_mask = cv2.warpAffine(target_mask, scale_M, (w, h))
+                target_img = cv2.warpAffine(target_img, scale_M, (w, h))
+                
+                # Then set translation matrix
+                M = trans_M
+                
+        elif method == "landmarks":
+            # Use facial landmarks for alignment (if available)
+            if self.face_detector is not None and self.landmark_predictor is not None:
+                # Get landmarks for both images
+                source_landmarks = self._get_landmarks(source_img)
+                target_landmarks = self._get_landmarks(target_img)
+                
+                if source_landmarks is not None and target_landmarks is not None:
+                    # Calculate automatic scale and rotation
+                    auto_scale_x, auto_scale_y, auto_rotation = self._calculate_face_scale_and_rotation(
+                        source_landmarks, target_landmarks
+                    )
+                    
+                    # Override manual controls with automatic values if translation-only mode is not enabled
+                    if not hasattr(self.app, 'use_translation_only') or not self.app.use_translation_only.get():
+                        # Use automatic scale and rotation with manual adjustments as fine-tuning
+                        scale_x = auto_scale_x * manual_scale_x
+                        scale_y = auto_scale_y * manual_scale_y
+                        rotation = auto_rotation + manual_rotation
+                    else:
+                        # Use just manual values
+                        scale_x = manual_scale_x
+                        scale_y = manual_scale_y
+                        rotation = manual_rotation
+                    
+                    # Find face centers
+                    src_face_center = np.mean(source_landmarks, axis=0).astype(int)
+                    target_face_center = np.mean(target_landmarks, axis=0).astype(int)
+                    
+                    # Calculate offset
+                    dx = src_face_center[0] - target_face_center[0]
+                    dy = src_face_center[1] - target_face_center[1]
+                    
+                    # Create a combined transformation matrix:
+                    # 1. First translate to origin 
+                    # 2. Then rotate
+                    # 3. Then scale
+                    # 4. Then translate back
+                    # 5. Finally, add the offset
+
+                    # Define center for rotation and scaling
+                    center = (w // 2, h // 2)
+                    
+                    # Create rotation matrix
+                    rotation_matrix = cv2.getRotationMatrix2D(center, rotation, 1.0)
+                    
+                    # Apply rotation to the mask and image
+                    if abs(rotation) > 0.5:  # Only apply if rotation is significant
+                        target_mask = cv2.warpAffine(target_mask, rotation_matrix, (w, h))
+                        target_img = cv2.warpAffine(target_img, rotation_matrix, (w, h))
+                    
+                    # Create scaling matrix
+                    scale_M = np.float32([
+                        [scale_x, 0, center[0] * (1 - scale_x)],
+                        [0, scale_y, center[1] * (1 - scale_y)]
+                    ])
+                    
+                    # Apply scaling
+                    if abs(scale_x - 1.0) > 0.01 or abs(scale_y - 1.0) > 0.01:  # Only apply if scale is significant
+                        target_mask = cv2.warpAffine(target_mask, scale_M, (w, h))
+                        target_img = cv2.warpAffine(target_img, scale_M, (w, h))
+                    
+                    # Create final translation matrix
+                    M = np.float32([[1, 0, dx + manual_offset_x], [0, 1, dy + manual_offset_y]])
+                else:
+                    # Fallback to centroid
+                    print("Landmarks not detected, falling back to centroid alignment")
+                    source_moments = cv2.moments(source_mask_bin)
+                    target_moments = cv2.moments(target_mask_bin)
+                    
+                    if source_moments["m00"] != 0 and target_moments["m00"] != 0:
+                        source_cx = int(source_moments["m10"] / source_moments["m00"])
+                        source_cy = int(source_moments["m01"] / source_moments["m00"])
+                        
+                        target_cx = int(target_moments["m10"] / target_moments["m00"])
+                        target_cy = int(target_moments["m01"] / target_moments["m00"])
+                        
+                        # Calculate offset to align centroids
+                        dx = source_cx - target_cx + manual_offset_x
+                        dy = source_cy - target_cy + manual_offset_y
+                        
+                        # Create transformation matrix for translation
+                        M = np.float32([[1, 0, dx], [0, 1, dy]])
+            else:
+                print("Facial landmark detection not available - falling back to centroid alignment")
+                # Fallback to centroid with manual controls
+                source_moments = cv2.moments(source_mask_bin)
+                target_moments = cv2.moments(target_mask_bin)
+                
+                if source_moments["m00"] != 0 and target_moments["m00"] != 0:
+                    source_cx = int(source_moments["m10"] / source_moments["m00"])
+                    source_cy = int(source_moments["m01"] / source_moments["m00"])
+                    
+                    target_cx = int(target_moments["m10"] / target_moments["m00"])
+                    target_cy = int(target_moments["m01"] / target_moments["m00"])
+                    
+                    # Calculate offset to align centroids
+                    dx = source_cx - target_cx + manual_offset_x
+                    dy = source_cy - target_cy + manual_offset_y
+                    
+                    # Create transformation matrix for translation
                     M = np.float32([[1, 0, dx], [0, 1, dy]])
-                    shifted_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
-                    shifted_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+                    
+        elif method == "contour":
+            # Use contour matching for alignment
+            source_cnts, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            target_cnts, _ = cv2.findContours(target_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if source_cnts and target_cnts:
+                source_cnt = max(source_cnts, key=cv2.contourArea)
+                target_cnt = max(target_cnts, key=cv2.contourArea)
+                
+                # Calculate centroids
+                source_M = cv2.moments(source_cnt)
+                target_M = cv2.moments(target_cnt)
+                
+                if source_M["m00"] != 0 and target_M["m00"] != 0:
+                    source_cx = int(source_M["m10"] / source_M["m00"])
+                    source_cy = int(source_M["m01"] / source_M["m00"])
+                    
+                    target_cx = int(target_M["m10"] / target_M["m00"])
+                    target_cy = int(target_M["m01"] / target_M["m00"])
+                    
+                    # Calculate offset to align centroids
+                    dx = source_cx - target_cx
+                    dy = source_cy - target_cy
+                    
+                    # Create transformation matrix for translation
+                    M = np.float32([[1, 0, dx], [0, 1, dy]])
+                    
+                    # Also check size differences for scaling
+                    source_area = cv2.contourArea(source_cnt)
+                    target_area = cv2.contourArea(target_cnt)
+                    
+                    if target_area > 0:
+                        scale_factor = np.sqrt(source_area / target_area)
+                        scale_factor = min(max(scale_factor, 0.5), 2.0)  # Limit scaling
+                        
+                        # Create scaling matrix
+                        center = (w // 2, h // 2)
+                        scale_M = np.float32([
+                            [scale_factor, 0, center[0] * (1 - scale_factor)],
+                            [0, scale_factor, center[1] * (1 - scale_factor)]
+                        ])
+                        
+                        # Apply scaling
+                        target_mask = cv2.warpAffine(target_mask, scale_M, (w, h))
+                        target_img = cv2.warpAffine(target_img, scale_M, (w, h))
+        
+        elif method == "iou":
+            # Find the translation that maximizes IoU (Intersection over Union)
+            best_iou = 0
+            best_dx, best_dy = 0, 0
+            
+            # Simple grid search for optimal translation
+            search_range = 40
+            step = 5
+            
+            for dx in range(-search_range, search_range + 1, step):
+                for dy in range(-search_range, search_range + 1, step):
+                    # Create transformation matrix
+                    test_M = np.float32([[1, 0, dx], [0, 1, dy]])
+                    
+                    # Apply transformation to target mask
+                    shifted_mask = cv2.warpAffine(target_mask_bin, test_M, (w, h))
                     
                     # Calculate IoU
-                    intersection = np.logical_and(source_mask_bin > 0, shifted_mask > 0).sum()
-                    union = np.logical_or(source_mask_bin > 0, shifted_mask > 0).sum()
-                    iou = intersection / union if union > 0 else 0
+                    intersection = cv2.bitwise_and(source_mask_bin, shifted_mask)
+                    union = cv2.bitwise_or(source_mask_bin, shifted_mask)
                     
-                    # Update best if improved
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_mask = shifted_mask
-                        best_img = shifted_img
+                    # Count non-zero pixels
+                    intersection_count = cv2.countNonZero(intersection)
+                    union_count = cv2.countNonZero(union)
+                    
+                    if union_count > 0:
+                        iou = intersection_count / union_count
+                        
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_dx = dx
+                            best_dy = dy
             
-            aligned_mask = best_mask
-            aligned_img = best_img
+            # Use the best translation
+            M = np.float32([[1, 0, best_dx], [0, 1, best_dy]])
+            
+        # Apply final transformation to target mask and image
+        aligned_mask = cv2.warpAffine(target_mask, M, (w, h))
+        aligned_img = cv2.warpAffine(target_img, M, (w, h))
         
-        # Debug visualization
+        # Save aligned masks for debugging
         if debug_dir:
-            # Source mask in red, aligned mask in green
-            mask_viz = np.zeros((source_mask_bin.shape[0], source_mask_bin.shape[1], 3), dtype=np.uint8)
-            mask_viz[source_mask_bin > 0] = [0, 0, 255]  # Red for source mask
-            mask_viz[aligned_mask > 0] = [0, 255, 0]  # Green for aligned mask
-            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_viz.png"), mask_viz)
+            cv2.imwrite(os.path.join(debug_dir, "target_mask_after_alignment.png"), aligned_mask)
+            cv2.imwrite(os.path.join(debug_dir, "target_img_after_alignment.png"), aligned_img)
+            
+            # Create visualization of alignment
+            vis_img = source_img.copy()
+            # Colorize masks for visualization
+            color_source = cv2.cvtColor(source_mask, cv2.COLOR_GRAY2BGR)
+            color_source[:,:,0] = 0  # Remove blue channel
+            color_source[:,:,2] = 0  # Remove red channel
+            
+            color_aligned = cv2.cvtColor(aligned_mask, cv2.COLOR_GRAY2BGR)
+            color_aligned[:,:,0] = 0  # Remove blue channel
+            color_aligned[:,:,1] = 0  # Remove green channel
+            
+            # Overlay masks
+            alpha = 0.5
+            vis_img = cv2.addWeighted(vis_img, 1.0, color_source, alpha, 0)
+            vis_img = cv2.addWeighted(vis_img, 1.0, color_aligned, alpha, 0)
+            
+            cv2.imwrite(os.path.join(debug_dir, "alignment_visualization.png"), vis_img)
         
         return aligned_mask, aligned_img
 
@@ -1702,3 +1869,81 @@ class EnhancedCropReinserter:
             enhanced_mask = enhanced_mask.astype(np.uint8)
         
         return parting_line, enhanced_mask
+
+    def _calculate_face_scale_and_rotation(self, source_landmarks, processed_landmarks):
+        """
+        Calculate scale and rotation adjustments based on facial landmarks.
+        
+        Args:
+            source_landmarks: Facial landmarks from source image
+            processed_landmarks: Facial landmarks from processed image
+            
+        Returns:
+            tuple: (scale_x, scale_y, rotation_angle_degrees)
+        """
+        if source_landmarks is None or processed_landmarks is None:
+            return 1.0, 1.0, 0.0
+            
+        try:
+            # Use eye landmarks for scale and rotation
+            # Left eye: landmarks[36:42]
+            # Right eye: landmarks[42:48]
+            
+            # Get eye centers
+            def get_eye_center(landmarks, eye_indices):
+                eye_points = landmarks[eye_indices[0]:eye_indices[1]]
+                return np.mean(eye_points, axis=0)
+            
+            # Source image eyes
+            src_left_eye = get_eye_center(source_landmarks, (36, 42))
+            src_right_eye = get_eye_center(source_landmarks, (42, 48))
+            
+            # Processed image eyes
+            proc_left_eye = get_eye_center(processed_landmarks, (36, 42))
+            proc_right_eye = get_eye_center(processed_landmarks, (42, 48))
+            
+            # Calculate eye distances (inter-ocular distance)
+            src_eye_distance = np.linalg.norm(src_right_eye - src_left_eye)
+            proc_eye_distance = np.linalg.norm(proc_right_eye - proc_left_eye)
+            
+            # Calculate scale factor based on eye distance ratio
+            if proc_eye_distance > 0 and src_eye_distance > 0:
+                scale = src_eye_distance / proc_eye_distance
+            else:
+                scale = 1.0
+                
+            # Calculate face size using the face bounding box for vertical scale
+            src_face_top = np.min(source_landmarks[:, 1])
+            src_face_bottom = np.max(source_landmarks[:, 1])
+            src_face_height = src_face_bottom - src_face_top
+            
+            proc_face_top = np.min(processed_landmarks[:, 1])
+            proc_face_bottom = np.max(processed_landmarks[:, 1])
+            proc_face_height = proc_face_bottom - proc_face_top
+            
+            # Calculate vertical scale
+            if proc_face_height > 0 and src_face_height > 0:
+                scale_y = src_face_height / proc_face_height
+            else:
+                scale_y = scale  # Use horizontal scale as fallback
+            
+            # Calculate rotation angle
+            src_eye_angle = np.arctan2(src_right_eye[1] - src_left_eye[1], 
+                                      src_right_eye[0] - src_left_eye[0])
+            proc_eye_angle = np.arctan2(proc_right_eye[1] - proc_left_eye[1], 
+                                       proc_right_eye[0] - proc_left_eye[0])
+            
+            # Calculate angle difference in degrees
+            angle_diff = np.degrees(src_eye_angle - proc_eye_angle)
+            
+            # Normalize the angle to -180 to 180 range
+            if angle_diff > 180:
+                angle_diff -= 360
+            elif angle_diff < -180:
+                angle_diff += 360
+                
+            return scale, scale_y, angle_diff
+            
+        except (IndexError, ValueError, ZeroDivisionError) as e:
+            print(f"Error calculating face scale and rotation: {str(e)}")
+            return 1.0, 1.0, 0.0

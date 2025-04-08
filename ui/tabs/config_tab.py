@@ -920,6 +920,35 @@ class ConfigTab:
             foreground="gray"
         ).pack(side=tk.LEFT, padx=5)
         
+        # Rotation control
+        rotation_frame = ttk.Frame(self.advanced_frame)
+        rotation_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(rotation_frame, text="Rotation (degrees):").pack(side=tk.LEFT, padx=5)
+        rotation_spinbox = ttk.Spinbox(
+            rotation_frame,
+            from_=-180.0,
+            to=180.0,
+            increment=1.0,
+            width=5,
+            textvariable=self.parent.reinsert_manual_rotation
+        )
+        rotation_spinbox.pack(side=tk.LEFT, padx=5)
+
+        # Translation-only mode checkbox
+        translation_frame = ttk.Frame(self.advanced_frame)
+        translation_frame.pack(fill=tk.X, padx=10, pady=5)
+        translation_only_check = ttk.Checkbutton(
+            translation_frame,
+            text="Use automatic scaling & rotation",
+            variable=self.parent.use_translation_only
+        )
+        translation_only_check.pack(side=tk.LEFT, padx=5)
+        ttk.Label(
+            translation_frame, 
+            text="When enabled, scale and rotation are calculated based on face landmarks.",
+            font=("", 8, "italic")
+        ).pack(side=tk.LEFT, padx=5, pady=2)
+        
         # Preserve edges option
         ttk.Checkbutton(
             self.advanced_frame,

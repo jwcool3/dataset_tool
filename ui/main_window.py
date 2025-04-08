@@ -138,7 +138,9 @@ class MainWindow:
         # Add these variables
         self.reinsert_manual_scale_x = tk.DoubleVar(value=1.0)
         self.reinsert_manual_scale_y = tk.DoubleVar(value=1.0)
-
+        # Add rotation and translation mode variables
+        self.reinsert_manual_rotation = tk.DoubleVar(value=0.0)
+        self.use_translation_only = tk.BooleanVar(value=False)
 
         # Add this new variable for hair parting preservation
         self.preserve_hair_parting = tk.BooleanVar(value=False)
@@ -157,12 +159,6 @@ class MainWindow:
         self.cropped_video_fps = tk.DoubleVar(value=30.0)
         self.cropped_video_format = tk.StringVar(value="mp4")
         self.export_with_alpha = tk.BooleanVar(value=True)  # Export with transparency
-
-        # Add this to MainWindow._init_variables method:
-        self.reinsert_manual_rotation = tk.DoubleVar(value=0.0)
-
-        self.use_translation_only = tk.BooleanVar(value=True)  # Default to translation-only
-
 
         # Mask expansion options
         self.mask_expand_iterations = tk.IntVar(value=5)
