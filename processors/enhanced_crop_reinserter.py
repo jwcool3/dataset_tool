@@ -277,7 +277,17 @@ class EnhancedCropReinserter:
             # Get landmarks if available and face detector exists
             landmarks = None
             if hasattr(self, 'face_detector') and self.face_detector is not None:
-                landmarks = self._get_landmarks(processed_img)
+                # Try to detect landmarks in the source image first (most reliable)
+                landmarks = self._get_landmarks(source_img)
+                if landmarks is None:
+                    print("No faces detected in source image, trying processed image...")
+                    # If that fails, try the processed image
+                    landmarks = self._get_landmarks(processed_img)
+                
+                if landmarks is None:
+                    print("No faces detected in either image, using geometric approach for bangs")
+                else:
+                    print(f"Face detected, using landmark-based approach for bangs")
             
             # Isolate just the bangs region
             print(f"Creating bangs-only mask with width ratio: {self.app.bangs_width_ratio.get()}, extension: {self.app.bangs_extension_amount.get()}")
@@ -1671,32 +1681,45 @@ class EnhancedCropReinserter:
 
     def _get_landmarks(self, image):
         """
-        Detect face and extract facial landmarks.
+        Get facial landmarks from an image.
         
         Args:
             image: Input image
             
         Returns:
-            list: List of (x, y) landmark coordinates or None if detection fails
+            list: List of (x, y) landmarks or None if no face detected
         """
-        # Check if detector and predictor are available
-        if self.face_detector is None or self.landmark_predictor is None:
-            print("Facial landmark detection not available")
+        if image is None or self.face_detector is None or self.landmark_predictor is None:
             return None
             
-        # Convert to grayscale for detection
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        
-        # Detect faces
         try:
-            faces = self.face_detector(gray)
-            if not faces:
+            # Convert to grayscale if needed
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
+            
+            # For smaller images, we shouldn't upsample as much to avoid false positives
+            h, w = image.shape[:2]
+            
+            # Adaptive upsampling based on image size
+            if max(h, w) < 300:
+                # For very small images, use more upsampling to catch small faces
+                faces = self.face_detector(gray, 2)
+            elif max(h, w) < 600:
+                # For medium-sized images, use standard upsampling
+                faces = self.face_detector(gray, 1)
+            else:
+                # For large images, don't upsample
+                faces = self.face_detector(gray, 0)
+            
+            if len(faces) == 0:
                 print("No faces detected in image")
                 return None
-            
-            # Get largest face
+                
+            # Get the largest face by area
             largest_face = faces[0]
-            largest_area = (largest_face.right() - largest_face.left()) * (largest_face.bottom() - largest_face.top())
+            largest_area = (faces[0].right() - faces[0].left()) * (faces[0].bottom() - faces[0].top())
             
             for face in faces[1:]:
                 area = (face.right() - face.left()) * (face.bottom() - face.top())
@@ -1704,19 +1727,22 @@ class EnhancedCropReinserter:
                     largest_face = face
                     largest_area = area
             
-            # Get landmarks for the face
+            # Get landmarks
             shape = self.landmark_predictor(gray, largest_face)
-            
-            # Convert landmarks to list of (x, y) coordinates
             landmarks = []
-            for i in range(68):  # 68 landmarks in the standard model
+            
+            for i in range(68):  # 68 landmarks
                 x = shape.part(i).x
                 y = shape.part(i).y
                 landmarks.append((x, y))
-            
+                
+            print(f"Detected face with {len(landmarks)} landmarks")
             return landmarks
+            
         except Exception as e:
             print(f"Error detecting landmarks: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _isolate_bangs_region(self, mask, landmarks=None):
@@ -1795,30 +1821,59 @@ class EnhancedCropReinserter:
         if len(mask_points) == 0:
             return bangs_mask  # Empty mask, return empty
         
+        print("Using geometric approach for bangs detection (no facial landmarks)")
+        
         # Find the topmost part of the mask
         top_y = np.min(mask_points[:, 0]) if len(mask_points) > 0 else 0
         
+        # Find the vertical and horizontal extents of the mask
+        bottom_y = np.max(mask_points[:, 0]) if len(mask_points) > 0 else height
+        left_x = np.min(mask_points[:, 1]) if len(mask_points) > 0 else 0
+        right_x = np.max(mask_points[:, 1]) if len(mask_points) > 0 else width
+        
+        # Calculate the mask center and total height
+        mask_height = bottom_y - top_y
+        mask_center_x = (left_x + right_x) // 2
+        
         # Use the extension_amount config for bangs height
-        bangs_height = extension_amount
+        # But limit it to a reasonable portion of the mask height
+        bangs_height = min(extension_amount, int(mask_height * 0.4))
+        print(f"Calculated bangs height: {bangs_height} pixels (from top)")
+        
+        # Calculate bottom edge of bangs area
         bangs_bottom = min(height, top_y + bangs_height)
         
-        # Find horizontal extent of mask at the top portion
-        top_region_points = mask_points[mask_points[:, 0] <= bangs_bottom]
+        # Find horizontal extent of mask in the top portion
+        top_region_mask = np.zeros_like(mask)
+        top_region_mask[top_y:bangs_bottom, :] = mask[top_y:bangs_bottom, :]
+        top_region_points = np.argwhere(top_region_mask > 127)
+        
         if len(top_region_points) > 0:
-            left_x = np.min(top_region_points[:, 1])
-            right_x = np.max(top_region_points[:, 1])
+            # Get actual width of top region
+            top_left_x = np.min(top_region_points[:, 1])
+            top_right_x = np.max(top_region_points[:, 1])
+            top_width = top_right_x - top_left_x
+            
             # Apply width_ratio to center portion
-            total_width = right_x - left_x
-            center_x = (left_x + right_x) // 2
-            adjusted_width = int(total_width * width_ratio)
+            adjusted_width = int(top_width * width_ratio)
+            center_x = (top_left_x + top_right_x) // 2
+            
+            # Ensure the width is not too narrow
+            min_width = min(100, int(width * 0.15))
+            adjusted_width = max(adjusted_width, min_width)
+            
             left_x = max(0, center_x - adjusted_width // 2)
             right_x = min(width, center_x + adjusted_width // 2)
+            
+            print(f"Bangs region: x={left_x}-{right_x}, y={top_y}-{bangs_bottom}")
         else:
-            # Default to middle portion based on width_ratio
+            # Default to middle portion based on width_ratio if no points found in top region
             center_x = width // 2
-            adjusted_width = int(width * width_ratio)
+            adjusted_width = max(int(width * width_ratio), int(width * 0.2))
             left_x = max(0, center_x - adjusted_width // 2)
-            right_x = max(0, center_x + adjusted_width // 2)
+            right_x = min(width, center_x + adjusted_width // 2)
+            
+            print(f"Using default bangs region: x={left_x}-{right_x}, y={top_y}-{bangs_bottom}")
         
         # Create a trapezoidal mask shape for the bangs
         for y in range(top_y, bangs_bottom):
