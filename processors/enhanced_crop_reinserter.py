@@ -271,47 +271,6 @@ class EnhancedCropReinserter:
         print(f"Processed dimensions: {processed_w}x{processed_h}")
         print(f"Mask dimensions: {mask.shape[1]}x{mask.shape[0]}")
         
-        # Resize processed image and mask to match source if dimensions differ
-        if source_w != processed_w or source_h != processed_h:
-            print(f"Resizing processed image from {processed_w}x{processed_h} to {source_w}x{source_h}")
-            processed_img_resized = cv2.resize(processed_img, (source_w, source_h), 
-                                            interpolation=cv2.INTER_LANCZOS4)
-            mask_resized = cv2.resize(mask, (source_w, source_h), 
-                                    interpolation=cv2.INTER_NEAREST)
-        else:
-            processed_img_resized = processed_img.copy()
-            mask_resized = mask.copy()
-            
-        # Debug: Save original and resized images
-        if debug_dir:
-            cv2.imwrite(os.path.join(debug_dir, "source_original.png"), source_img)
-            cv2.imwrite(os.path.join(debug_dir, "processed_original.png"), processed_img)
-            cv2.imwrite(os.path.join(debug_dir, "mask_original.png"), mask)
-            
-            if source_w != processed_w or source_h != processed_h:
-                cv2.imwrite(os.path.join(debug_dir, "processed_resized.png"), processed_img_resized)
-                cv2.imwrite(os.path.join(debug_dir, "mask_resized.png"), mask_resized)
-                
-        # Apply bangs extension if enabled and not in bangs-only mode
-        if self.app.extend_bangs.get() and not self.app.use_bangs_only.get():
-            print("Extending mask in bangs/forehead area")
-            extension_amount = self.app.bangs_extension_amount.get()
-            width_ratio = self.app.bangs_width_ratio.get()
-            
-            mask_resized = self._extend_bangs_area(
-                mask_resized,
-                extend_pixels=extension_amount,
-                forehead_ratio=width_ratio,
-                min_opacity=self.app.bangs_min_opacity.get()
-            )
-            
-            # Save debug image
-            if debug_dir:
-                cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask.png"), mask_resized)
-        
-        # Check if the source has a different hair mask
-        source_mask = self._find_source_mask(source_path)
-                
         # Check if "bangs only" mode is enabled
         if self.app.use_bangs_only.get():
             print("Using bangs-only mode")
@@ -323,28 +282,68 @@ class EnhancedCropReinserter:
                 if landmarks is None:
                     print("No faces detected in source image, trying processed image...")
                     # If that fails, try the processed image
-                    landmarks = self._get_landmarks(processed_img_resized)
+                    landmarks = self._get_landmarks(processed_img)
                 
                 if landmarks is None:
                     print("No faces detected in either image, using geometric approach for bangs")
                 else:
                     print(f"Face detected, using landmark-based approach for bangs")
-                
+            
             # Isolate just the bangs region
             print(f"Creating bangs-only mask with width ratio: {self.app.bangs_width_ratio.get()}, extension: {self.app.bangs_extension_amount.get()}")
-            bangs_mask = self._isolate_bangs_region(mask_resized, landmarks)
+            bangs_mask = self._isolate_bangs_region(mask, landmarks)
             
-            # Debug: Save masks
+            # Replace the full mask with just the bangs
+            mask = bangs_mask
+            
+            # Save debug image
             if debug_dir:
-                cv2.imwrite(os.path.join(debug_dir, "full_mask_resized.png"), mask_resized)
-                cv2.imwrite(os.path.join(debug_dir, "bangs_only_mask.png"), bangs_mask)
-                
-                # Create a visualization
-                viz = np.zeros((source_h, source_w, 3), dtype=np.uint8)
-                viz[mask_resized > 127, 0] = 255  # Red channel for full mask
-                viz[bangs_mask > 127, 1] = 255    # Green channel for bangs mask
-                cv2.imwrite(os.path.join(debug_dir, "mask_comparison.png"), viz)
-                
+                cv2.imwrite(os.path.join(debug_dir, "bangs_only_mask.png"), mask)
+
+        # Apply bangs extension if enabled (add after loading the mask but before any other mask processing)
+        # Only apply if not in bangs-only mode (which already includes extension)
+        if self.app.extend_bangs.get() and mask is not None and not self.app.use_bangs_only.get():
+            print("Extending mask in bangs/forehead area")
+            extension_amount = self.app.bangs_extension_amount.get()
+            width_ratio = self.app.bangs_width_ratio.get()
+            
+            mask = self._extend_bangs_area(
+                mask, 
+                extend_pixels=extension_amount,
+                forehead_ratio=width_ratio,
+                min_opacity=self.app.bangs_min_opacity.get()
+            )
+            
+            # Save debug image
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask.png"), mask)
+
+        # Resize processed image and mask to match source if dimensions differ
+        if source_w != processed_w or source_h != processed_h:
+            print(f"Resizing processed image from {processed_w}x{processed_h} to {source_w}x{source_h}")
+            processed_img_resized = cv2.resize(processed_img, (source_w, source_h), 
+                                            interpolation=cv2.INTER_LANCZOS4)
+            mask_resized = cv2.resize(mask, (source_w, source_h), 
+                                    interpolation=cv2.INTER_NEAREST)
+        else:
+            processed_img_resized = processed_img
+            mask_resized = mask
+        
+        # Debug: Save original and resized images
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "source_original.png"), source_img)
+            cv2.imwrite(os.path.join(debug_dir, "processed_original.png"), processed_img)
+            cv2.imwrite(os.path.join(debug_dir, "mask_original.png"), mask)
+            
+            if source_w != processed_w or source_h != processed_h:
+                cv2.imwrite(os.path.join(debug_dir, "processed_resized.png"), processed_img_resized)
+                cv2.imwrite(os.path.join(debug_dir, "mask_resized.png"), mask_resized)
+        
+        # Check if the source has a different hair mask
+        source_mask = self._find_source_mask(source_path)
+        
+        # Special handling for bangs-only mode
+        if self.app.use_bangs_only.get():
             # Get configuration settings
             blend_mode = self.app.reinsert_blend_mode.get()
             blend_extent = self.app.reinsert_blend_extent.get()
@@ -357,12 +356,12 @@ class EnhancedCropReinserter:
             if manual_offset_x != 0 or manual_offset_y != 0:
                 print(f"Applying manual offset to bangs: X={manual_offset_x}, Y={manual_offset_y}")
                 M = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
-                bangs_mask = cv2.warpAffine(bangs_mask, M, (bangs_mask.shape[1], bangs_mask.shape[0]))
+                mask_resized = cv2.warpAffine(mask_resized, M, (mask_resized.shape[1], mask_resized.shape[0]))
                 processed_img_resized = cv2.warpAffine(processed_img_resized, M, 
                                             (processed_img_resized.shape[1], processed_img_resized.shape[0]))
                 
                 if debug_dir:
-                    cv2.imwrite(os.path.join(debug_dir, "bangs_offset_mask.png"), bangs_mask)
+                    cv2.imwrite(os.path.join(debug_dir, "bangs_offset_mask.png"), mask_resized)
             
             # Then apply manual scaling if needed
             scale_x = self.app.reinsert_manual_scale_x.get()
@@ -377,27 +376,17 @@ class EnhancedCropReinserter:
                     [0, scale_y, center_y * (1 - scale_y)]
                 ])
                 
-                bangs_mask = cv2.warpAffine(bangs_mask, M, (w, h), flags=cv2.INTER_NEAREST)
+                mask_resized = cv2.warpAffine(mask_resized, M, (w, h), flags=cv2.INTER_NEAREST)
                 processed_img_resized = cv2.warpAffine(processed_img_resized, M, (w, h), flags=cv2.INTER_LANCZOS4)
                 
                 if debug_dir:
-                    cv2.imwrite(os.path.join(debug_dir, "bangs_scaled_mask.png"), bangs_mask)
-            
-            # Count pixels in the mask for logging
-            nonzero_pixels = cv2.countNonZero(bangs_mask)
-            total_pixels = bangs_mask.shape[0] * bangs_mask.shape[1]
-            mask_coverage = nonzero_pixels / total_pixels
-            print(f"Final bangs mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
-            
-            # Clear previous mask logging to avoid confusion
-            print(f"Processing bangs-only with blend mode: {blend_mode}")
+                    cv2.imwrite(os.path.join(debug_dir, "bangs_scaled_mask.png"), mask_resized)
             
             # Use our special bangs blending function that respects all settings
-            # IMPORTANT: Pass bangs_mask, not mask_resized!
             result_img = self._blend_bangs_only(
                 source_img, 
                 processed_img_resized, 
-                bangs_mask,  # Use the bangs mask, not the full mask!
+                mask_resized,
                 method=blend_mode,
                 blend_extent=blend_extent,
                 preserve_edges=preserve_edges,
@@ -407,7 +396,7 @@ class EnhancedCropReinserter:
             # Save the result
             cv2.imwrite(output_path, result_img)
             return True
-            
+        
         # Standard processing for non-bangs-only mode
         # If we're not handling different masks, simply use standard blending
         if not self.app.reinsert_handle_different_masks.get() or source_mask is None:
@@ -453,6 +442,10 @@ class EnhancedCropReinserter:
             
             # Get dimensions
             h, w = processed_img_resized.shape[:2]
+            
+            # Calculate new dimensions
+            new_w = int(w * scale_x)
+            new_h = int(h * scale_y)
             
             # Calculate center point for scaling around the center
             center_x = w // 2
@@ -502,6 +495,8 @@ class EnhancedCropReinserter:
                 debug_dir
             )
 
+
+
         # Inside _reinsert_with_resolution_handling method, before applying blending:
         if self.app.reinsert_alignment_method.get() == "landmarks":
             if hasattr(self, 'face_detector') and self.face_detector is not None and \
@@ -532,7 +527,30 @@ class EnhancedCropReinserter:
                         cv2.imwrite(os.path.join(debug_dir, "landmark_alignment_process.png"), landmark_debug)
                 else:
                     print("Could not detect landmarks in one or both images, falling back to default alignment")
-        
+                    # Use existing alignment method...
+                    aligned_mask, aligned_img = self._align_masks(
+                        source_mask, mask_resized, 
+                        source_img, processed_img_resized, 
+                        alignment_method, 
+                        debug_dir
+                    )
+            else:
+                print("Landmark detection not available, falling back to default alignment")
+                # Use existing alignment method...
+                aligned_mask, aligned_img = self._align_masks(
+                    source_mask, mask_resized, 
+                    source_img, processed_img_resized, 
+                    alignment_method, 
+                    debug_dir
+                )
+        else:
+            # Use existing alignment method...
+            aligned_mask, aligned_img = self._align_masks(
+                source_mask, mask_resized, 
+                source_img, processed_img_resized, 
+                alignment_method, 
+                debug_dir
+            )
         # Preserve hair parting if option enabled
         if self.app.preserve_hair_parting.get():  # Add this option to UI
             # Detect landmarks for source and processed images
@@ -563,18 +581,49 @@ class EnhancedCropReinserter:
             )
         elif blend_mode == "poisson":
             try:
-                result_img = self._poisson_blend(
-                    source_img, aligned_img, aligned_mask
-                )
+                # Convert mask to correct format
+                mask_uint8 = aligned_mask.astype(np.uint8)
+                
+                # Find center of mask
+                moments = cv2.moments(mask_uint8)
+                if moments["m00"] > 0:
+                    center_x = int(moments["m10"] / moments["m00"])
+                    center_y = int(moments["m01"] / moments["m00"])
+                    
+                    # Make sure center point is within safe boundaries
+                    # (at least 1/4 of the image dimensions from any edge)
+                    h, w = source_img.shape[:2]
+                    min_distance = min(w, h) // 4
+                    
+                    center_x = max(min_distance, min(w - min_distance, center_x))
+                    center_y = max(min_distance, min(h - min_distance, center_y))
+                    
+                    center = (center_x, center_y)
+                    
+                    # Ensure the mask has non-zero values (required for seamlessClone)
+                    if np.any(mask_uint8 > 0):
+                        # Apply seamless cloning
+                        result_img = cv2.seamlessClone(
+                            aligned_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE
+                        )
+                    else:
+                        # Fallback to alpha blending if mask is empty
+                        raise ValueError("Mask has no non-zero values")
+                else:
+                    # Fallback to alpha blending if moments are zero
+                    raise ValueError("Mask moments are zero")
             except Exception as e:
                 print(f"Poisson blending failed: {str(e)}, falling back to alpha blending")
-                result_img = self._alpha_blend(
-                    source_img, aligned_img, 
-                    aligned_mask, 
-                    blend_extent
-                )
+                # Fall back to alpha blending
+                mask_float = aligned_mask.astype(float) / 255.0
+                mask_float_3d = np.stack([mask_float] * 3, axis=2)
+                result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
         elif blend_mode == "feathered":
             result_img = self._feathered_blend(
+                source_img, aligned_img, 
+                aligned_mask, 
+                blend_extent
+            )
         
         # Preserve edges if requested
         if preserve_edges:
@@ -1863,7 +1912,6 @@ class EnhancedCropReinserter:
         # Find points in the mask
         mask_points = np.argwhere(mask > 127)
         if len(mask_points) == 0:
-            print("ERROR: No points found in mask!")
             return bangs_mask  # Empty mask, return empty
             
         # Find the topmost part of the mask
@@ -1873,8 +1921,6 @@ class EnhancedCropReinserter:
         bottom_y = np.max(mask_points[:, 0]) if len(mask_points) > 0 else height
         left_x = np.min(mask_points[:, 1]) if len(mask_points) > 0 else 0
         right_x = np.max(mask_points[:, 1]) if len(mask_points) > 0 else width
-        
-        print(f"Original mask bounds: x={left_x}-{right_x}, y={top_y}-{bottom_y}")
         
         # Calculate the mask center and total height
         mask_height = bottom_y - top_y
@@ -1891,20 +1937,7 @@ class EnhancedCropReinserter:
         
         # Create a temp mask that only contains the top portion
         top_region_mask = np.zeros_like(mask)
-        
-        # Make sure indices are valid
-        valid_top_y = max(0, min(top_y, height-1))
-        valid_bangs_bottom = max(valid_top_y, min(bangs_bottom, height))
-        
-        if valid_top_y >= valid_bangs_bottom:
-            print("ERROR: Invalid top region bounds!")
-            # Return a small region in the middle as fallback
-            top_center_y = height // 4
-            bangs_mask[top_center_y:top_center_y+20, width//3:2*width//3] = 255
-            return bangs_mask
-            
-        # Extract the top region
-        top_region_mask[valid_top_y:valid_bangs_bottom, :] = mask[valid_top_y:valid_bangs_bottom, :]
+        top_region_mask[top_y:bangs_bottom, :] = mask[top_y:bangs_bottom, :]
         top_region_points = np.argwhere(top_region_mask > 127)
         
         if len(top_region_points) > 0:
@@ -1926,7 +1959,6 @@ class EnhancedCropReinserter:
             
             print(f"Bangs region: x={left_x}-{right_x}, y={top_y}-{bangs_bottom}")
         else:
-            print("No points found in top region, using default region")
             # Default to middle portion based on width_ratio if no points found in top region
             center_x = width // 2
             adjusted_width = max(int(width * width_ratio * 1.2), int(width * 0.15))  # Reduced from 1.5/0.25 to 1.2/0.15
@@ -1939,36 +1971,14 @@ class EnhancedCropReinserter:
         # Create a blank mask and only copy the specified region
         bangs_region_mask = np.zeros_like(mask)
         
-        # Make sure the bangs region isn't too small
-        if right_x - left_x < 10 or bangs_bottom - top_y < 10:
-            print("WARNING: Calculated bangs region is too small! Using fallback region.")
-            # Use a default region in the top center of the image
-            top_center_y = height // 4
-            top_center_y_end = min(height, top_center_y + 40)
-            center_x = width // 2
-            left_x = max(0, center_x - 50)
-            right_x = min(width, center_x + 50)
-            top_y = top_center_y
-            bangs_bottom = top_center_y_end
-        
-        # Save the region bounds for debugging
-        region_bounds = np.zeros_like(mask)
-        cv2.rectangle(region_bounds, (left_x, top_y), (right_x, bangs_bottom), 255, 2)
-        
         # Create a trapezoidal mask shape for the bangs
         for y in range(top_y, bangs_bottom):
-            if y < 0 or y >= height:
-                continue  # Skip invalid y values
-                
             # Calculate width expansion ratio (wider at the bottom)
             progress = (y - top_y) / float(max(1, bangs_bottom - top_y))
             expansion = int((right_x - left_x) * 0.15 * progress)  # Reduced from 0.2 to 0.15
             
             x_start = max(0, int(left_x - expansion))
             x_end = min(width, int(right_x + expansion))
-            
-            if x_start >= x_end:
-                continue  # Skip invalid x ranges
             
             # Copy mask at this row only in the specified region
             if y < mask.shape[0] and x_start < x_end:
@@ -1977,30 +1987,12 @@ class EnhancedCropReinserter:
         # Use the correctly isolated region
         bangs_mask = bangs_region_mask.copy()
         
-        # If mask is empty, create a default mask region
-        if cv2.countNonZero(bangs_mask) < 50:
-            print("WARNING: Generated bangs mask is nearly empty! Creating default mask region.")
-            # Create a simple gradient in the bangs region
-            for y in range(top_y, bangs_bottom):
-                if y < 0 or y >= height:
-                    continue
-                    
-                # Calculate a gradient that's strongest at the top
-                fade_factor = 1.0 - ((y - top_y) / float(max(1, bangs_bottom - top_y)))
-                value = int(255 * fade_factor)
-                
-                x_start = max(0, left_x)
-                x_end = min(width, right_x)
-                
-                if x_start < x_end and y < bangs_mask.shape[0]:
-                    bangs_mask[y, x_start:x_end] = value
-        
         # Add feathering at the bottom with min_opacity
         fade_height = int(bangs_height * 0.4)  # Increased fade height
-        fade_start = max(0, bangs_bottom - fade_height)
+        fade_start = bangs_bottom - fade_height
         
         for y in range(fade_start, bangs_bottom):
-            if y >= mask.shape[0] or y < 0:
+            if y >= mask.shape[0]:
                 continue
             fade_factor = 1.0 - ((y - fade_start) / float(max(1, fade_height)))
             # Apply minimum opacity from config
@@ -2018,35 +2010,6 @@ class EnhancedCropReinserter:
         total_pixels = bangs_mask.shape[0] * bangs_mask.shape[1]
         mask_coverage = nonzero_pixels / total_pixels
         print(f"Bangs mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
-        
-        # If we're in debug mode, save the region bounds for visualization
-        debug_dir = None
-        if hasattr(self.app, 'debug_mode') and self.app.debug_mode.get():
-            try:
-                debug_dir = os.path.join(self.app.output_dir.get(), "reinsert_debug")
-                os.makedirs(debug_dir, exist_ok=True)
-                
-                # Create visualization
-                viz_mask = np.zeros((height, width, 3), dtype=np.uint8)
-                
-                # Draw original mask in blue
-                viz_mask[mask > 127] = [255, 0, 0]  # Blue
-                
-                # Draw bangs mask in green
-                viz_mask[bangs_mask > 127] = [0, 255, 0]  # Green
-                
-                # Draw bounds in red
-                viz_mask[region_bounds > 127] = [0, 0, 255]  # Red
-                
-                # Save visualization
-                cv2.imwrite(os.path.join(debug_dir, "bangs_mask_regions.png"), viz_mask)
-                
-                # Also save individual masks
-                cv2.imwrite(os.path.join(debug_dir, "original_mask.png"), mask)
-                cv2.imwrite(os.path.join(debug_dir, "bangs_mask.png"), bangs_mask)
-                cv2.imwrite(os.path.join(debug_dir, "region_bounds.png"), region_bounds)
-            except Exception as e:
-                print(f"Error saving debug visualizations: {str(e)}")
         
         # Make sure we don't have too much coverage
         if mask_coverage > 0.1:  # If more than 10% of the image is covered
@@ -2275,7 +2238,7 @@ class EnhancedCropReinserter:
         total_pixels = mask.shape[0] * mask.shape[1]
         mask_coverage = nonzero_pixels / total_pixels
         
-        print(f"Bangs mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
+        print(f"Mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
         
         # Save original mask for debugging
         if debug_dir:
