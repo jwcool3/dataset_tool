@@ -339,6 +339,18 @@ class EnhancedCropReinserter:
             blend_extent = self.app.reinsert_blend_extent.get()
             preserve_edges = self.app.reinsert_preserve_edges.get()
             
+            # Debug output to help diagnose issues
+            print(f"\nBANGS-ONLY MODE ACTIVE with following parameters:")
+            print(f"  - Blend mode: {blend_mode}")
+            print(f"  - Blend extent: {blend_extent}")
+            print(f"  - Preserve edges: {preserve_edges}")
+            print(f"  - Handle different masks: {self.app.reinsert_handle_different_masks.get()}")
+            print(f"  - Manual offset X: {self.app.reinsert_manual_offset_x.get()}, Y: {self.app.reinsert_manual_offset_y.get()}")
+            print(f"  - Manual scale X: {self.app.reinsert_manual_scale_x.get()}, Y: {self.app.reinsert_manual_scale_y.get()}")
+            print(f"  - Bangs extension amount: {self.app.bangs_extension_amount.get()}")
+            print(f"  - Bangs width ratio: {self.app.bangs_width_ratio.get()}")
+            print(f"  - Bangs min opacity: {self.app.bangs_min_opacity.get()}")
+            
             # First apply manual offset if needed
             manual_offset_x = self.app.reinsert_manual_offset_x.get()
             manual_offset_y = self.app.reinsert_manual_offset_y.get()
@@ -998,21 +1010,21 @@ class EnhancedCropReinserter:
         if blend_extent > 0:
             # Create feathering kernel
             kernel = np.ones((blend_extent, blend_extent), np.uint8)
-        
-        # Create dilation and border regions
-        dilated = cv2.dilate(mask, kernel, iterations=1)
-        border = dilated & ~mask
-        
-        # Create distance map for feathering
-        dist = cv2.distanceTransform(~border, cv2.DIST_L2, 3)
-        dist[dist > blend_extent] = blend_extent
-        
-        # Normalize distances
-        feather = dist / blend_extent
-        
-        # Create alpha mask with feathering
-        mask_float = mask.astype(float) / 255.0
-        mask_float[border > 0] = 1.0 - feather[border > 0]
+            
+            # Create dilation and border regions
+            dilated = cv2.dilate(mask, kernel, iterations=1)
+            border = dilated & ~mask
+            
+            # Create distance map for feathering
+            dist = cv2.distanceTransform(~border, cv2.DIST_L2, 3)
+            dist[dist > blend_extent] = blend_extent
+            
+            # Normalize distances
+            feather = dist / blend_extent
+            
+            # Create alpha mask with feathering
+            mask_float = mask.astype(float) / 255.0
+            mask_float[border > 0] = 1.0 - feather[border > 0]
         
         # Create 3-channel mask
         mask_float_3d = np.stack([mask_float] * 3, axis=2)
