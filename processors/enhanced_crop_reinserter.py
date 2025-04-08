@@ -271,6 +271,23 @@ class EnhancedCropReinserter:
         print(f"Processed dimensions: {processed_w}x{processed_h}")
         print(f"Mask dimensions: {mask.shape[1]}x{mask.shape[0]}")
         
+        # Check if "bangs only" mode is enabled
+        if self.app.use_bangs_only.get():
+            print("Using bangs-only mode")
+            # Get landmarks if available and face detector exists
+            landmarks = None
+            if hasattr(self, 'face_detector') and self.face_detector is not None:
+                landmarks = self._get_landmarks(processed_img)
+            
+            # Isolate just the bangs region
+            bangs_mask = self._isolate_bangs_region(mask, landmarks)
+            
+            # Replace the full mask with just the bangs
+            mask = bangs_mask
+            
+            # Save debug image
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "bangs_only_mask.png"), mask)
 
         # Apply bangs extension if enabled (add after loading the mask but before any other mask processing)
         if self.app.extend_bangs.get() and mask is not None:
@@ -1477,6 +1494,112 @@ class EnhancedCropReinserter:
             print(f"Error detecting landmarks: {str(e)}")
             return None
     
+    def _isolate_bangs_region(self, mask, landmarks=None):
+        """
+        Isolate only the bangs portion of a hair mask.
+        
+        Args:
+            mask: The full hair mask
+            landmarks: Optional facial landmarks for better bangs detection
+            
+        Returns:
+            numpy.ndarray: Mask containing only the bangs region
+        """
+        if mask is None:
+            return None
+            
+        # Create empty mask for bangs
+        bangs_mask = np.zeros_like(mask)
+        
+        height, width = mask.shape[:2]
+        
+        # Method 1: Using landmarks if available
+        if landmarks is not None:
+            try:
+                # Get eyebrow height (use top of eyebrows)
+                eyebrow_points = landmarks[17:27]  # Eyebrow landmarks
+                eyebrow_y = min([p[1] for p in eyebrow_points])
+                
+                # Get face width from landmarks
+                left_temple = landmarks[0][0]  # Leftmost face point
+                right_temple = landmarks[16][0]  # Rightmost face point
+                
+                # Define forehead region above eyebrows
+                forehead_top = max(0, eyebrow_y - int(height * 0.2))  # Region above eyebrows
+                forehead_bottom = eyebrow_y + int(height * 0.05)  # Slightly below eyebrows
+                forehead_left = max(0, left_temple - int(width * 0.05))
+                forehead_right = min(width, right_temple + int(width * 0.05))
+                
+                # Create region for forehead/bangs area
+                bangs_region = np.zeros_like(mask)
+                bangs_region[forehead_top:forehead_bottom, forehead_left:forehead_right] = 255
+                
+                # Intersect with the original mask to get only the bangs
+                bangs_mask = cv2.bitwise_and(mask, bangs_region)
+                
+                # Apply a feathering at the bottom for a more natural transition
+                fade_height = int((forehead_bottom - forehead_top) * 0.3)
+                fade_start = forehead_bottom - fade_height
+                
+                for y in range(fade_start, forehead_bottom):
+                    fade_factor = 1.0 - ((y - fade_start) / float(fade_height))
+                    bangs_mask_row = bangs_mask[y, :].astype(float) * fade_factor
+                    bangs_mask[y, :] = bangs_mask_row.astype(np.uint8)
+                
+                return bangs_mask
+                
+            except (IndexError, ValueError, TypeError) as e:
+                print(f"Error using landmarks for bangs detection: {str(e)}")
+                # Fall back to method 2
+        
+        # Method 2: Geometric approach (if landmarks not available or failed)
+        # Find points in the mask
+        mask_points = np.argwhere(mask > 127)
+        if len(mask_points) == 0:
+            return bangs_mask  # Empty mask, return empty
+        
+        # Find the topmost part of the mask
+        top_y = np.min(mask_points[:, 0]) if len(mask_points) > 0 else 0
+        
+        # Define bangs height as a percentage of the image height
+        bangs_height = int(height * 0.25)  # Top 25% of the mask
+        bangs_bottom = min(height, top_y + bangs_height)
+        
+        # Find horizontal extent of mask at the top portion
+        top_region_points = mask_points[mask_points[:, 0] <= bangs_bottom]
+        if len(top_region_points) > 0:
+            left_x = np.min(top_region_points[:, 1])
+            right_x = np.max(top_region_points[:, 1])
+        else:
+            # Default to middle 60% if no points found
+            left_x = int(width * 0.2)
+            right_x = int(width * 0.8)
+        
+        # Create a trapezoidal mask shape for the bangs
+        for y in range(top_y, bangs_bottom):
+            # Calculate width expansion ratio (wider at the bottom)
+            progress = (y - top_y) / float(max(1, bangs_bottom - top_y))
+            expansion = int((right_x - left_x) * 0.1 * progress)
+            
+            x_start = max(0, left_x - expansion)
+            x_end = min(width, right_x + expansion)
+            
+            # Copy mask at this row
+            if y < mask.shape[0] and x_start < x_end:
+                bangs_mask[y, x_start:x_end] = mask[y, x_start:x_end]
+        
+        # Add feathering at the bottom
+        fade_height = int(bangs_height * 0.3)
+        fade_start = bangs_bottom - fade_height
+        
+        for y in range(fade_start, bangs_bottom):
+            if y >= mask.shape[0]:
+                continue
+            fade_factor = 1.0 - ((y - fade_start) / float(max(1, fade_height)))
+            bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * fade_factor).astype(np.uint8)
+        
+        return bangs_mask
+
     def _detect_hair_parting(self, mask, landmarks=None):
         """
         Detect and enhance the hair parting line in the mask.

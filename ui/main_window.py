@@ -146,6 +146,8 @@ class MainWindow:
         self.extend_bangs = tk.BooleanVar(value=False)
         self.bangs_extension_amount = tk.IntVar(value=30)
         self.bangs_width_ratio = tk.DoubleVar(value=0.3)
+        # Add bangs-only mode option
+        self.use_bangs_only = tk.BooleanVar(value=False)
 
         self.bangs_min_opacity = tk.DoubleVar(value=0.7)
 

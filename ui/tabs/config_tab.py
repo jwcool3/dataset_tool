@@ -658,6 +658,94 @@ class ConfigTab:
             command=self._toggle_mask_alignment_controls
         ).pack(anchor=tk.W, padx=5, pady=5)
         
+        # Create a bangs options frame 
+        bangs_frame = ttk.LabelFrame(content, text="Bangs/Forehead Options", padding=5)
+        bangs_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Checkbox to enable bangs extension
+        ttk.Checkbutton(
+            bangs_frame,
+            text="Extend mask in bangs/forehead area",
+            variable=self.parent.extend_bangs
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Extension amount
+        extension_frame = ttk.Frame(bangs_frame)
+        extension_frame.pack(fill=tk.X, pady=5, padx=20)
+        
+        ttk.Label(extension_frame, text="Extension amount:").pack(side=tk.LEFT, padx=2)
+        ttk.Spinbox(
+            extension_frame,
+            from_=10,
+            to=100,
+            increment=5,
+            width=5,
+            textvariable=self.parent.bangs_extension_amount
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Label(extension_frame, text="pixels").pack(side=tk.LEFT, padx=2)
+        
+        # Width ratio
+        width_frame = ttk.Frame(bangs_frame)
+        width_frame.pack(fill=tk.X, pady=5, padx=20)
+        
+        ttk.Label(width_frame, text="Forehead width:").pack(side=tk.LEFT, padx=2)
+        ttk.Spinbox(
+            width_frame,
+            from_=0.1,
+            to=1.0,
+            increment=0.05,
+            width=5,
+            textvariable=self.parent.bangs_width_ratio
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Label(width_frame, text="(ratio of total width)").pack(side=tk.LEFT, padx=2)
+        
+        # Add this to your UI controls for bangs extension
+        opacity_frame = ttk.Frame(bangs_frame)
+        opacity_frame.pack(fill=tk.X, pady=5, padx=20)
+        
+        ttk.Label(opacity_frame, text="Minimum opacity:").pack(side=tk.LEFT, padx=2)
+        opacity_slider = ttk.Scale(
+            opacity_frame,
+            from_=0.3,
+            to=1.0,
+            orient=tk.HORIZONTAL,
+            variable=self.parent.bangs_min_opacity,
+            length=150
+        )
+        opacity_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Label to show value
+        opacity_value_label = ttk.Label(opacity_frame, text=f"{self.parent.bangs_min_opacity.get():.2f}")
+        opacity_value_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Update label when slider is moved
+        def update_opacity_label(*args):
+            opacity_value_label.config(text=f"{self.parent.bangs_min_opacity.get():.2f}")
+        
+        self.parent.bangs_min_opacity.trace_add("write", update_opacity_label)
+        
+        # Add a separator before the new option
+        ttk.Separator(bangs_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        
+        # Add "Bangs Only" mode checkbox
+        ttk.Checkbutton(
+            bangs_frame,
+            text="Bangs Only mode (only use bangs portion of mask)",
+            variable=self.parent.use_bangs_only
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Help text for the feature
+        bangs_only_help = ttk.Label(
+            bangs_frame,
+            text="This will isolate just the bangs/forehead area of the mask for reinsertion, " + 
+                 "ignoring the rest of the hair. Useful for adding only bangs while keeping the original hairstyle.",
+            font=("Helvetica", 8),
+            foreground="gray",
+            wraplength=400,
+            justify="left"
+        )
+        bangs_only_help.pack(anchor=tk.W, padx=20, pady=2)
+        
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
         source_frame.pack(fill=tk.X, pady=5)
@@ -734,221 +822,6 @@ class ConfigTab:
         extent_frame = ttk.Frame(self.advanced_frame)
         extent_frame.pack(fill=tk.X, pady=5)
         
-
-        # Add to the advanced frame in ConfigTab._create_reinsertion_section
-        ttk.Checkbutton(
-            self.advanced_frame,
-            text="Preserve hair parting (experimental)",
-            variable=self.parent.preserve_hair_parting
-        ).pack(anchor=tk.W, padx=5, pady=5)
-
-        # And initialize the variable in MainWindow._init_variables
-        self.preserve_hair_parting = tk.BooleanVar(value=False)
-
-
-        # Manual offset controls
-        offset_frame = ttk.Frame(self.advanced_frame)
-        offset_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(offset_frame, text="Manual Offset:").pack(side=tk.LEFT, padx=5)
-
-        # Horizontal offset
-        ttk.Label(offset_frame, text="X:").pack(side=tk.LEFT, padx=2)
-        x_spinner = ttk.Spinbox(
-            offset_frame,
-            from_=-100,
-            to=100,
-            increment=1,
-            width=5,
-            textvariable=self.parent.reinsert_manual_offset_x
-        )
-        x_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Vertical offset
-        ttk.Label(offset_frame, text="Y:").pack(side=tk.LEFT, padx=5)
-        y_spinner = ttk.Spinbox(
-            offset_frame,
-            from_=-100,
-            to=100,
-            increment=1,
-            width=5,
-            textvariable=self.parent.reinsert_manual_offset_y
-        )
-        y_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Add a tip about negative Y values raising the hair
-        ttk.Label(
-            offset_frame, 
-            text="(negative Y values raise the hair)",
-            font=("Helvetica", 8),
-            foreground="gray"
-        ).pack(side=tk.LEFT, padx=5)
-
-        # Scale controls
-        scale_frame = ttk.Frame(self.advanced_frame)
-        scale_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(scale_frame, text="Scale Factor:").pack(side=tk.LEFT, padx=5)
-
-        # Horizontal scale
-        ttk.Label(scale_frame, text="X:").pack(side=tk.LEFT, padx=2)
-        x_scale_spinner = ttk.Spinbox(
-            scale_frame,
-            from_=0.5,
-            to=2.0,
-            increment=0.05,
-            width=5,
-            textvariable=self.parent.reinsert_manual_scale_x
-        )
-        x_scale_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Vertical scale
-        ttk.Label(scale_frame, text="Y:").pack(side=tk.LEFT, padx=5)
-        y_scale_spinner = ttk.Spinbox(
-            scale_frame,
-            from_=0.5,
-            to=2.0,
-            increment=0.05,
-            width=5,
-            textvariable=self.parent.reinsert_manual_scale_y
-        )
-        y_scale_spinner.pack(side=tk.LEFT, padx=2)
-
-        # Add a tip about scaling
-        ttk.Label(
-            scale_frame, 
-            text="(values > 1 enlarge, < 1 shrink)",
-            font=("Helvetica", 8),
-            foreground="gray"
-        ).pack(side=tk.LEFT, padx=5)
-
-
-        transform_frame = ttk.Frame(self.advanced_frame)
-        transform_frame.pack(fill=tk.X, pady=5)
-
-
-        ttk.Label(transform_frame, text="Transform Type:").pack(side=tk.LEFT, padx=5)
-
-        ttk.Radiobutton(
-            transform_frame,
-            text="Translation Only (preserve orientation)",
-            variable=self.parent.use_translation_only,
-            value=True
-        ).pack(side=tk.LEFT, padx=5)
-
-        ttk.Radiobutton(
-            transform_frame,
-            text="Full Transform (with rotation)",
-            variable=self.parent.use_translation_only,
-            value=False
-        ).pack(side=tk.LEFT, padx=5)
-
-        # Add a help label
-        transform_help_frame = ttk.Frame(self.advanced_frame)
-        transform_help_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ttk.Label(
-            transform_help_frame,
-            text="• Translation Only: Keeps hair at original angle but adjusts position\n• Full Transform: Rotates hair to match face orientation",
-            foreground="gray",
-            wraplength=400,
-            justify="left"
-        ).pack(anchor=tk.W)
-
-        # Rotation control
-        rotation_frame = ttk.Frame(self.advanced_frame)
-        rotation_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(rotation_frame, text="Rotation:").pack(side=tk.LEFT, padx=5)
-        rotation_spinner = ttk.Spinbox(
-            rotation_frame,
-            from_=-45,
-            to=45,
-            increment=1,
-            width=5,
-            textvariable=self.parent.reinsert_manual_rotation
-        )
-        rotation_spinner.pack(side=tk.LEFT, padx=2)
-        ttk.Label(rotation_frame, text="degrees").pack(side=tk.LEFT, padx=2)
-
-        # Add a tip about rotation
-        ttk.Label(
-            rotation_frame, 
-            text="(positive = clockwise, negative = counter-clockwise)",
-            font=("Helvetica", 8),
-            foreground="gray"
-        ).pack(side=tk.LEFT, padx=5)
-        # Create a separator
-        ttk.Separator(self.advanced_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-
-        # Bangs extension frame
-        bangs_frame = ttk.Frame(self.advanced_frame)
-        bangs_frame.pack(fill=tk.X, pady=5)
-
-        # Checkbox to enable bangs extension
-        ttk.Checkbutton(
-            bangs_frame,
-            text="Extend mask in bangs/forehead area",
-            variable=self.parent.extend_bangs
-        ).pack(anchor=tk.W, padx=5, pady=5)
-
-        # Extension amount
-        extension_frame = ttk.Frame(bangs_frame)
-        extension_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ttk.Label(extension_frame, text="Extension amount:").pack(side=tk.LEFT, padx=2)
-        ttk.Spinbox(
-            extension_frame,
-            from_=10,
-            to=100,
-            increment=5,
-            width=5,
-            textvariable=self.parent.bangs_extension_amount
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Label(extension_frame, text="pixels").pack(side=tk.LEFT, padx=2)
-
-        # Width ratio
-        width_frame = ttk.Frame(bangs_frame)
-        width_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ttk.Label(width_frame, text="Forehead width:").pack(side=tk.LEFT, padx=2)
-        ttk.Spinbox(
-            width_frame,
-            from_=0.1,
-            to=1.0,
-            increment=0.05,
-            width=5,
-            textvariable=self.parent.bangs_width_ratio
-        ).pack(side=tk.LEFT, padx=2)
-        ttk.Label(width_frame, text="(ratio of total width)").pack(side=tk.LEFT, padx=2)
-
-
-
-        # Add this to your UI controls for bangs extension
-        opacity_frame = ttk.Frame(bangs_frame)
-        opacity_frame.pack(fill=tk.X, pady=5, padx=20)
-
-        ttk.Label(opacity_frame, text="Minimum opacity:").pack(side=tk.LEFT, padx=2)
-        opacity_slider = ttk.Scale(
-            opacity_frame,
-            from_=0.3,
-            to=1.0,
-            orient=tk.HORIZONTAL,
-            variable=self.parent.bangs_min_opacity,  # Add this variable to your _init_variables method
-            length=150
-        )
-        opacity_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        # Label to show value
-        opacity_value_label = ttk.Label(opacity_frame, text=f"{self.parent.bangs_min_opacity.get():.2f}")
-        opacity_value_label.pack(side=tk.LEFT, padx=5)
-
-        # Update label when slider is moved
-        def update_opacity_label(*args):
-            opacity_value_label.config(text=f"{self.parent.bangs_min_opacity.get():.2f}")
-
-        self.parent.bangs_min_opacity.trace_add("write", update_opacity_label)
-
         ttk.Label(extent_frame, text="Blend Extent:").pack(side=tk.LEFT, padx=5)
         
         extent_slider = ttk.Scale(
@@ -1012,8 +885,6 @@ class ConfigTab:
             else:
                 self.advanced_frame.pack_forget()
 
-
-    
     def _create_debug_section(self):
         """Create debug options section."""
         content = self._create_section("Debug Options", "general_debug", default_expanded=False)
@@ -1295,8 +1166,6 @@ class ConfigTab:
                     to_pos["x"], to_pos["y"] + to_pos["height"]/2,
                     arrow=tk.LAST, width=2, fill="#0078d7"
                 )
-
-
 
     # Add this method to ConfigTab class in ui/tabs/config_tab.py
     def _create_export_cropped_section(self):
