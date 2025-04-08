@@ -1054,44 +1054,77 @@ class EnhancedCropReinserter:
             
             # Find center of mask
             moments = cv2.moments(mask_uint8)
-            if moments["m00"] > 0:
-                center_x = int(moments["m10"] / moments["m00"])
-                center_y = int(moments["m01"] / moments["m00"])
-                center = (center_x, center_y)
-                
-                # Special handling for small masks or sparse masks
-                nonzero_pixels = cv2.countNonZero(mask_uint8)
-                total_pixels = mask_uint8.shape[0] * mask_uint8.shape[1]
-                
-                if nonzero_pixels < 1000 or nonzero_pixels / total_pixels < 0.01:
-                    print(f"Small mask detected ({nonzero_pixels} px), enhancing for Poisson blend")
-                    # For small masks, ensure they're dense enough by dilating
-                    kernel = np.ones((5, 5), np.uint8)
-                    mask_uint8 = cv2.dilate(mask_uint8, kernel, iterations=1)
-                    # Increase contrast to ensure good blending
-                    mask_uint8 = cv2.normalize(mask_uint8, None, 100, 255, cv2.NORM_MINMAX)
-                
-                # Apply seamless cloning with mixed mode for better color preservation
-                result_img = cv2.seamlessClone(
-                    processed_img, 
-                    source_img, 
-                    mask_uint8, 
-                    center, 
-                    cv2.MIXED_CLONE  # Use mixed mode instead of normal for better results with hair
-                )
-            else:
-                # Fallback to alpha blending
-                mask_float = mask.astype(float) / 255.0
-                mask_float_3d = np.stack([mask_float] * 3, axis=2)
-                result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+            if moments["m00"] <= 0:
+                raise ValueError("Invalid mask moments")
+            
+            center_x = int(moments["m10"] / moments["m00"])
+            center_y = int(moments["m01"] / moments["m00"])
+            
+            # Make sure center is within bounds and away from edges
+            h, w = source_img.shape[:2]
+            margin = 50  # Minimum distance from edges
+            
+            if center_x < margin or center_x >= w - margin or center_y < margin or center_y >= h - margin:
+                print(f"Center point ({center_x}, {center_y}) too close to image boundaries")
+                raise ValueError("Center point too close to image boundaries")
+            
+            center = (center_x, center_y)
+            
+            # Special handling for small masks or sparse masks
+            nonzero_pixels = cv2.countNonZero(mask_uint8)
+            total_pixels = mask_uint8.shape[0] * mask_uint8.shape[1]
+            
+            if nonzero_pixels < 1000 or nonzero_pixels / total_pixels < 0.01:
+                print(f"Small mask detected ({nonzero_pixels} px), enhancing for Poisson blend")
+                # For small masks, ensure they're dense enough by dilating
+                kernel = np.ones((3, 3), np.uint8)
+                mask_uint8 = cv2.dilate(mask_uint8, kernel, iterations=1)
+                # Increase contrast to ensure good blending
+                mask_uint8 = cv2.normalize(mask_uint8, None, 100, 255, cv2.NORM_MINMAX)
+            
+            # Make extra sure the mask is properly filled
+            mask_copy = mask_uint8.copy()
+            
+            # Check if processed and source images are the same size
+            if source_img.shape != processed_img.shape:
+                print("Source and processed images are different sizes")
+                raise ValueError("Source and processed images must be the same size")
+            
+            # Make sure the mask doesn't extend beyond the image boundaries
+            combined_mask = np.zeros((h+100, w+100), dtype=np.uint8)
+            combined_mask[50:50+h, 50:50+w] = mask_copy
+            
+            # Shift center
+            adjusted_center = (center_x + 50, center_y + 50)
+            
+            # Create padded versions of images
+            padded_source = np.zeros((h+100, w+100, 3), dtype=np.uint8)
+            padded_processed = np.zeros((h+100, w+100, 3), dtype=np.uint8)
+            
+            padded_source[50:50+h, 50:50+w] = source_img
+            padded_processed[50:50+h, 50:50+w] = processed_img
+            
+            # Apply seamless cloning with mixed mode for better color preservation
+            result_padded = cv2.seamlessClone(
+                padded_processed, 
+                padded_source, 
+                combined_mask, 
+                adjusted_center, 
+                cv2.NORMAL_CLONE
+            )
+            
+            # Extract the original region
+            result_img = result_padded[50:50+h, 50:50+w]
+            
+            return np.clip(result_img, 0, 255).astype(np.uint8)
+            
         except Exception as e:
             print(f"Poisson blending failed: {str(e)}")
             # Fallback to alpha blending
             mask_float = mask.astype(float) / 255.0
             mask_float_3d = np.stack([mask_float] * 3, axis=2)
             result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
-        
-        return np.clip(result_img, 0, 255).astype(np.uint8)
+            return np.clip(result_img, 0, 255).astype(np.uint8)
 
     def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
         """
@@ -1895,14 +1928,14 @@ class EnhancedCropReinserter:
         
         # Increase the bangs height for better coverage
         # Ensure all values are integers for slicing
-        bangs_height = min(int(extension_amount * 1.5), int(mask_height * 0.6))
+        bangs_height = min(int(extension_amount * 1.5), int(mask_height * 0.4))  # Reduced from 0.6 to 0.4
         print(f"Calculated bangs height: {bangs_height} pixels (from top)")
         
         # Calculate bottom edge of bangs area - ensure integer
         bangs_bottom = min(height, int(top_y + bangs_height))
         top_y = int(top_y)  # Ensure top_y is also an integer
         
-        # Find horizontal extent of mask in the top portion
+        # Create a temp mask that only contains the top portion
         top_region_mask = np.zeros_like(mask)
         top_region_mask[top_y:bangs_bottom, :] = mask[top_y:bangs_bottom, :]
         top_region_points = np.argwhere(top_region_mask > 127)
@@ -1914,11 +1947,11 @@ class EnhancedCropReinserter:
             top_width = top_right_x - top_left_x
             
             # Apply width_ratio to center portion - ensure integers
-            adjusted_width = int(top_width * max(width_ratio * 1.5, 0.4))
+            adjusted_width = int(top_width * max(width_ratio * 1.2, 0.3))  # Reduced from 1.5 to 1.2
             center_x = int((top_left_x + top_right_x) // 2)
             
             # Ensure the width is not too narrow
-            min_width = min(150, int(width * 0.25))
+            min_width = min(100, int(width * 0.15))  # Reduced from 150 to 100 and 0.25 to 0.15
             adjusted_width = max(adjusted_width, min_width)
             
             left_x = max(0, int(center_x - adjusted_width // 2))
@@ -1928,24 +1961,31 @@ class EnhancedCropReinserter:
         else:
             # Default to middle portion based on width_ratio if no points found in top region
             center_x = width // 2
-            adjusted_width = max(int(width * width_ratio * 1.5), int(width * 0.25))
+            adjusted_width = max(int(width * width_ratio * 1.2), int(width * 0.15))  # Reduced from 1.5/0.25 to 1.2/0.15
             left_x = max(0, int(center_x - adjusted_width // 2))
             right_x = min(width, int(center_x + adjusted_width // 2))
             
             print(f"Using default bangs region: x={left_x}-{right_x}, y={top_y}-{bangs_bottom}")
         
+        # IMPORTANT: Only apply the mask to the bangs region, not the entire mask!
+        # Create a blank mask and only copy the specified region
+        bangs_region_mask = np.zeros_like(mask)
+        
         # Create a trapezoidal mask shape for the bangs
         for y in range(top_y, bangs_bottom):
             # Calculate width expansion ratio (wider at the bottom)
             progress = (y - top_y) / float(max(1, bangs_bottom - top_y))
-            expansion = int((right_x - left_x) * 0.2 * progress)  # Increased expansion
+            expansion = int((right_x - left_x) * 0.15 * progress)  # Reduced from 0.2 to 0.15
             
             x_start = max(0, int(left_x - expansion))
             x_end = min(width, int(right_x + expansion))
             
-            # Copy mask at this row
+            # Copy mask at this row only in the specified region
             if y < mask.shape[0] and x_start < x_end:
-                bangs_mask[y, x_start:x_end] = mask[y, x_start:x_end]
+                bangs_region_mask[y, x_start:x_end] = mask[y, x_start:x_end]
+        
+        # Use the correctly isolated region
+        bangs_mask = bangs_region_mask.copy()
         
         # Add feathering at the bottom with min_opacity
         fade_height = int(bangs_height * 0.4)  # Increased fade height
@@ -1957,15 +1997,36 @@ class EnhancedCropReinserter:
             fade_factor = 1.0 - ((y - fade_start) / float(max(1, fade_height)))
             # Apply minimum opacity from config
             adjusted_factor = min_opacity + (fade_factor * (1.0 - min_opacity))
-            bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * adjusted_factor).astype(np.uint8)
+            if y < bangs_mask.shape[0]:
+                bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * adjusted_factor).astype(np.uint8)
         
         # Make sure the mask has enough content by dilating slightly
         if cv2.countNonZero(bangs_mask) < 200:
-            kernel = np.ones((5, 5), np.uint8)
-            bangs_mask = cv2.dilate(bangs_mask, kernel, iterations=2)
+            kernel = np.ones((3, 3), np.uint8)  # Reduced from 5x5 to 3x3
+            bangs_mask = cv2.dilate(bangs_mask, kernel, iterations=1)  # Reduced from 2 to 1
+        
+        # Count non-zero pixels for logging
+        nonzero_pixels = cv2.countNonZero(bangs_mask)
+        total_pixels = bangs_mask.shape[0] * bangs_mask.shape[1]
+        mask_coverage = nonzero_pixels / total_pixels
+        print(f"Bangs mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
+        
+        # Make sure we don't have too much coverage
+        if mask_coverage > 0.1:  # If more than 10% of the image is covered
+            print("Warning: Bangs mask coverage too high, reducing...")
+            # Keep only the top half of the detected region
+            reduced_bottom = top_y + (bangs_bottom - top_y) // 2
+            temp_mask = np.zeros_like(bangs_mask)
+            temp_mask[top_y:reduced_bottom, :] = bangs_mask[top_y:reduced_bottom, :]
+            bangs_mask = temp_mask
             
+            # Recount
+            nonzero_pixels = cv2.countNonZero(bangs_mask)
+            mask_coverage = nonzero_pixels / total_pixels
+            print(f"Reduced bangs mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
+        
         # Apply a small blur to smooth the mask edges
-        bangs_mask = cv2.GaussianBlur(bangs_mask, (5, 5), 0)
+        bangs_mask = cv2.GaussianBlur(bangs_mask, (3, 3), 0)  # Reduced from 5x5 to 3x3
         
         # Force mask to have enough contrast to be visible
         if cv2.countNonZero(bangs_mask) > 0:
@@ -2179,9 +2240,13 @@ class EnhancedCropReinserter:
         
         print(f"Mask has {nonzero_pixels} non-zero pixels ({mask_coverage:.2%} coverage)")
         
-        # If mask is very small, force alpha blending regardless of method
-        if nonzero_pixels < 500 or mask_coverage < 0.005:
-            print(f"Warning: Mask is too small for {method} blending, switching to alpha blending with increased opacity")
+        # Save original mask for debugging
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "bangs_mask_before_blending.png"), mask)
+            
+        # Always force alpha blending for very small masks or very large masks
+        if nonzero_pixels < 500 or mask_coverage < 0.005 or mask_coverage > 0.4:
+            print(f"Warning: Mask size not ideal for {method} blending, forcing alpha blending with increased opacity")
             # Enhance the mask to make it more visible
             enhanced_mask = mask.copy()
             # Dilate slightly to increase coverage
@@ -2196,30 +2261,67 @@ class EnhancedCropReinserter:
             if debug_dir:
                 cv2.imwrite(os.path.join(debug_dir, "enhanced_bangs_mask.png"), enhanced_mask)
         else:
-            # Choose the appropriate blending method
-            if method == "alpha":
-                result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
-            elif method == "poisson":
-                try:
-                    # For Poisson blending, make sure we have enough non-zero pixels
-                    if nonzero_pixels < 1000 or mask_coverage < 0.01:
-                        # For smaller masks, enhance slightly
-                        enhanced_mask = cv2.normalize(mask, None, 100, 255, cv2.NORM_MINMAX)
-                        result_img = self._poisson_blend(source_img, processed_img, enhanced_mask)
-                    else:
-                        result_img = self._poisson_blend(source_img, processed_img, mask)
-                except Exception as e:
-                    print(f"Poisson blending failed for bangs: {str(e)}, falling back to alpha")
+            try:
+                # Choose the appropriate blending method
+                if method == "alpha":
                     result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
-            elif method == "feathered":
-                result_img = self._feathered_blend(source_img, processed_img, mask, blend_extent)
-            else:
-                # Default to alpha blending
-                result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+                elif method == "poisson":
+                    try:
+                        # For Poisson blending, make sure we have enough non-zero pixels
+                        if nonzero_pixels < 1000 or mask_coverage < 0.01:
+                            # For smaller masks, enhance slightly
+                            enhanced_mask = cv2.normalize(mask, None, 100, 255, cv2.NORM_MINMAX)
+                            result_img = self._alpha_blend(source_img, processed_img, enhanced_mask, blend_extent)
+                        else:
+                            # Before trying Poisson, check if mask is valid for seamless cloning
+                            moments = cv2.moments(mask)
+                            if moments["m00"] > 0:
+                                center_x = int(moments["m10"] / moments["m00"])
+                                center_y = int(moments["m01"] / moments["m00"])
+                                
+                                # Make sure center point is within safe boundaries
+                                h, w = source_img.shape[:2]
+                                min_distance = 50  # Minimum distance from edges
+                                
+                                if (min_distance <= center_x < w - min_distance and 
+                                    min_distance <= center_y < h - min_distance):
+                                    # Safe to try Poisson blending
+                                    result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+                                    # First create a backup result in case Poisson fails
+                                    try:
+                                        poisson_result = self._poisson_blend(source_img, processed_img, mask)
+                                        # If it succeeded, use it
+                                        result_img = poisson_result
+                                    except Exception as e:
+                                        print(f"Poisson blending failed for bangs: {str(e)}, using alpha blend")
+                                else:
+                                    print("Center point too close to edges, using alpha blending")
+                                    result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+                            else:
+                                print("Invalid mask moments, using alpha blending")
+                                result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+                    except Exception as e:
+                        print(f"Poisson blending failed for bangs: {str(e)}, falling back to alpha")
+                        result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+                elif method == "feathered":
+                    result_img = self._feathered_blend(source_img, processed_img, mask, blend_extent)
+                else:
+                    # Default to alpha blending
+                    result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+            except Exception as e:
+                print(f"Blending error: {str(e)}, using basic alpha blending")
+                # Fallback to the simplest alpha blending
+                mask_float = mask.astype(float) / 255.0
+                mask_float_3d = np.stack([mask_float] * 3, axis=2)
+                result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+                result_img = np.clip(result_img, 0, 255).astype(np.uint8)
         
         # Preserve original edges if requested
         if preserve_edges:
-            result_img = self._preserve_image_edges(source_img, result_img, mask)
+            try:
+                result_img = self._preserve_image_edges(source_img, result_img, mask)
+            except Exception as e:
+                print(f"Error preserving edges: {str(e)}")
             
         # Save debug image if directory provided
         if debug_dir:
