@@ -1201,11 +1201,14 @@ class EnhancedCropReinserter:
         forehead_left = max(0, center_x - forehead_half_width)
         forehead_right = min(width, center_x + forehead_half_width)
         
+        # Ensure extend_pixels is an integer
+        extend_pixels = int(extend_pixels)
+        
         # Extend the mask downward in the forehead region
         for x in range(forehead_left, forehead_right):
             if x in top_y_values:
                 # Get the topmost y for this column
-                top_y = top_y_values[x]
+                top_y = int(top_y_values[x])
                 
                 # Extend downward by extend_pixels, but don't go out of bounds
                 extend_to_y = min(height, top_y + extend_pixels)
@@ -1808,13 +1811,13 @@ class EnhancedCropReinserter:
                 effective_width_ratio = max(width_ratio * 1.5, 0.3)  # Ensure it's at least 30% of face width
                 forehead_width = int(face_width * effective_width_ratio)
                 forehead_center = (left_temple + right_temple) // 2
-                forehead_left = max(0, forehead_center - forehead_width // 2)
-                forehead_right = min(width, forehead_center + forehead_width // 2)
+                forehead_left = max(0, int(forehead_center - forehead_width // 2))
+                forehead_right = min(width, int(forehead_center + forehead_width // 2))
                 
                 # Use extension_amount for vertical area calculation
                 # Start higher above eyebrows and extend further down
-                forehead_top = max(0, eyebrow_y - extension_amount * 1.5)
-                forehead_bottom = min(height, eyebrow_y + int(extension_amount * 0.5))  # Extend more below eyebrows
+                forehead_top = max(0, int(eyebrow_y - extension_amount * 1.5))
+                forehead_bottom = min(height, int(eyebrow_y + extension_amount * 0.5))  # Extend more below eyebrows
                 
                 # Create region for forehead/bangs area
                 bangs_region = np.zeros_like(mask)
@@ -1891,11 +1894,13 @@ class EnhancedCropReinserter:
         mask_center_x = (left_x + right_x) // 2
         
         # Increase the bangs height for better coverage
-        bangs_height = min(extension_amount * 1.5, int(mask_height * 0.6))
+        # Ensure all values are integers for slicing
+        bangs_height = min(int(extension_amount * 1.5), int(mask_height * 0.6))
         print(f"Calculated bangs height: {bangs_height} pixels (from top)")
         
-        # Calculate bottom edge of bangs area
-        bangs_bottom = min(height, top_y + bangs_height)
+        # Calculate bottom edge of bangs area - ensure integer
+        bangs_bottom = min(height, int(top_y + bangs_height))
+        top_y = int(top_y)  # Ensure top_y is also an integer
         
         # Find horizontal extent of mask in the top portion
         top_region_mask = np.zeros_like(mask)
@@ -1908,25 +1913,24 @@ class EnhancedCropReinserter:
             top_right_x = np.max(top_region_points[:, 1])
             top_width = top_right_x - top_left_x
             
-            # Apply width_ratio to center portion
-            # Use a wider ratio for better coverage
+            # Apply width_ratio to center portion - ensure integers
             adjusted_width = int(top_width * max(width_ratio * 1.5, 0.4))
-            center_x = (top_left_x + top_right_x) // 2
+            center_x = int((top_left_x + top_right_x) // 2)
             
             # Ensure the width is not too narrow
             min_width = min(150, int(width * 0.25))
             adjusted_width = max(adjusted_width, min_width)
             
-            left_x = max(0, center_x - adjusted_width // 2)
-            right_x = min(width, center_x + adjusted_width // 2)
+            left_x = max(0, int(center_x - adjusted_width // 2))
+            right_x = min(width, int(center_x + adjusted_width // 2))
             
             print(f"Bangs region: x={left_x}-{right_x}, y={top_y}-{bangs_bottom}")
         else:
             # Default to middle portion based on width_ratio if no points found in top region
             center_x = width // 2
             adjusted_width = max(int(width * width_ratio * 1.5), int(width * 0.25))
-            left_x = max(0, center_x - adjusted_width // 2)
-            right_x = min(width, center_x + adjusted_width // 2)
+            left_x = max(0, int(center_x - adjusted_width // 2))
+            right_x = min(width, int(center_x + adjusted_width // 2))
             
             print(f"Using default bangs region: x={left_x}-{right_x}, y={top_y}-{bangs_bottom}")
         
@@ -1936,8 +1940,8 @@ class EnhancedCropReinserter:
             progress = (y - top_y) / float(max(1, bangs_bottom - top_y))
             expansion = int((right_x - left_x) * 0.2 * progress)  # Increased expansion
             
-            x_start = max(0, left_x - expansion)
-            x_end = min(width, right_x + expansion)
+            x_start = max(0, int(left_x - expansion))
+            x_end = min(width, int(right_x + expansion))
             
             # Copy mask at this row
             if y < mask.shape[0] and x_start < x_end:
