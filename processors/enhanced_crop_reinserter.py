@@ -280,6 +280,7 @@ class EnhancedCropReinserter:
                 landmarks = self._get_landmarks(processed_img)
             
             # Isolate just the bangs region
+            print(f"Creating bangs-only mask with width ratio: {self.app.bangs_width_ratio.get()}, extension: {self.app.bangs_extension_amount.get()}")
             bangs_mask = self._isolate_bangs_region(mask, landmarks)
             
             # Replace the full mask with just the bangs
@@ -290,7 +291,8 @@ class EnhancedCropReinserter:
                 cv2.imwrite(os.path.join(debug_dir, "bangs_only_mask.png"), mask)
 
         # Apply bangs extension if enabled (add after loading the mask but before any other mask processing)
-        if self.app.extend_bangs.get() and mask is not None:
+        # Only apply if not in bangs-only mode (which already includes extension)
+        if self.app.extend_bangs.get() and mask is not None and not self.app.use_bangs_only.get():
             print("Extending mask in bangs/forehead area")
             extension_amount = self.app.bangs_extension_amount.get()
             width_ratio = self.app.bangs_width_ratio.get()
@@ -330,6 +332,62 @@ class EnhancedCropReinserter:
         # Check if the source has a different hair mask
         source_mask = self._find_source_mask(source_path)
         
+        # Special handling for bangs-only mode
+        if self.app.use_bangs_only.get():
+            # Get configuration settings
+            blend_mode = self.app.reinsert_blend_mode.get()
+            blend_extent = self.app.reinsert_blend_extent.get()
+            preserve_edges = self.app.reinsert_preserve_edges.get()
+            
+            # First apply manual offset if needed
+            manual_offset_x = self.app.reinsert_manual_offset_x.get()
+            manual_offset_y = self.app.reinsert_manual_offset_y.get()
+            
+            if manual_offset_x != 0 or manual_offset_y != 0:
+                print(f"Applying manual offset to bangs: X={manual_offset_x}, Y={manual_offset_y}")
+                M = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+                mask_resized = cv2.warpAffine(mask_resized, M, (mask_resized.shape[1], mask_resized.shape[0]))
+                processed_img_resized = cv2.warpAffine(processed_img_resized, M, 
+                                            (processed_img_resized.shape[1], processed_img_resized.shape[0]))
+                
+                if debug_dir:
+                    cv2.imwrite(os.path.join(debug_dir, "bangs_offset_mask.png"), mask_resized)
+            
+            # Then apply manual scaling if needed
+            scale_x = self.app.reinsert_manual_scale_x.get()
+            scale_y = self.app.reinsert_manual_scale_y.get()
+            
+            if scale_x != 1.0 or scale_y != 1.0:
+                print(f"Applying manual scaling to bangs: X={scale_x}, Y={scale_y}")
+                h, w = processed_img_resized.shape[:2]
+                center_x, center_y = w // 2, h // 2
+                M = np.float32([
+                    [scale_x, 0, center_x * (1 - scale_x)],
+                    [0, scale_y, center_y * (1 - scale_y)]
+                ])
+                
+                mask_resized = cv2.warpAffine(mask_resized, M, (w, h), flags=cv2.INTER_NEAREST)
+                processed_img_resized = cv2.warpAffine(processed_img_resized, M, (w, h), flags=cv2.INTER_LANCZOS4)
+                
+                if debug_dir:
+                    cv2.imwrite(os.path.join(debug_dir, "bangs_scaled_mask.png"), mask_resized)
+            
+            # Use our special bangs blending function that respects all settings
+            result_img = self._blend_bangs_only(
+                source_img, 
+                processed_img_resized, 
+                mask_resized,
+                method=blend_mode,
+                blend_extent=blend_extent,
+                preserve_edges=preserve_edges,
+                debug_dir=debug_dir
+            )
+            
+            # Save the result
+            cv2.imwrite(output_path, result_img)
+            return True
+        
+        # Standard processing for non-bangs-only mode
         # If we're not handling different masks, simply use standard blending
         if not self.app.reinsert_handle_different_masks.get() or source_mask is None:
             # Basic alpha blending
@@ -1680,6 +1738,11 @@ class EnhancedCropReinserter:
         
         height, width = mask.shape[:2]
         
+        # Get configuration values from app settings
+        width_ratio = self.app.bangs_width_ratio.get()
+        extension_amount = self.app.bangs_extension_amount.get()
+        min_opacity = self.app.bangs_min_opacity.get()
+        
         # Method 1: Using landmarks if available
         if landmarks is not None:
             try:
@@ -1690,12 +1753,17 @@ class EnhancedCropReinserter:
                 # Get face width from landmarks
                 left_temple = landmarks[0][0]  # Leftmost face point
                 right_temple = landmarks[16][0]  # Rightmost face point
+                face_width = right_temple - left_temple
                 
-                # Define forehead region above eyebrows
-                forehead_top = max(0, eyebrow_y - int(height * 0.2))  # Region above eyebrows
-                forehead_bottom = eyebrow_y + int(height * 0.05)  # Slightly below eyebrows
-                forehead_left = max(0, left_temple - int(width * 0.05))
-                forehead_right = min(width, right_temple + int(width * 0.05))
+                # Define forehead region above eyebrows, using width_ratio from config
+                forehead_width = int(face_width * max(width_ratio, 0.1))  # Ensure minimum width
+                forehead_center = (left_temple + right_temple) // 2
+                forehead_left = max(0, forehead_center - forehead_width // 2)
+                forehead_right = min(width, forehead_center + forehead_width // 2)
+                
+                # Use extension_amount for vertical area calculation
+                forehead_top = max(0, eyebrow_y - extension_amount)
+                forehead_bottom = min(height, eyebrow_y + int(extension_amount * 0.3))  # Small extension below eyebrows
                 
                 # Create region for forehead/bangs area
                 bangs_region = np.zeros_like(mask)
@@ -1705,12 +1773,14 @@ class EnhancedCropReinserter:
                 bangs_mask = cv2.bitwise_and(mask, bangs_region)
                 
                 # Apply a feathering at the bottom for a more natural transition
-                fade_height = int((forehead_bottom - forehead_top) * 0.3)
+                fade_height = int((forehead_bottom - forehead_top) * 0.4)
                 fade_start = forehead_bottom - fade_height
                 
                 for y in range(fade_start, forehead_bottom):
-                    fade_factor = 1.0 - ((y - fade_start) / float(fade_height))
-                    bangs_mask_row = bangs_mask[y, :].astype(float) * fade_factor
+                    fade_factor = 1.0 - ((y - fade_start) / float(max(1, fade_height)))
+                    # Apply minimum opacity from config
+                    adjusted_factor = min_opacity + (fade_factor * (1.0 - min_opacity))
+                    bangs_mask_row = bangs_mask[y, :].astype(float) * adjusted_factor
                     bangs_mask[y, :] = bangs_mask_row.astype(np.uint8)
                 
                 return bangs_mask
@@ -1728,8 +1798,8 @@ class EnhancedCropReinserter:
         # Find the topmost part of the mask
         top_y = np.min(mask_points[:, 0]) if len(mask_points) > 0 else 0
         
-        # Define bangs height as a percentage of the image height
-        bangs_height = int(height * 0.25)  # Top 25% of the mask
+        # Use the extension_amount config for bangs height
+        bangs_height = extension_amount
         bangs_bottom = min(height, top_y + bangs_height)
         
         # Find horizontal extent of mask at the top portion
@@ -1737,16 +1807,24 @@ class EnhancedCropReinserter:
         if len(top_region_points) > 0:
             left_x = np.min(top_region_points[:, 1])
             right_x = np.max(top_region_points[:, 1])
+            # Apply width_ratio to center portion
+            total_width = right_x - left_x
+            center_x = (left_x + right_x) // 2
+            adjusted_width = int(total_width * width_ratio)
+            left_x = max(0, center_x - adjusted_width // 2)
+            right_x = min(width, center_x + adjusted_width // 2)
         else:
-            # Default to middle 60% if no points found
-            left_x = int(width * 0.2)
-            right_x = int(width * 0.8)
+            # Default to middle portion based on width_ratio
+            center_x = width // 2
+            adjusted_width = int(width * width_ratio)
+            left_x = max(0, center_x - adjusted_width // 2)
+            right_x = max(0, center_x + adjusted_width // 2)
         
         # Create a trapezoidal mask shape for the bangs
         for y in range(top_y, bangs_bottom):
             # Calculate width expansion ratio (wider at the bottom)
             progress = (y - top_y) / float(max(1, bangs_bottom - top_y))
-            expansion = int((right_x - left_x) * 0.1 * progress)
+            expansion = int((right_x - left_x) * 0.15 * progress)  # Slightly increased expansion
             
             x_start = max(0, left_x - expansion)
             x_end = min(width, right_x + expansion)
@@ -1755,15 +1833,20 @@ class EnhancedCropReinserter:
             if y < mask.shape[0] and x_start < x_end:
                 bangs_mask[y, x_start:x_end] = mask[y, x_start:x_end]
         
-        # Add feathering at the bottom
-        fade_height = int(bangs_height * 0.3)
+        # Add feathering at the bottom with min_opacity
+        fade_height = int(bangs_height * 0.4)  # Increased fade height
         fade_start = bangs_bottom - fade_height
         
         for y in range(fade_start, bangs_bottom):
             if y >= mask.shape[0]:
                 continue
             fade_factor = 1.0 - ((y - fade_start) / float(max(1, fade_height)))
-            bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * fade_factor).astype(np.uint8)
+            # Apply minimum opacity from config
+            adjusted_factor = min_opacity + (fade_factor * (1.0 - min_opacity))
+            bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * adjusted_factor).astype(np.uint8)
+        
+        # Apply a small blur to smooth the mask edges
+        bangs_mask = cv2.GaussianBlur(bangs_mask, (3, 3), 0)
         
         return bangs_mask
 
@@ -1947,3 +2030,50 @@ class EnhancedCropReinserter:
         except (IndexError, ValueError, ZeroDivisionError) as e:
             print(f"Error calculating face scale and rotation: {str(e)}")
             return 1.0, 1.0, 0.0
+
+    def _blend_bangs_only(self, source_img, processed_img, mask, method="alpha", blend_extent=5, preserve_edges=True, debug_dir=None):
+        """
+        Special blending for bangs-only mode that respects all blending settings.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image with the new hair/bangs
+            mask: The bangs-only mask
+            method: Blending method ("alpha", "poisson", "feathered")
+            blend_extent: Extent of feathering
+            preserve_edges: Whether to preserve original image edges
+            debug_dir: Debug directory for saving visualizations
+            
+        Returns:
+            numpy.ndarray: Blended image
+        """
+        print(f"Blending bangs using method: {method}, extent: {blend_extent}, preserve_edges: {preserve_edges}")
+        
+        # Choose the appropriate blending method
+        if method == "alpha":
+            result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+        elif method == "poisson":
+            try:
+                result_img = self._poisson_blend(source_img, processed_img, mask)
+            except Exception as e:
+                print(f"Poisson blending failed for bangs: {str(e)}, falling back to alpha")
+                result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+        elif method == "feathered":
+            result_img = self._feathered_blend(source_img, processed_img, mask, blend_extent)
+        else:
+            # Default to alpha blending
+            result_img = self._alpha_blend(source_img, processed_img, mask, blend_extent)
+        
+        # Preserve original edges if requested
+        if preserve_edges:
+            result_img = self._preserve_image_edges(source_img, result_img, mask)
+            
+        # Save debug image if directory provided
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "bangs_only_blended.png"), result_img)
+            
+            # Create a comparison image
+            comparison = np.hstack((source_img, processed_img, result_img))
+            cv2.imwrite(os.path.join(debug_dir, "bangs_only_comparison.png"), comparison)
+        
+        return result_img
