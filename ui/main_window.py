@@ -174,6 +174,10 @@ class MainWindow:
         self.preview_image = None
         self.preview_mask = None
     
+        # Add face protection variables
+        self.protect_face_from_bangs = tk.BooleanVar(value=False)
+        self.face_protection_strength = tk.DoubleVar(value=0.7)
+    
     def _create_menu(self):
         # Clear any existing menus
         for i in range(self.menu_bar.index('end') + 1):

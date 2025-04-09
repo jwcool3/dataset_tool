@@ -734,6 +734,55 @@ class ConfigTab:
             variable=self.parent.use_bangs_only
         ).pack(anchor=tk.W, padx=5, pady=5)
         
+        # Add a separator before face protection options
+        ttk.Separator(bangs_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        
+        # Add face protection option
+        face_protection_frame = ttk.Frame(bangs_frame)
+        face_protection_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Checkbutton(
+            face_protection_frame,
+            text="Prevent bangs from covering face",
+            variable=self.parent.protect_face_from_bangs
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Add face protection strength slider
+        protection_frame = ttk.Frame(bangs_frame)
+        protection_frame.pack(fill=tk.X, pady=5, padx=20)
+        
+        ttk.Label(protection_frame, text="Face protection strength:").pack(side=tk.LEFT, padx=2)
+        protection_slider = ttk.Scale(
+            protection_frame,
+            from_=0.1,
+            to=1.0,
+            orient=tk.HORIZONTAL,
+            variable=self.parent.face_protection_strength,
+            length=150
+        )
+        protection_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Label to show value
+        protection_value_label = ttk.Label(protection_frame, text=f"{self.parent.face_protection_strength.get():.2f}")
+        protection_value_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Update label when slider is moved
+        def update_protection_label(*args):
+            protection_value_label.config(text=f"{self.parent.face_protection_strength.get():.2f}")
+        
+        self.parent.face_protection_strength.trace_add("write", update_protection_label)
+        
+        # Add help text
+        protection_help = ttk.Label(
+            bangs_frame,
+            text="This will create a gradual fade-out of the bangs mask near facial features to prevent them from being covered.",
+            font=("Helvetica", 8),
+            foreground="gray",
+            wraplength=400,
+            justify="left"
+        )
+        protection_help.pack(anchor=tk.W, padx=20, pady=2)
+        
         # Help text for the feature
         bangs_only_help = ttk.Label(
             bangs_frame,

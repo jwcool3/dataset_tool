@@ -1496,7 +1496,7 @@ class EnhancedCropReinserter:
     
     def _isolate_bangs_region(self, mask, landmarks=None):
         """
-        Isolate only the bangs portion of a hair mask.
+        Isolate only the bangs portion of a hair mask with optional face protection.
         
         Args:
             mask: The full hair mask
@@ -1546,8 +1546,25 @@ class EnhancedCropReinserter:
                     bangs_mask_row = bangs_mask[y, :].astype(float) * fade_factor
                     bangs_mask[y, :] = bangs_mask_row.astype(np.uint8)
                 
-                return bangs_mask
+                # Apply face protection if enabled
+                if hasattr(self.app, 'protect_face_from_bangs') and self.app.protect_face_from_bangs.get():
+                    protection_strength = self.app.face_protection_strength.get()
+                    bangs_mask = self._create_face_protection_mask(
+                        bangs_mask, 
+                        landmarks, 
+                        protection_strength
+                    )
+                    
+                    if self.app.debug_mode.get():
+                        debug_dir = os.path.join(os.path.dirname(os.path.dirname(mask)), "debug")
+                        os.makedirs(debug_dir, exist_ok=True)
+                        cv2.imwrite(
+                            os.path.join(debug_dir, "face_protected_bangs.png"), 
+                            bangs_mask
+                        )
                 
+                return bangs_mask
+                    
             except (IndexError, ValueError, TypeError) as e:
                 print(f"Error using landmarks for bangs detection: {str(e)}")
                 # Fall back to method 2
@@ -1702,3 +1719,78 @@ class EnhancedCropReinserter:
             enhanced_mask = enhanced_mask.astype(np.uint8)
         
         return parting_line, enhanced_mask
+
+    def _create_face_protection_mask(self, mask, landmarks, protection_strength):
+        """
+        Create a mask that protects facial features from being covered by bangs.
+        
+        Args:
+            mask: The original bangs mask
+            landmarks: Facial landmarks
+            protection_strength: Strength of the face protection (0.1 to 1.0)
+            
+        Returns:
+            numpy.ndarray: Modified mask with face protection
+        """
+        if landmarks is None or len(landmarks) < 68:
+            return mask
+            
+        # Create an empty mask for face protection
+        protection_mask = np.zeros_like(mask, dtype=np.float32)
+        
+        # Get key facial feature points
+        # Eyes
+        left_eye = np.array(landmarks[36:42])
+        right_eye = np.array(landmarks[42:48])
+        
+        # Eyebrows
+        left_eyebrow = np.array(landmarks[17:22])
+        right_eyebrow = np.array(landmarks[22:27])
+        
+        # Nose bridge
+        nose_bridge = np.array(landmarks[27:31])
+        
+        # Create protection zones
+        def create_protection_zone(points, radius, strength):
+            center = np.mean(points, axis=0).astype(np.int32)
+            y, x = np.ogrid[:mask.shape[0], :mask.shape[1]]
+            dist = np.sqrt((x - center[0])**2 + (y - center[1])**2)
+            
+            # Create a gradual falloff
+            falloff = np.clip(1 - (dist / radius), 0, 1)
+            falloff = falloff * strength
+            
+            return falloff
+        
+        # Add protection zones for each facial feature
+        # Stronger protection for eyes
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(left_eye, radius=30, 
+                                                       strength=protection_strength))
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(right_eye, radius=30, 
+                                                       strength=protection_strength))
+        
+        # Medium protection for eyebrows
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(left_eyebrow, radius=25, 
+                                                       strength=protection_strength * 0.8))
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(right_eyebrow, radius=25, 
+                                                       strength=protection_strength * 0.8))
+        
+        # Light protection for nose bridge
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(nose_bridge, radius=20, 
+                                                       strength=protection_strength * 0.6))
+        
+        # Smooth the protection mask
+        protection_mask = cv2.GaussianBlur(protection_mask, (15, 15), 0)
+        
+        # Invert and apply the protection mask to the original mask
+        protected_mask = mask.astype(np.float32) * (1 - protection_mask)
+        
+        # Convert back to uint8
+        protected_mask = np.clip(protected_mask, 0, 255).astype(np.uint8)
+        
+        return protected_mask
