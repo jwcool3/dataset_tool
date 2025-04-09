@@ -665,31 +665,69 @@ class EnhancedCropReinserter:
             if hasattr(self, 'face_detector') and self.face_detector is not None and \
             hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
                 
-                # Get landmarks for both images
+                # MODIFICATION: Only detect landmarks in the source image
                 source_landmarks = self._get_landmarks(source_img)
-                processed_landmarks = self._get_landmarks(processed_img_resized)
                 
-                if source_landmarks is not None and processed_landmarks is not None:
-                    # Determine which alignment method to use
+                if source_landmarks is not None:
+                    print("Using source landmarks for alignment. Not attempting to detect face in processed image.")
+                    
+                    # Create a transformation based on just the source landmarks and geometry
+                    # We don't need processed landmarks since the processed image is just hair
+                    h, w = source_img.shape[:2]
+                    ph, pw = processed_img_resized.shape[:2]
+                    
+                    # Instead of using landmarks from both images, just use source landmarks
+                    # to position the hair at the appropriate location (e.g., above eyebrows)
                     if self.app.use_translation_only.get():
-                        print("Using translation-only landmark-based alignment")
-                        aligned_mask, aligned_img = self._apply_translation_only_transform(
-                            source_img, processed_img_resized, source_mask, mask_resized, 
-                            source_landmarks, processed_landmarks, debug_dir
-                        )
+                        print("Using source landmarks for positioning only")
+                        
+                        # Estimate where bangs should be positioned based on face landmarks
+                        bangs_position = self._estimate_bangs_position(source_landmarks, h, w)
+                        
+                        # Calculate the center of the processed image
+                        proc_center_x = pw // 2
+                        proc_center_y = ph // 4  # Position toward the top quarter
+                        
+                        # Calculate the offset to move the processed image
+                        offset_x = bangs_position['center_x'] - proc_center_x
+                        offset_y = bangs_position['top_y'] - proc_center_y
+                        
+                        # Create and apply the transformation
+                        M = np.float32([[1, 0, offset_x], [0, 1, offset_y]])
+                        aligned_mask = cv2.warpAffine(mask_resized, M, (w, h), flags=cv2.INTER_LINEAR)
+                        aligned_img = cv2.warpAffine(processed_img_resized, M, (w, h), flags=cv2.INTER_LANCZOS4)
                     else:
-                        print("Using full transform landmark-based alignment")
+                        # For full transform, we still need some estimate of processed landmarks
+                        # Instead of detecting, we'll create synthetic landmarks for the processed image
+                        # based on the proportions of the source landmarks
+                        print("Estimating processed landmarks for transform")
+                        
+                        # Create a simplified set of landmarks for the processed image
+                        # This assumes the processed image is centered and contains just the hair
+                        processed_landmarks = []
+                        # Use the source landmarks as reference, but adjusted to the processed image proportions
+                        for x, y in source_landmarks:
+                            # Scale to processed image dimensions
+                            scaled_x = int(x * (pw / w))
+                            scaled_y = int(y * (ph / h))
+                            processed_landmarks.append((scaled_x, scaled_y))
+                        
+                        # Now use both sets of landmarks for the full transform
                         aligned_mask, aligned_img = self._apply_landmark_transform(
-                            source_img, processed_img_resized, source_mask, mask_resized, 
+                            source_img, processed_img_resized, source_mask, mask_resized,
                             source_landmarks, processed_landmarks, debug_dir
                         )
                     
                     # Save additional debug visualization
                     if debug_dir:
-                        landmark_debug = np.hstack((source_img, processed_img_resized, aligned_img))
+                        source_vis = source_img.copy()
+                        for i, (x, y) in enumerate(source_landmarks):
+                            cv2.circle(source_vis, (int(x), int(y)), 2, (0, 255, 0), -1)
+                        
+                        landmark_debug = np.hstack((source_vis, aligned_img))
                         cv2.imwrite(os.path.join(debug_dir, "landmark_alignment_process.png"), landmark_debug)
                 else:
-                    print("Could not detect landmarks in one or both images, falling back to default alignment")
+                    print("Could not detect landmarks in source image, falling back to default alignment")
                     # Use existing alignment method...
                     aligned_mask, aligned_img = self._align_masks(
                         source_mask, mask_resized, 
@@ -743,6 +781,14 @@ class EnhancedCropReinserter:
                 blend_extent
             )
         elif blend_mode == "poisson":
+            # Check if mask has any content and is properly sized
+            if aligned_mask is None or np.sum(aligned_mask) == 0:
+                print("Warning: Empty mask, falling back to alpha blending")
+                blend_mode = "alpha"
+            elif aligned_mask.shape != source_img.shape[:2] or aligned_img.shape != source_img.shape:
+                print("Warning: Shape mismatch, falling back to alpha blending")
+                blend_mode = "alpha"
+                
             try:
                 # Convert mask to correct format
                 mask_uint8 = aligned_mask.astype(np.uint8)
@@ -1242,37 +1288,65 @@ class EnhancedCropReinserter:
 
     def _poisson_blend(self, source_img, processed_img, mask):
         """
-        Perform Poisson blending.
-        
-        Args:
-            source_img: Original source image
-            processed_img: Processed image to blend
-            mask: Blending mask
-        
-        Returns:
-            numpy.ndarray: Blended image
+        Perform Poisson blending with improved error handling and boundary checks.
         """
         try:
-            # Ensure mask is uint8
+            # Ensure mask is uint8 and matches image dimensions
             mask_uint8 = mask.astype(np.uint8)
+            h, w = source_img.shape[:2]
             
-            # Find center of mask
+            # Check if mask has any non-zero values
+            if np.sum(mask_uint8) == 0:
+                print("Mask is empty, falling back to alpha blending")
+                raise ValueError("Empty mask")
+                
+            # Find center of mask with boundary protection
             moments = cv2.moments(mask_uint8)
             if moments["m00"] > 0:
                 center_x = int(moments["m10"] / moments["m00"])
                 center_y = int(moments["m01"] / moments["m00"])
-                center = (center_x, center_y)
                 
-                # Apply seamless cloning
-                result_img = cv2.seamlessClone(processed_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE)
+                # Ensure center is at least 1/4 of the image dimensions from any edge
+                safe_margin = min(w, h) // 4
+                center_x = max(safe_margin, min(w - safe_margin, center_x))
+                center_y = max(safe_margin, min(h - safe_margin, center_y))
+                
+                center = (center_x, center_y)
+                print(f"Using center point for Poisson blending: {center}")
+                
+                # Erode mask slightly to avoid boundary issues
+                eroded_mask = cv2.erode(mask_uint8, np.ones((3, 3), np.uint8), iterations=1)
+                
+                # Ensure both images and mask are the same size
+                if source_img.shape[:2] != processed_img.shape[:2] or source_img.shape[:2] != mask_uint8.shape[:2]:
+                    print("Warning: Shape mismatch. Resizing processed image and mask to match source.")
+                    processed_img = cv2.resize(processed_img, (w, h), interpolation=cv2.INTER_LANCZOS4)
+                    eroded_mask = cv2.resize(eroded_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+                
+                # Apply seamless cloning with checked inputs
+                if np.any(eroded_mask > 0):
+                    # Debug visualization of the mask and center point
+                    if self.app.debug_mode.get() and hasattr(self, 'debug_dir') and self.debug_dir:
+                        debug_img = source_img.copy()
+                        cv2.circle(debug_img, center, 5, (0, 0, 255), -1)  # Red dot at center
+                        mask_viz = np.zeros_like(source_img)
+                        mask_viz[eroded_mask > 0] = [0, 255, 0]  # Green for mask
+                        blend_debug = cv2.addWeighted(debug_img, 0.7, mask_viz, 0.3, 0)
+                        cv2.imwrite(os.path.join(self.debug_dir, "poisson_blend_debug.png"), blend_debug)
+                    
+                    result_img = cv2.seamlessClone(
+                        processed_img, source_img, eroded_mask, center, cv2.NORMAL_CLONE
+                    )
+                else:
+                    # Fallback to alpha blending
+                    raise ValueError("Mask has no non-zero values after erosion")
             else:
                 # Fallback to alpha blending
-                mask_float = mask.astype(float) / 255.0
-                mask_float_3d = np.stack([mask_float] * 3, axis=2)
-                result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+                raise ValueError("Mask moments are zero")
+                
         except Exception as e:
             print(f"Poisson blending failed: {str(e)}")
-            # Fallback to alpha blending
+            # Fall back to alpha blending
             mask_float = mask.astype(float) / 255.0
             mask_float_3d = np.stack([mask_float] * 3, axis=2)
             result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
@@ -2069,7 +2143,7 @@ class EnhancedCropReinserter:
 
     def _get_landmarks(self, image):
         """
-        Basic face detection with fallback - enhanced methods temporarily disabled.
+        Enhanced face detection with better fallbacks and diagnostics.
         """
         if self.face_detector is None or self.landmark_predictor is None:
             print("Facial landmark detection not available")
@@ -2078,30 +2152,34 @@ class EnhancedCropReinserter:
         # Convert to grayscale for detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         
-        # Simple detection with default settings
-        faces = self.face_detector(gray)
+        # Print some diagnostics about the image
+        print(f"Image shape for face detection: {image.shape}")
+        print(f"Image intensity range: {np.min(gray)} to {np.max(gray)}")
         
-        # If no faces detected, try basic upsampling
-        if not faces:
-            print("No faces detected with default settings, trying with upsampling")
-            faces = self.face_detector(gray, 1)
-        
-        # If we found faces, process the largest one
-        if faces:
-            # Use largest face by area
-            largest_face = max(faces, key=lambda rect: rect.width() * rect.height())
+        # Try detection with different upsample factors
+        for upsample_factor in [0, 1, 2]:  # Try no upsampling, then 1x, then 2x
+            print(f"Attempting face detection with upsample factor {upsample_factor}")
+            faces = self.face_detector(gray, upsample_factor)
             
-            # Get landmarks
-            try:
-                shape = self.landmark_predictor(gray, largest_face)
-                landmarks = [(shape.part(i).x, shape.part(i).y) for i in range(68)]
-                return landmarks
-            except Exception as e:
-                print(f"Error detecting landmarks: {str(e)}")
-        else:
-            print("No faces detected, using geometric fallback")
+            if faces:
+                print(f"Detected {len(faces)} faces with upsample factor {upsample_factor}")
+                # Use largest face by area
+                largest_face = max(faces, key=lambda rect: rect.width() * rect.height())
+                
+                # Get landmarks
+                try:
+                    shape = self.landmark_predictor(gray, largest_face)
+                    landmarks = [(shape.part(i).x, shape.part(i).y) for i in range(68)]
+                    print(f"Successfully extracted {len(landmarks)} landmarks")
+                    return landmarks
+                except Exception as e:
+                    print(f"Error detecting landmarks: {str(e)}")
+                    continue  # Try next upsample factor if landmarks failed
         
-        # If no faces detected, use geometric fallback
+        # If we reach here, no detection succeeded
+        print("No faces detected with any upsampling, using geometric fallback")
+        
+        # Create a full set of 68 estimated facial landmarks based on image geometry
         h, w = image.shape[:2]
         
         # Create a full set of 68 estimated facial landmarks based on image geometry
