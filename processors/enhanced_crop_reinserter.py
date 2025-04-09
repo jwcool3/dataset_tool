@@ -256,7 +256,7 @@ class EnhancedCropReinserter:
         if processed_img is None:
             print(f"Failed to load processed image: {processed_path}")
             return False
-            
+        
         # Get the source mask (if available) - moved to the top of the function before it's used
         source_mask = self._find_source_mask(source_path)
         print(f"Source mask found: {source_mask is not None}")
@@ -1540,9 +1540,9 @@ class EnhancedCropReinserter:
         # If we're doing upward extension, also find the top boundary of the mask
         if upward_pixels > 0:
             for x in range(width):
-                column_pixels = np.where(original_mask[:, x] > 0)[0]
-                if len(column_pixels) > 0:
-                    top_boundary[x] = np.min(column_pixels)
+                    column_pixels = np.where(original_mask[:, x] > 0)[0]
+                    if len(column_pixels) > 0:
+                        top_boundary[x] = np.min(column_pixels)
         
         # For each column in the mask:
         pixels_extended = 0
@@ -1572,8 +1572,8 @@ class EnhancedCropReinserter:
                 
                 # Skip if we'd go beyond the image
                 if y >= height:
-                    break
-                
+                        break
+            
                 # Calculate falloff ratio (1.0 at top, decreasing downward)
                 # Use non-linear falloff for more natural appearance
                 # The falloff_power controls the rate of fading - smaller = slower fade
