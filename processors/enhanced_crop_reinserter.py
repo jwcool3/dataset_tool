@@ -14,6 +14,7 @@ from skimage import img_as_ubyte, img_as_float
 from processors.mask_alignment_handler import MaskAlignmentHandler
 import tkinter as tk
 import dlib 
+from scipy.interpolate import interp1d
 
 
 class EnhancedCropReinserter:
@@ -255,6 +256,10 @@ class EnhancedCropReinserter:
         if processed_img is None:
             print(f"Failed to load processed image: {processed_path}")
             return False
+            
+        # Get the source mask (if available) - moved to the top of the function before it's used
+        source_mask = self._find_source_mask(source_path)
+        print(f"Source mask found: {source_mask is not None}")
         
         # Get dimensions
         source_h, source_w = source_img.shape[:2]
@@ -290,7 +295,30 @@ class EnhancedCropReinserter:
             # Save the original mask
             cv2.imwrite(os.path.join(debug_dir, "original_mask.png"), mask)
             
-            # After isolating bangs
+            # If we have a source mask, use it for bangs isolation instead
+            if source_mask is not None:
+                print("Using source mask for bangs isolation")
+                bangs_mask = self._isolate_bangs_region(source_mask, source_landmarks)
+                cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), bangs_mask)
+                
+                # Create a visualization of the mask overlay using the source mask
+                if bangs_mask.shape[0] != source_h or bangs_mask.shape[1] != source_w:
+                    bangs_mask_resized = cv2.resize(bangs_mask, (source_w, source_h), 
+                                                interpolation=cv2.INTER_LINEAR)
+                else:
+                    bangs_mask_resized = bangs_mask
+                
+                # Create visualization of the mask overlay using the resized mask
+                mask_viz = np.zeros((source_h, source_w, 3), dtype=np.uint8)
+                mask_viz[bangs_mask_resized > 0] = [0, 255, 0]  # Green for bangs mask
+                # Overlay on source image with 50% opacity
+                overlay = cv2.addWeighted(source_img, 0.7, mask_viz, 0.3, 0)
+                cv2.imwrite(os.path.join(debug_dir, "bangs_overlay_viz.png"), overlay)
+                
+                # Update the mask for further processing
+                mask = bangs_mask
+            else:
+                print("No source mask found, using processed mask for bangs isolation")
             bangs_mask = self._isolate_bangs_region(mask, source_landmarks)
             cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), bangs_mask)
             
@@ -314,7 +342,13 @@ class EnhancedCropReinserter:
             # Regular bangs-only mode without debug
             if self.app.use_bangs_only.get():
                 print("Using bangs-only mode")
+                if source_mask is not None:
+                    print("Using source mask for bangs isolation")
+                    bangs_mask = self._isolate_bangs_region(source_mask, source_landmarks)
+                else:
+                    print("No source mask found, using processed mask for bangs isolation")
                 bangs_mask = self._isolate_bangs_region(mask, source_landmarks)
+                
                 mask = bangs_mask
 
         # Apply bangs extension if enabled
@@ -326,19 +360,37 @@ class EnhancedCropReinserter:
             # Save pre-extension mask if debugging
             if debug_dir:
                 cv2.imwrite(os.path.join(debug_dir, "pre_extension_mask.png"), mask)
+                # Save mask visualization
+                mask_viz = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+                mask_viz[mask > 0] = [0, 255, 0]  # Green for original mask
+                cv2.imwrite(os.path.join(debug_dir, "pre_extension_mask_viz.png"), mask_viz)
             
             # Pass source_landmarks to the extension function
-            mask = self._extend_bangs_area(
+            print(f"Input mask shape: {mask.shape}, non-zero pixels: {np.count_nonzero(mask)}")
+            
+            # For larger extensions, use a smaller min_opacity to ensure visibility
+            min_opacity_value = max(0.5, 0.9 - (extension_amount / 100.0))
+            print(f"Using min_opacity: {min_opacity_value} for extension_amount: {extension_amount}")
+            
+            extended_mask = self._extend_bangs_area(
                 mask, 
                 extend_pixels=extension_amount,
                 forehead_ratio=width_ratio,
-                min_opacity=self.app.bangs_min_opacity.get(),
+                min_opacity=min_opacity_value,  # Dynamic min_opacity based on extension amount
                 source_landmarks=source_landmarks  # Pass source landmarks
             )
+            print(f"Output mask shape: {extended_mask.shape}, non-zero pixels: {np.count_nonzero(extended_mask)}")
+            # Assign extended mask back to mask
+            mask = extended_mask
             
             # Save debug visualization of extension
             if debug_dir:
                 cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask.png"), mask)
+                
+                # Create better visualizations to see the difference
+                mask_viz = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+                mask_viz[mask > 0] = [0, 0, 255]  # Blue for extended mask
+                cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask_viz.png"), mask_viz)
                 
                 # IMPORTANT FIX: Resize the mask to match source dimensions before visualization
                 if mask.shape[0] != source_h or mask.shape[1] != source_w:
@@ -374,9 +426,6 @@ class EnhancedCropReinserter:
         else:
             processed_img_resized = processed_img
             mask_resized = mask
-        
-        # Get the source mask (if available)
-        source_mask = self._find_source_mask(source_path)
         
         # For alignment, always use the source landmarks as reference
         # Don't try to detect landmarks in the processed image (it's just hair)
@@ -419,16 +468,105 @@ class EnhancedCropReinserter:
                 cv2.imwrite(os.path.join(debug_dir, "processed_resized.png"), processed_img_resized)
                 cv2.imwrite(os.path.join(debug_dir, "mask_resized.png"), mask_resized)
         
+        # Get manual offset values
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
 
-        # Check if the source has a different hair mask
-        source_mask = self._find_source_mask(source_path)
+        # Get manual scaling values
+        scale_x = self.app.reinsert_manual_scale_x.get()
+        scale_y = self.app.reinsert_manual_scale_y.get()
+
+        # FIXED IMPLEMENTATION: Apply scaling correctly without affecting position
+        # First determine the anchor point (top center of the mask)
+        # This is the point that should stay fixed during Y scaling
+        if np.any(aligned_mask > 0):
+            # Find top edge of mask for Y scaling anchor
+            non_zero_y = np.where(np.any(aligned_mask > 0, axis=1))[0]
+            if len(non_zero_y) > 0:
+                top_y = non_zero_y[0]
+                # Find center of mask horizontally
+                non_zero_x = np.where(aligned_mask[top_y, :] > 0)[0]
+                if len(non_zero_x) > 0:
+                    center_x = (np.min(non_zero_x) + np.max(non_zero_x)) // 2
+                else:
+                    center_x = source_w // 2
+            else:
+                top_y = 0
+                center_x = source_w // 2
+        else:
+            top_y = 0
+            center_x = source_w // 2
+        
+        # Apply manual scaling if not at default value (1.0)
+        if scale_x != 1.0 or scale_y != 1.0:
+            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
+            print(f"Scaling anchor point: ({center_x}, {top_y})")
+            
+            # Create a combined transformation matrix that:
+            # 1. Translates the anchor point to origin
+            # 2. Scales
+            # 3. Translates back
+            
+            # For Y scaling, we want to keep the top edge at the same position
+            # For X scaling, we want to keep the center at the same position
+            M = np.float32([
+                [scale_x, 0, center_x * (1 - scale_x)],
+                [0, scale_y, top_y * (1 - scale_y)]  # This keeps the top fixed during scaling
+            ])
+            
+            # Apply to both processed image and mask
+            aligned_img = cv2.warpAffine(
+                aligned_img, M, (source_w, source_h),
+                flags=cv2.INTER_LANCZOS4,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, M, (source_w, source_h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0
+            )
+            
+            # Save scaled versions for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "scaled_processed.png"), aligned_img)
+                cv2.imwrite(os.path.join(debug_dir, "scaled_mask.png"), aligned_mask)
+        
+        # Apply manual offset AFTER scaling
+        if manual_offset_x != 0 or manual_offset_y != 0:
+            print(f"Applying manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+            
+            # Create transformation matrix for the offset
+            M = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+            
+            # Apply to both processed image and mask
+            aligned_img = cv2.warpAffine(
+                aligned_img, M, (source_w, source_h),
+                flags=cv2.INTER_LANCZOS4,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, M, (source_w, source_h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0
+            )
+            
+            # Save offset versions for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "offset_processed.png"), aligned_img)
+                cv2.imwrite(os.path.join(debug_dir, "offset_mask.png"), aligned_mask)
         
         # If we're not handling different masks, simply use standard blending
         if not self.app.reinsert_handle_different_masks.get() or source_mask is None:
             # Basic alpha blending
-            mask_float = mask_resized.astype(float) / 255.0
+            mask_float = aligned_mask.astype(float) / 255.0
             mask_float_3d = np.stack([mask_float] * 3, axis=2)
-            result_img = source_img * (1 - mask_float_3d) + processed_img_resized * mask_float_3d
+            result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
             result_img = np.clip(result_img, 0, 255).astype(np.uint8)
             
             cv2.imwrite(output_path, result_img)
@@ -871,7 +1009,7 @@ class EnhancedCropReinserter:
 
     def _alpha_blend(self, source_img, processed_img, mask, blend_extent=8):
         """
-        Enhanced alpha blending with better feathering and color correction.
+        Enhanced alpha blending with better feathering, color correction, and harmonization.
         
         Args:
             source_img: Original source image
@@ -911,7 +1049,8 @@ class EnhancedCropReinserter:
             # Use the feathered mask for blending
             mask_float = feathered_mask
         
-        # Apply color correction at the boundary
+        # Apply improved color harmonization
+        # Step 1: Color correction at the boundary
         if blend_extent > 0:
             # Get blurred versions of source and processed images
             source_blur = cv2.GaussianBlur(source_img.astype(np.float32), (21, 21), 0)
@@ -946,6 +1085,143 @@ class EnhancedCropReinserter:
             # Apply adjustment with a gradient
             processed_blend = processed_img * (1 - border_float_3d) + adjusted_processed * border_float_3d
             processed_img = processed_blend.astype(np.float32)
+        
+        # Step 2: Global color harmonization - match color statistics
+        # Extract color statistics from the source hair (if visible)
+        source_hair_mask = np.zeros_like(mask_binary)
+        
+        # Try to find hair in source image outside the mask
+        # This assumes areas outside the mask may still be hair
+        try:
+            # Convert to HSV for better hair detection
+            source_hsv = cv2.cvtColor(source_img, cv2.COLOR_BGR2HSV)
+            
+            # Sample area just outside the mask where hair likely exists
+            # Dilate the mask to get the surrounding area
+            sample_area = cv2.dilate(mask_binary, np.ones((15, 15), np.uint8), iterations=1)
+            sample_area = cv2.bitwise_xor(sample_area, mask_binary)
+            
+            # If we have landmarks, estimate where hair should be
+            if hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
+                landmarks = self._get_landmarks(source_img)
+                if landmarks is not None and len(landmarks) >= 27:
+                    # Get top of head and sides of face
+                    top_landmarks = landmarks[:17]  # Face outline
+                    
+                    # Create a mask for likely hair region
+                    top_y = min([p[1] for p in top_landmarks])
+                    hair_region = np.zeros_like(mask_binary)
+                    
+                    # Define a region above and around the face
+                    for y in range(hair_region.shape[0]):
+                        for x in range(hair_region.shape[1]):
+                            if y < top_y + 50:  # Area above and slightly below face top
+                                hair_region[y, x] = 255
+                    
+                    # Combine with sample area
+                    sample_area = cv2.bitwise_and(sample_area, hair_region)
+            
+            # Check if sample area exists
+            if np.sum(sample_area) > 0:
+                # Extract hair color from the source using HSV color range typical for hair
+                h, s, v = cv2.split(source_hsv)
+                
+                # Define hair-like HSV ranges (works for many hair colors)
+                # This is a general heuristic that may need adaptation
+                if np.sum(mask_binary) > 0:
+                    # Use a more focused sampling of where we know hair is
+                    # Find mean HSV values in the mask region in processed image
+                    processed_hsv = cv2.cvtColor(processed_img.astype(np.uint8), cv2.COLOR_BGR2HSV)
+                    
+                    # Get mean HSV values in the processed hair region
+                    processed_hair_h = processed_hsv[:,:,0][mask_binary > 0]
+                    processed_hair_s = processed_hsv[:,:,1][mask_binary > 0]
+                    processed_hair_v = processed_hsv[:,:,2][mask_binary > 0]
+                    
+                    if len(processed_hair_h) > 0:
+                        mean_h = np.mean(processed_hair_h)
+                        mean_s = np.mean(processed_hair_s)
+                        mean_v = np.mean(processed_hair_v)
+                        
+                        # Create range around the mean values
+                        h_range = 20  # Hue range (adjust as needed)
+                        s_range = 50  # Saturation range
+                        v_range = 50  # Value range
+                        
+                        h_min = max(0, mean_h - h_range)
+                        h_max = min(180, mean_h + h_range)
+                        s_min = max(0, mean_s - s_range)
+                        s_max = min(255, mean_s + s_range)
+                        v_min = max(0, mean_v - v_range)
+                        v_max = min(255, mean_v + v_range)
+                        
+                        # Create mask for source hair based on these ranges
+                        source_hair_mask = cv2.inRange(source_hsv, 
+                                                   (h_min, s_min, v_min), 
+                                                   (h_max, s_max, v_max))
+                        
+                        # Apply the sample area to limit to areas outside the bangs region
+                        source_hair_mask = cv2.bitwise_and(source_hair_mask, sample_area)
+                    else:
+                        # Fallback to generic hair detection
+                        source_hair_mask = sample_area.copy()
+        except Exception as e:
+            print(f"Error in hair color harmonization: {str(e)}")
+            # Fallback - use the sample area directly
+            source_hair_mask = sample_area.copy()
+        
+        # Apply color harmonization if we have enough hair pixels to sample
+        if np.sum(source_hair_mask) > 100:  # Ensure we have enough pixels
+            try:
+                # Get source hair pixels
+                source_hair_pixels = source_img[source_hair_mask > 0].reshape(-1, 3)
+                
+                # Get processed hair pixels
+                processed_hair_pixels = processed_img[mask_binary > 0].reshape(-1, 3)
+                
+                if len(source_hair_pixels) > 0 and len(processed_hair_pixels) > 0:
+                    # Calculate mean and std for both source and processed hair
+                    source_mean = np.mean(source_hair_pixels, axis=0)
+                    source_std = np.std(source_hair_pixels, axis=0)
+                    
+                    processed_mean = np.mean(processed_hair_pixels, axis=0)
+                    processed_std = np.std(processed_hair_pixels, axis=0)
+                    
+                    # Create adjusted processed image with matched statistics
+                    # This is a simplified color transfer
+                    processed_adjusted = processed_img.astype(np.float32).copy()
+                    
+                    # Only apply to hair region
+                    hair_region = (mask_float > 0.3)
+                    
+                    # Create 3-channel version of the hair region
+                    hair_region_3d = np.stack([hair_region] * 3, axis=2)
+                    
+                    # Adjust each channel
+                    for c in range(3):
+                        # Skip if standard deviation is too small
+                        if processed_std[c] < 1.0 or source_std[c] < 1.0:
+                            continue
+                            
+                        # Apply color matching: scale = source_std / processed_std
+                        scale = source_std[c] / processed_std[c]
+                        
+                        # Don't apply extreme scaling
+                        scale = np.clip(scale, 0.5, 2.0)
+                        
+                        # Adjust the processed image: (x - mean) * scale + new_mean
+                        channel = processed_adjusted[:,:,c]
+                        adjusted = (channel - processed_mean[c]) * scale + source_mean[c]
+                        
+                        # Apply only to hair region with gradual transition
+                        strength = 0.6  # Adjust strength of color transfer
+                        channel[hair_region] = channel[hair_region] * (1 - strength) + adjusted[hair_region] * strength
+                    
+                    # Convert back to proper type
+                    processed_img = processed_adjusted.astype(np.float32)
+            except Exception as e:
+                print(f"Error applying color harmonization: {str(e)}")
+                # Continue with original processed image
         
         # Create 3-channel mask for blending
         mask_float_3d = np.stack([mask_float] * 3, axis=2)
@@ -1005,7 +1281,7 @@ class EnhancedCropReinserter:
 
     def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
         """
-        Perform feathered blending with gradual transition.
+        Enhanced feathered blending with improved edge handling and transitions.
         
         Args:
             source_img: Original source image
@@ -1016,25 +1292,126 @@ class EnhancedCropReinserter:
         Returns:
             numpy.ndarray: Blended image
         """
-        # Convert mask to binary
+        # Convert mask to binary for processing
         _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
-        # Create distance transforms
+        # Create distance transforms for inside and outside the mask
         dist_inside = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 3)
         dist_outside = cv2.distanceTransform(255 - binary_mask, cv2.DIST_L2, 3)
         
-        # Create alpha values based on distance
+        # Normalize the distance transforms by the blend extent
+        inside_blend_extent = blend_extent * 1.5  # Slightly larger extent inside the mask
+        outside_blend_extent = blend_extent
+        
+        # Create alpha values based on distance with smoother transitions
         alpha = np.ones_like(dist_inside, dtype=float)
         
-        # Inside mask: fade from 1.0 at center to 0.5 at border
-        fade_inside = np.clip(dist_inside / blend_extent, 0, 1)
-        alpha = 0.5 + 0.5 * fade_inside
+        # Apply smoothstep function for more natural transitions
+        # smoothstep(x) = 3x² - 2x³ for x in [0,1], which gives a smoother S-curve
+        def smoothstep(x):
+            x = np.clip(x, 0, 1)
+            return x * x * (3 - 2 * x)
         
-        # Outside mask: fade from 0.5 at border to 0.0 outside
-        fade_outside = np.clip(1.0 - dist_outside / blend_extent, 0, 1)
-        alpha = alpha * (binary_mask / 255.0) + fade_outside * (1 - binary_mask / 255.0) * 0.5
+        # Inside mask: fade from 1.0 at center to transition value at border
+        inside_fade = np.clip(dist_inside / inside_blend_extent, 0, 1)
+        # Apply smoothstep for more natural falloff
+        inside_fade = smoothstep(inside_fade)
+        # Map 0->0.5, 1->1.0
+        inside_fade = 0.5 + 0.5 * inside_fade
+        
+        # Outside mask: fade from transition value at border to 0.0 outside
+        outside_fade = np.clip(1.0 - dist_outside / outside_blend_extent, 0, 1)
+        # Apply smoothstep for more natural falloff
+        outside_fade = smoothstep(outside_fade)
+        # Map 0->0.0, 1->0.5
+        outside_fade = 0.5 * outside_fade
+        
+        # Combine the fades using the binary mask
+        binary_mask_float = binary_mask.astype(float) / 255.0
+        alpha = inside_fade * binary_mask_float + outside_fade * (1.0 - binary_mask_float)
+        
+        # For hair, we can enhance the blending by adding noise to the transition
+        # This helps simulate the natural randomness of hair strands
+        if self.app.use_bangs_only.get():
+            # Create a noise pattern
+            np.random.seed(42)  # For reproducibility
+            noise = np.random.normal(0, 0.05, alpha.shape).astype(np.float32)
+            
+            # Only apply noise to the transition region
+            transition_region = (alpha > 0.1) & (alpha < 0.9)
+            alpha[transition_region] += noise[transition_region]
+            alpha = np.clip(alpha, 0, 1)
+        
+        # Apply a slight blur to the alpha for smoother transitions
+        alpha = cv2.GaussianBlur(alpha, (5, 5), 0)
         
         # Create 3-channel alpha
+        alpha_3d = np.stack([alpha] * 3, axis=2)
+        
+        # Apply color matching at boundaries before blending
+        # Create a narrow border region for color matching
+        border_mask = np.zeros_like(binary_mask)
+        border = cv2.dilate(binary_mask, np.ones((3, 3), np.uint8)) - binary_mask
+        border_mask[border > 0] = 255
+        
+        # If we have source color and processed color at the boundary, adjust the processed color
+        if np.sum(border_mask) > 0:
+            try:
+                # Convert to LAB color space for better color matching
+                source_lab = cv2.cvtColor(source_img, cv2.COLOR_BGR2LAB)
+                processed_lab = cv2.cvtColor(processed_img.astype(np.uint8), cv2.COLOR_BGR2LAB)
+                
+                # Sample the colors at the boundary
+                source_border = source_lab[border_mask > 0]
+                processed_border = processed_lab[border_mask > 0]
+                
+                if len(source_border) > 0 and len(processed_border) > 0:
+                    # Calculate mean color difference
+                    source_mean = np.mean(source_border, axis=0)
+                    processed_mean = np.mean(processed_border, axis=0)
+                    color_diff = source_mean - processed_mean
+                    
+                    # Apply a gradual color correction
+                    # Create a gradient mask where correction is strongest at border and fades out
+                    correction_mask = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 3)
+                    correction_mask = np.clip(1.0 - correction_mask / (blend_extent * 2), 0, 1)
+                    
+                    # Apply the correction to the LAB image
+                    for i in range(3):
+                        processed_lab[:,:,i] = np.clip(
+                            processed_lab[:,:,i] + color_diff[i] * correction_mask * 0.7,  # 70% strength
+                            0, 255 if i == 0 else 255
+                        )
+                    
+                    # Convert back to BGR
+                    processed_img = cv2.cvtColor(processed_lab, cv2.COLOR_LAB2BGR)
+            except Exception as e:
+                print(f"Error in color matching: {str(e)}")
+        
+        # Apply edge-aware blending for better hair strand preservation
+        source_gray = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+        processed_gray = cv2.cvtColor(processed_img.astype(np.uint8), cv2.COLOR_BGR2GRAY) if len(processed_img.shape) == 3 else processed_img
+        
+        # Detect edges in both images
+        source_edges = cv2.Canny(source_gray, 50, 150)
+        processed_edges = cv2.Canny(processed_gray, 50, 150)
+        
+        # Create an edge-aware alpha mask that preserves hair detail
+        edge_mask = np.zeros_like(alpha)
+        # Strengthen alpha where processed image has edges (hair strands)
+        edge_mask[processed_edges > 0] = 0.2  # Boost by 20%
+        # Weaken alpha where source image has strong edges we want to preserve
+        edge_mask[source_edges > 0] = -0.1  # Reduce by 10%
+        
+        # Apply the edge mask to the transition region
+        transition_region = (alpha > 0.2) & (alpha < 0.8)
+        alpha[transition_region] += edge_mask[transition_region]
+        alpha = np.clip(alpha, 0, 1)
+        
+        # Final smoothing of the alpha mask
+        alpha = cv2.GaussianBlur(alpha, (3, 3), 0)
+        
+        # Update 3D alpha with the enhanced version
         alpha_3d = np.stack([alpha] * 3, axis=2)
         
         # Blend images
@@ -1074,17 +1451,17 @@ class EnhancedCropReinserter:
     
     def _extend_bangs_area(self, mask, extend_pixels=30, forehead_ratio=0.3, min_opacity=0.7, source_landmarks=None):
         """
-        Improved bangs extension with proper scaling for source landmarks.
+        Extends the isolated bangs mask directly downward following the mask's contours.
         
         Args:
-            mask: The binary mask image
+            mask: The isolated bangs mask to extend
             extend_pixels: How many pixels to extend downward
-            forehead_ratio: What portion of the width to consider as forehead (centered)
-            min_opacity: Minimum opacity value at the edges of extension (0.0-1.0)
-            source_landmarks: Optional landmarks from source image for better positioning
-                
+            forehead_ratio: Not used, kept for backward compatibility 
+            min_opacity: Minimum opacity at the furthest point of extension
+            source_landmarks: Optional landmarks for face-aware extension
+            
         Returns:
-            numpy.ndarray: Extended mask
+            numpy.ndarray: Extended bangs mask
         """
         # Basic error checking
         if mask is None:
@@ -1101,89 +1478,167 @@ class EnhancedCropReinserter:
             print("Warning: Empty mask, nothing to extend")
             return mask
         
-        # Create a copy of the mask to modify
-        extended_mask = mask.copy()
+        print(f"Extending bangs mask downward by {extend_pixels} pixels")
+        
+        # Keep a copy of the original isolated bangs mask
+        original_mask = mask.copy()
         height, width = mask.shape[:2]
         
-        # If source landmarks are available, use them to guide the extension
+        # Create the output mask - initialize with the original mask
+        extended_mask = original_mask.copy()
+        
+        # If using landmarks and they're available, adjust extension amount
         if source_landmarks is not None and len(source_landmarks) >= 27:
             try:
-                # Calculate estimated source image dimensions based on landmarks
-                source_width_estimate = max([p[0] for p in source_landmarks[:17]]) - min([p[0] for p in source_landmarks[:17]])
-                source_height_estimate = max([p[1] for p in source_landmarks]) - min([p[1] for p in source_landmarks])
-                
-                # Calculate scale factors
-                scale_x = width / source_width_estimate
-                scale_y = height / source_height_estimate
-                
-                # Scale the landmark coordinates
+                # Get eyebrow positions for scaling
                 eyebrow_points = source_landmarks[17:27]
-                scaled_eyebrow_y = min([int(p[1] * scale_y) for p in eyebrow_points])
+                eyebrow_y = min([int(p[1]) for p in eyebrow_points])
+                face_height = source_landmarks[8][1] - eyebrow_y  # Chin to eyebrows
                 
-                # Make sure it's within bounds
-                scaled_eyebrow_y = min(height-1, max(0, scaled_eyebrow_y))
+                # Scale extension based on face proportions
+                extend_factor = max(1.0, min(2.0, face_height / 180))
+                adjusted_extend = int(extend_pixels * extend_factor)
                 
-                # Adjust extend_pixels based on eyebrow position
-                # More extension if eyebrows are lower in the image
-                eyebrow_ratio = scaled_eyebrow_y / height
-                adjusted_extend = max(extend_pixels, int(extend_pixels * (1 + eyebrow_ratio)))
-                
-                print(f"Adjusted extend_pixels to {adjusted_extend} based on eyebrow position")
+                print(f"Face height: {face_height}, adjusting extension from {extend_pixels} to {adjusted_extend}")
                 extend_pixels = adjusted_extend
             except Exception as e:
-                print(f"Error using landmarks for extension: {str(e)}")
+                print(f"Error adjusting extension with landmarks: {str(e)}")
         
-        # Find the non-zero points in the mask
-        mask_points = np.argwhere(mask > 0)
-        if len(mask_points) == 0:
-            print("Warning: No mask points found, nothing to extend")
-            return mask
+        # IMPORTANT - Make sure extend_pixels is a reasonable value to avoid tiny extensions
+        extend_pixels = max(10, extend_pixels)  # Ensure minimum extension of 10 pixels
+        print(f"Final extension amount: {extend_pixels} pixels")
         
-        # Calculate the forehead region (center portion of width)
-        center_x = width // 2
-        forehead_half_width = int(width * forehead_ratio / 2)
-        forehead_left = max(0, center_x - forehead_half_width)
-        forehead_right = min(width, center_x + forehead_half_width)
-        
-        # Find the topmost point of the mask
-        top_y = np.min(mask_points[:, 0]) if len(mask_points) > 0 else 0
-        
-        print(f"Top Y position: {top_y}, extending by {extend_pixels} pixels")
-        print(f"Forehead region: left={forehead_left}, right={forehead_right}, " +
-            f"width={forehead_right-forehead_left}")
-        
-        # Create a more natural curved extension
-        for x in range(forehead_left, forehead_right):
-            # Calculate distance from center as a ratio (0.0 at center, 1.0 at edges)
-            center_dist = abs(x - center_x) / (forehead_half_width + 1e-5)
-            center_dist = min(1.0, center_dist)  # Cap at 1.0
+        # Calculate gradient falloff power based on extension amount
+        # For larger extensions, use a gentler falloff to make the extension more visible
+        if extend_pixels >= 70:
+            falloff_power = 0.3  # Very gentle falloff for very large extensions
+        elif extend_pixels >= 50:
+            falloff_power = 0.4  # Gentle falloff for large extensions
+        elif extend_pixels >= 30:
+            falloff_power = 0.5  # Medium falloff for medium extensions
+        else:
+            falloff_power = 0.7  # Steeper falloff for small extensions
             
-            # Use cosine curve for natural falloff
-            # More extension in center, less at edges
-            extension_factor = np.cos(center_dist * np.pi / 2)
-            current_extend = int(extend_pixels * extension_factor)
+        print(f"Using falloff power: {falloff_power} for extension amount: {extend_pixels}")
+        
+        # For very large extensions, also allow a small upward extension to better blend with hair
+        allow_upward = (extend_pixels >= 60)
+        upward_pixels = min(10, extend_pixels // 10) if allow_upward else 0
+        if upward_pixels > 0:
+            print(f"Allowing {upward_pixels} pixels of upward extension for smoother blending")
+        
+        # Find bottom boundary of mask for each column
+        bottom_boundary = np.zeros(width, dtype=int)
+        for x in range(width):
+            column_pixels = np.where(original_mask[:, x] > 0)[0]
+            if len(column_pixels) > 0:
+                bottom_boundary[x] = np.max(column_pixels)
+        
+        # Initialize top_boundary regardless of whether we're doing upward extension
+        top_boundary = np.ones(width, dtype=int) * height
+        
+        # If we're doing upward extension, also find the top boundary of the mask
+        if upward_pixels > 0:
+            for x in range(width):
+                column_pixels = np.where(original_mask[:, x] > 0)[0]
+                if len(column_pixels) > 0:
+                    top_boundary[x] = np.min(column_pixels)
+        
+        # For each column in the mask:
+        pixels_extended = 0
+        for x in range(width):
+            # Find the bottom edge of the mask in this column
+            bottom_y = bottom_boundary[x]
             
-            # Find topmost non-zero pixel in this column
-            col_points = np.where(mask[:, x] > 0)[0]
-            col_top = np.min(col_points) if len(col_points) > 0 else top_y
+            # If this column has no mask pixels, skip it
+            if bottom_y <= 0:
+                continue
             
-            # Start extension from this point
-            for y in range(col_top, min(height, col_top + current_extend)):
-                # Skip if pixel already has a higher value
-                if extended_mask[y, x] >= min_opacity * 255:
+            # Get the original value at the bottom edge
+            original_value = original_mask[bottom_y, x]
+            
+            # Skip if value is too low (nearly transparent)
+            if original_value < 20:
+                continue
+                
+            # Calculate how far to extend downward - use the full extend_pixels value
+            extension_amount = min(extend_pixels, height - bottom_y - 1)
+            if extension_amount <= 0:
+                continue
+                
+            # Apply the extension with gradient falloff
+            for y_offset in range(1, extension_amount + 1):
+                y = bottom_y + y_offset
+                
+                # Skip if we'd go beyond the image
+                if y >= height:
+                    break
+                
+                # Calculate falloff ratio (1.0 at top, decreasing downward)
+                # Use non-linear falloff for more natural appearance
+                # The falloff_power controls the rate of fading - smaller = slower fade
+                falloff = 1.0 - (y_offset / extension_amount) ** falloff_power
+                
+                # Calculate opacity based on original value and falloff
+                # Preserve the original opacity pattern but fade out
+                opacity = int(original_value * max(min_opacity, falloff))
+                
+                # Add slight noise for natural appearance
+                if self.app.use_bangs_only.get():
+                    noise_factor = 0.05  # 5% noise
+                    noise = (((x * 17 + y * 31) % 10) - 5) / 100.0
+                    opacity = int(np.clip(opacity * (1.0 + noise * noise_factor), 0, 255))
+                
+                # Set the pixel in the extended mask and count the extension
+                if opacity > 0:
+                    extended_mask[y, x] = opacity
+                    pixels_extended += 1
+            
+            # Handle upward extension if enabled
+            if upward_pixels > 0:
+                top_y = top_boundary[x]
+                # Skip if top is already at the top of the image
+                if top_y <= 0 or top_y >= height:
+                    continue
+                
+                # Get the value at the top edge
+                top_value = original_mask[top_y, x]
+                if top_value < 20:
                     continue
                     
-                # Calculate fade factor (1.0 at top, min_opacity at bottom)
-                y_progress = (y - col_top) / float(max(1, current_extend))
-                fade = 1.0 - (y_progress * (1.0 - min_opacity))
-                fade_value = int(255 * fade)
-                
-                extended_mask[y, x] = fade_value
+                # Calculate how far to extend upward
+                upward_amount = min(upward_pixels, top_y)
+                if upward_amount <= 0:
+                    continue
+                    
+                # Apply the upward extension with gradient falloff
+                for y_offset in range(1, upward_amount + 1):
+                    y = top_y - y_offset
+                    
+                    # Skip if we'd go beyond the image
+                    if y < 0:
+                        break
+                    
+                    # More aggressive falloff for upward extension
+                    falloff = 1.0 - (y_offset / upward_amount) ** 0.9
+                    
+                    # Reduce opacity more for upward extension
+                    opacity = int(top_value * falloff * 0.7)
+                    
+                    # Add slight noise
+                    if self.app.use_bangs_only.get():
+                        noise = (((x * 17 + y * 31) % 10) - 5) / 100.0
+                        opacity = int(np.clip(opacity * (1.0 + noise * 0.03), 0, 255))
+                    
+                    # Set the pixel and count the extension
+                    if opacity > 0:
+                        extended_mask[y, x] = opacity
+                        pixels_extended += 1
         
-        # Apply a slight blur to create smoother transitions
-        extended_mask = cv2.GaussianBlur(extended_mask, (3, 3), 0)
+        print(f"Extended {pixels_extended} pixels downward from the original mask")
         
-        return extended_mask
+        # Smooth the result slightly for natural appearance
+        return cv2.GaussianBlur(extended_mask, (3, 3), 0)
 
     def _improve_landmark_alignment(self, source_landmarks, processed_landmarks):
         """
@@ -1534,7 +1989,7 @@ class EnhancedCropReinserter:
             
             aligned_mask = cv2.warpAffine(
                 aligned_mask, offset_matrix, (w, h),
-                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
             )
         
         # Save debug visualization
@@ -1614,7 +2069,7 @@ class EnhancedCropReinserter:
 
     def _get_landmarks(self, image):
         """
-        Enhanced face detection with reliable fallback options.
+        Basic face detection with fallback - enhanced methods temporarily disabled.
         """
         if self.face_detector is None or self.landmark_predictor is None:
             print("Facial landmark detection not available")
@@ -1623,21 +2078,13 @@ class EnhancedCropReinserter:
         # Convert to grayscale for detection
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         
-        # First try with default settings
+        # Simple detection with default settings
         faces = self.face_detector(gray)
         
-        # If no faces detected, try with upsampling
+        # If no faces detected, try basic upsampling
         if not faces:
             print("No faces detected with default settings, trying with upsampling")
-            faces = self.face_detector(gray, 1)  # Upsample 1 time
-        
-        # If still no faces, try adjusting contrast
-        if not faces:
-            print("Trying contrast enhancement for face detection")
-            # Apply contrast enhancement
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced_gray = clahe.apply(gray)
-            faces = self.face_detector(enhanced_gray, 1)
+            faces = self.face_detector(gray, 1)
         
         # If we found faces, process the largest one
         if faces:
@@ -1651,10 +2098,10 @@ class EnhancedCropReinserter:
                 return landmarks
             except Exception as e:
                 print(f"Error detecting landmarks: {str(e)}")
-                # Fall through to geometric fallback
+        else:
+            print("No faces detected, using geometric fallback")
         
-        # If still no faces, use a geometric approach as fallback
-        print("No faces detected, using geometric fallback method")
+        # If no faces detected, use geometric fallback
         h, w = image.shape[:2]
         
         # Create a full set of 68 estimated facial landmarks based on image geometry
@@ -1738,16 +2185,68 @@ class EnhancedCropReinserter:
             y = int(mouth_y + np.sin(angle) * inner_mouth_height/2)
             landmarks.append((x, y))
         
+        print("Using fallback geometric landmarks")
         return landmarks
     
+    def _enhance_image_for_detection(self, gray):
+        """DISABLED: Apply image enhancements to improve face detection."""
+        return gray
+    
+    def _try_scaled_detection(self, image, scale_factor=0.75):
+        """DISABLED: Try detecting faces with image scaling."""
+        return []
+    
+    def create_hairline_curve(self, width, height, extend_pixels, forehead_left, forehead_right, center_x, top_y):
+        """
+        Creates a simple downward-only extension curve with natural falloff.
+        
+        Note: This is maintained for backward compatibility but the main extension
+        is now performed directly within _extend_bangs_area.
+        """
+        curve = np.zeros((height, width), dtype=np.uint8)
+        
+        # Enhanced extension height
+        extension_height = int(extend_pixels * 1.5)
+        
+        # Width of the area to extend
+        area_width = forehead_right - forehead_left
+        
+        # For each column in the target area
+        for x in range(max(0, forehead_left), min(width, forehead_right + 1)):
+            # Calculate normalized horizontal distance from center
+            x_dist = 2.0 * abs(x - center_x) / area_width if area_width > 0 else 0
+            
+            # Calculate how far down to extend based on distance from center
+            # The center extends farthest, edges extend less
+            local_extend = extension_height * (1.0 - 0.4 * x_dist**2)
+            
+            # Fill the extension with a gradient
+            for y in range(top_y, min(height, int(top_y + local_extend))):
+                # Calculate normalized position in the extension
+                y_norm = (y - top_y) / local_extend if local_extend > 0 else 1.0
+                
+                # Apply falloff based on vertical position
+                opacity = int(255 * (1.0 - y_norm**1.2))
+                
+                # Add some noise for more natural look
+                noise = (((x * 13 + y * 29) % 10) - 5) / 150.0
+                opacity = int(max(0, min(255, opacity + opacity * noise)))
+                
+                curve[y, x] = opacity
+            
+        # Apply a slight blur for smoother transitions
+        curve = cv2.GaussianBlur(curve, (5, 5), 0)
+        
+        return curve
+
     def _isolate_bangs_region(self, mask, landmarks=None):
         """
-        Isolate only the bangs portion of a hair mask.
+        Improved bangs isolation with better hairline curve detection.
         
         Args:
             mask: The full hair mask
             landmarks: Optional facial landmarks for better bangs detection
-                
+            
         Returns:
             numpy.ndarray: Mask containing only the bangs region
         """
@@ -1758,10 +2257,6 @@ class EnhancedCropReinserter:
         bangs_mask = np.zeros_like(mask)
         height, width = mask.shape[:2]
         
-        # Simply extract the top portion of the mask - bangs are typically in the top 15-25% of hair
-        top_percent = 0.25  # Take top 25% of the mask
-        bangs_bottom = int(height * top_percent)
-        
         # Find non-zero points in the mask to determine where the hair is
         non_zero_points = np.argwhere(mask > 0)
         if len(non_zero_points) == 0:
@@ -1771,21 +2266,115 @@ class EnhancedCropReinserter:
         # Find the top-most point of the hair
         top_y = np.min(non_zero_points[:, 0])
         
-        # Extract the top portion as bangs
-        bangs_region = mask[top_y:min(top_y + bangs_bottom, height), :]
-        bangs_mask[top_y:min(top_y + bangs_bottom, height), :] = bangs_region
+        # Adjust top portion percentage based on the presence of landmarks
+        if landmarks is not None and len(landmarks) >= 27:
+            # Use more of the mask when we have landmarks for better guidance
+            top_percent = 0.4  # Take top 40% of the mask - increased from 30%
+            
+            # Use eyebrow position to help determine how much to isolate
+            eyebrow_points = landmarks[17:27]
+            if len(eyebrow_points) > 0:
+                eyebrow_y = min([p[1] for p in eyebrow_points])
+                # If eyebrows are low in the image, take more of the mask
+                eyebrow_ratio = eyebrow_y / height
+                if eyebrow_ratio > 0.3:  # Eyebrows are lower down
+                    top_percent = 0.5  # Take even more of the mask
+                print(f"Using eyebrow position ratio {eyebrow_ratio:.2f} to set top_percent to {top_percent:.2f}")
+        else:
+            # Default to 35% when we don't have landmarks - increased from 25%
+            top_percent = 0.35
+        
+        print(f"Isolating top {top_percent*100:.1f}% of mask as bangs region")
+        bangs_bottom = int(height * top_percent)
+        
+        # Create a more natural curved bottom edge if landmarks are available
+        if landmarks is not None and len(landmarks) >= 27:
+            # Use eyebrow landmarks to create a curved bottom line
+            eyebrow_points = landmarks[17:27]  # Eyebrow landmarks
+            
+            try:
+                # Get eyebrow y-positions
+                eyebrow_ys = [p[1] for p in eyebrow_points]
+                eyebrow_top = max(0, int(min(eyebrow_ys)) - 10)  # Slight padding above eyebrows
+                
+                # Calculate a more natural curved boundary using the eyebrow shape
+                x_points = np.arange(width)
+                y_points = np.ones(width, dtype=int) * (top_y + bangs_bottom)
+                
+                # Form a curved bottom edge based on eyebrow position
+                if len(eyebrow_points) >= 5:
+                    # Get x positions of eyebrow points
+                    eyebrow_xs = [int(p[0]) for p in eyebrow_points]
+                    eyebrow_ys = [int(p[1]) for p in eyebrow_points]
+                    
+                    # Ensure we have enough points for interpolation
+                    if len(eyebrow_xs) >= 3:
+                        # Create a quadratic curve following eyebrow shape
+                        from scipy.interpolate import interp1d
+                        
+                        # Sort points by x coordinate for proper interpolation
+                        sorted_indices = np.argsort(eyebrow_xs)
+                        sorted_xs = np.array(eyebrow_xs)[sorted_indices]
+                        sorted_ys = np.array(eyebrow_ys)[sorted_indices]
+                        
+                        # Create interpolation function (use quadratic if possible)
+                        try:
+                            if len(sorted_xs) >= 3:
+                                f = interp1d(sorted_xs, sorted_ys, kind='quadratic', 
+                                            bounds_error=False, fill_value='extrapolate')
+                            else:
+                                f = interp1d(sorted_xs, sorted_ys, kind='linear', 
+                                            bounds_error=False, fill_value='extrapolate')
+                            
+                            # Generate points along the curve
+                            for x in range(width):
+                                if x >= 0 and x < width:
+                                    # Calculate y position based on interpolated curve
+                                    # Adjust to be above eyebrows
+                                    curve_y = int(f(x)) - 15  # 15 pixels above eyebrows
+                                    
+                                    # Ensure it's within reasonable bounds 
+                                    # (not too high or too low)
+                                    max_y = top_y + bangs_bottom
+                                    curve_y = min(max_y, max(top_y, curve_y))
+                                    
+                                    # Update the y-position for this x-coordinate
+                                    y_points[x] = curve_y
+                        except Exception as e:
+                            print(f"Error creating curved boundary: {str(e)}")
+                            # Continue with default approach
+                
+                # Apply the calculated boundary
+                for x in range(width):
+                    # Get the boundary y-position for this column
+                    boundary_y = y_points[x]
+                    
+                    # Apply the mask from top to boundary
+                    if x < width and top_y < boundary_y and boundary_y < height:
+                        bangs_mask[top_y:boundary_y, x] = mask[top_y:boundary_y, x]
+            
+            except Exception as e:
+                print(f"Error creating curved bangs boundary: {str(e)}")
+                # Fall back to original approach
+                bangs_region = mask[top_y:min(top_y + bangs_bottom, height), :]
+                bangs_mask[top_y:min(top_y + bangs_bottom, height), :] = bangs_region
+        else:
+            # Original approach without landmarks - straight cutoff
+            bangs_region = mask[top_y:min(top_y + bangs_bottom, height), :]
+            bangs_mask[top_y:min(top_y + bangs_bottom, height), :] = bangs_region
         
         # Add a gradient for smoother transition
-        gradient_height = int(bangs_bottom * 0.3)  # Bottom 30% of bangs has gradient
+        gradient_height = int(bangs_bottom * 0.4)  # Bottom 40% of bangs has gradient
         gradient_start = min(top_y + bangs_bottom - gradient_height, height)
         
         for y in range(gradient_start, min(top_y + bangs_bottom, height)):
             fade_ratio = 1.0 - ((y - gradient_start) / float(max(1, min(top_y + bangs_bottom, height) - gradient_start)))
+            fade_ratio = fade_ratio ** 0.8  # Adjust power for more gradual falloff
             if y < bangs_mask.shape[0]:  # Safety check
                 bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * fade_ratio).astype(np.uint8)
         
         # Apply slight Gaussian blur for smoother edges
-        bangs_mask = cv2.GaussianBlur(bangs_mask, (3, 3), 0)
+        bangs_mask = cv2.GaussianBlur(bangs_mask, (5, 5), 0)
         
         return bangs_mask
 
