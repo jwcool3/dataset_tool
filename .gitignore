@@ -7,11 +7,17 @@ processors/__pycache__/crop_exporter.cpython-310.pyc
 ui/tabs/__pycache__/config_tab.cpython-310.pyc
 ui/tabs/__pycache__/input_output_tab.cpython-310.pyc
 ui/__pycache__/main_window.cpython-310.pyc
-
 *.pyc
 *.pyo
 *.pyd
 *.pyw
 *.pyz
 *.pywz
+utils/__pycache__/config_manager.cpython-310.pyc
+utils/__pycache__/image_utils.cpython-310.pyc
+utils/__pycache__/logging_utils.cpython-310.pyc
+utils/__pycache__/path_utils.cpython-310.pyc
+utils/__pycache__/ui_utils.cpython-310.pyc
+utils/__pycache__/validation_utils.cpython-310.pyc
+
 
