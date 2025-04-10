@@ -8,10 +8,13 @@ import cv2
 import numpy as np
 import re
 import json
-
-from .alignment_utils import AlignmentUtils
-from .blending_utils import BlendingUtils
-from .hair_utils import HairUtils
+from skimage.transform import resize as skimage_resize
+from skimage.metrics import structural_similarity as ssim
+from skimage import img_as_ubyte, img_as_float
+from processors.mask_alignment_handler import MaskAlignmentHandler
+import tkinter as tk
+import dlib 
+from scipy.interpolate import interp1d
 
 
 class EnhancedCropReinserter:
@@ -26,10 +29,31 @@ class EnhancedCropReinserter:
         """
         self.app = app
         
-        # Initialize utility classes
-        self.alignment_utils = AlignmentUtils(app)
-        self.blending_utils = BlendingUtils(app)
-        self.hair_utils = HairUtils(app)
+        # Initialize face detection if dlib is available
+        try:
+            self.face_detector = dlib.get_frontal_face_detector()
+            
+            # Look for the shape predictor file in a few common locations
+            predictor_paths = [
+                os.path.join(os.path.dirname(__file__), "shape_predictor_68_face_landmarks.dat"),
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "shape_predictor_68_face_landmarks.dat"),
+                os.path.join(os.path.expanduser("~"), ".dataset_preparation_tool", "models", "shape_predictor_68_face_landmarks.dat")
+            ]
+            
+            self.landmark_predictor = None
+            for path in predictor_paths:
+                if os.path.exists(path):
+                    self.landmark_predictor = dlib.shape_predictor(path)
+                    print(f"Found landmark predictor at: {path}")
+                    break
+                    
+            if self.landmark_predictor is None:
+                print("WARNING: Facial landmark predictor file not found. Landmark-based alignment will not be available.")
+                print("Please download shape_predictor_68_face_landmarks.dat and place it in the processors directory.")
+        except Exception as e:
+            print(f"Could not initialize facial landmark detection: {str(e)}")
+            self.face_detector = None
+            self.landmark_predictor = None
     
     def reinsert_crops(self, input_dir, output_dir):
         """
@@ -205,27 +229,6 @@ class EnhancedCropReinserter:
         
         print(f"WARNING: No matching source image found for {processed_filename}")
         return None
-    
-    def _find_source_mask(self, source_path):
-        """Find the mask for a source image."""
-        source_dir = os.path.dirname(source_path)
-        source_name = os.path.basename(source_path)
-        potential_mask_dir = os.path.join(source_dir, "masks")
-        
-        if os.path.isdir(potential_mask_dir):
-            # Check for mask with same name
-            potential_mask = os.path.join(potential_mask_dir, source_name)
-            if os.path.exists(potential_mask):
-                return cv2.imread(potential_mask, cv2.IMREAD_GRAYSCALE)
-            
-            # Try different extensions
-            base_name = os.path.splitext(source_name)[0]
-            for ext in ['.png', '.jpg', '.jpeg']:
-                alt_mask_path = os.path.join(potential_mask_dir, base_name + ext)
-                if os.path.exists(alt_mask_path):
-                    return cv2.imread(alt_mask_path, cv2.IMREAD_GRAYSCALE)
-        
-        return None
         
     def _reinsert_with_resolution_handling(self, source_path, processed_path, mask_path, output_path, debug_dir=None):
         """
@@ -254,7 +257,7 @@ class EnhancedCropReinserter:
             print(f"Failed to load processed image: {processed_path}")
             return False
         
-        # Get the source mask (if available)
+        # Get the source mask (if available) - moved to the top of the function before it's used
         source_mask = self._find_source_mask(source_path)
         print(f"Source mask found: {source_mask is not None}")
         
@@ -262,12 +265,15 @@ class EnhancedCropReinserter:
         source_h, source_w = source_img.shape[:2]
         processed_h, processed_w = processed_img.shape[:2]
         
-        # Get facial landmarks from source image
-        source_landmarks = self.alignment_utils.get_landmarks(source_img)
-        if source_landmarks is not None:
-            print("Successfully detected landmarks in source image")
-        else:
-            print("No landmarks detected in source image")
+        # MODIFICATION: Only detect face in the SOURCE image
+        source_landmarks = None
+        if hasattr(self, 'face_detector') and self.face_detector is not None:
+            print("Detecting face in source image...")
+            source_landmarks = self._get_landmarks(source_img)
+            if source_landmarks is not None:
+                print("Successfully detected landmarks in source image")
+            else:
+                print("No landmarks detected in source image")
         
         # Initialize mask with error handling
         mask = None
@@ -284,57 +290,65 @@ class EnhancedCropReinserter:
             mask = np.ones((processed_h, processed_w), dtype=np.uint8) * 255
             print("Created a fallback full-image mask")
         
-        # Handle bangs-only mode
-        if self.app.use_bangs_only.get():
-            if debug_dir:
-                # Save the original mask
-                cv2.imwrite(os.path.join(debug_dir, "original_mask.png"), mask)
-                
+        # Replace this section in the debug visualization code:
+        if self.app.use_bangs_only.get() and debug_dir:
+            # Save the original mask
+            cv2.imwrite(os.path.join(debug_dir, "original_mask.png"), mask)
+            
             # If we have a source mask, use it for bangs isolation instead
             if source_mask is not None:
                 print("Using source mask for bangs isolation")
-                bangs_mask = self.hair_utils.isolate_bangs_region(source_mask, source_landmarks)
+                bangs_mask = self._isolate_bangs_region(source_mask, source_landmarks)
+                cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), bangs_mask)
                 
-                if debug_dir:
-                    cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), bangs_mask)
-                    
-                    # Create a visualization of the mask overlay using the source mask
-                    if bangs_mask.shape[0] != source_h or bangs_mask.shape[1] != source_w:
-                        bangs_mask_resized = cv2.resize(bangs_mask, (source_w, source_h), 
-                                                    interpolation=cv2.INTER_LINEAR)
-                    else:
-                        bangs_mask_resized = bangs_mask
-                    
-                    # Create visualization of the mask overlay using the resized mask
-                    mask_viz = np.zeros((source_h, source_w, 3), dtype=np.uint8)
-                    mask_viz[bangs_mask_resized > 0] = [0, 255, 0]  # Green for bangs mask
-                    # Overlay on source image with 50% opacity
-                    overlay = cv2.addWeighted(source_img, 0.7, mask_viz, 0.3, 0)
-                    cv2.imwrite(os.path.join(debug_dir, "bangs_overlay_viz.png"), overlay)
-                    
+                # Create a visualization of the mask overlay using the source mask
+                if bangs_mask.shape[0] != source_h or bangs_mask.shape[1] != source_w:
+                    bangs_mask_resized = cv2.resize(bangs_mask, (source_w, source_h), 
+                                                interpolation=cv2.INTER_LINEAR)
+                else:
+                    bangs_mask_resized = bangs_mask
+                
+                # Create visualization of the mask overlay using the resized mask
+                mask_viz = np.zeros((source_h, source_w, 3), dtype=np.uint8)
+                mask_viz[bangs_mask_resized > 0] = [0, 255, 0]  # Green for bangs mask
+                # Overlay on source image with 50% opacity
+                overlay = cv2.addWeighted(source_img, 0.7, mask_viz, 0.3, 0)
+                cv2.imwrite(os.path.join(debug_dir, "bangs_overlay_viz.png"), overlay)
+                
                 # Update the mask for further processing
                 mask = bangs_mask
             else:
                 print("No source mask found, using processed mask for bangs isolation")
-                bangs_mask = self.hair_utils.isolate_bangs_region(mask, source_landmarks)
+            bangs_mask = self._isolate_bangs_region(mask, source_landmarks)
+            cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), bangs_mask)
+            
+            # IMPORTANT FIX: Resize the bangs mask to match source dimensions before visualization
+            if bangs_mask.shape[0] != source_h or bangs_mask.shape[1] != source_w:
+                bangs_mask_resized = cv2.resize(bangs_mask, (source_w, source_h), 
+                                            interpolation=cv2.INTER_LINEAR)
+            else:
+                bangs_mask_resized = bangs_mask
+            
+            # Create visualization of the mask overlay using the resized mask
+            mask_viz = np.zeros((source_h, source_w, 3), dtype=np.uint8)
+            mask_viz[bangs_mask_resized > 0] = [0, 255, 0]  # Green for bangs mask
+            # Overlay on source image with 50% opacity
+            overlay = cv2.addWeighted(source_img, 0.7, mask_viz, 0.3, 0)
+            cv2.imwrite(os.path.join(debug_dir, "bangs_overlay_viz.png"), overlay)
+            
+            # Update the mask for further processing
+            mask = bangs_mask
+        else:
+            # Regular bangs-only mode without debug
+            if self.app.use_bangs_only.get():
+                print("Using bangs-only mode")
+                if source_mask is not None:
+                    print("Using source mask for bangs isolation")
+                    bangs_mask = self._isolate_bangs_region(source_mask, source_landmarks)
+                else:
+                    print("No source mask found, using processed mask for bangs isolation")
+                bangs_mask = self._isolate_bangs_region(mask, source_landmarks)
                 
-                if debug_dir:
-                    cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), bangs_mask)
-                    
-                    # Create visualization with the same safety checks
-                    if bangs_mask.shape[0] != source_h or bangs_mask.shape[1] != source_w:
-                        bangs_mask_resized = cv2.resize(bangs_mask, (source_w, source_h), 
-                                                    interpolation=cv2.INTER_LINEAR)
-                    else:
-                        bangs_mask_resized = bangs_mask
-                    
-                    mask_viz = np.zeros((source_h, source_w, 3), dtype=np.uint8)
-                    mask_viz[bangs_mask_resized > 0] = [0, 255, 0]  # Green for bangs mask
-                    # Overlay on source image with 50% opacity
-                    overlay = cv2.addWeighted(source_img, 0.7, mask_viz, 0.3, 0)
-                    cv2.imwrite(os.path.join(debug_dir, "bangs_overlay_viz.png"), overlay)
-                
-                # Update the mask for further processing
                 mask = bangs_mask
 
         # Apply bangs extension if enabled
@@ -351,13 +365,14 @@ class EnhancedCropReinserter:
                 mask_viz[mask > 0] = [0, 255, 0]  # Green for original mask
                 cv2.imwrite(os.path.join(debug_dir, "pre_extension_mask_viz.png"), mask_viz)
             
+            # Pass source_landmarks to the extension function
             print(f"Input mask shape: {mask.shape}, non-zero pixels: {np.count_nonzero(mask)}")
             
             # For larger extensions, use a smaller min_opacity to ensure visibility
             min_opacity_value = max(0.5, 0.9 - (extension_amount / 100.0))
             print(f"Using min_opacity: {min_opacity_value} for extension_amount: {extension_amount}")
             
-            extended_mask = self.hair_utils.extend_bangs_area(
+            extended_mask = self._extend_bangs_area(
                 mask, 
                 extend_pixels=extension_amount,
                 forehead_ratio=width_ratio,
@@ -377,7 +392,7 @@ class EnhancedCropReinserter:
                 mask_viz[mask > 0] = [0, 0, 255]  # Blue for extended mask
                 cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask_viz.png"), mask_viz)
                 
-                # Resize the mask to match source dimensions before visualization
+                # IMPORTANT FIX: Resize the mask to match source dimensions before visualization
                 if mask.shape[0] != source_h or mask.shape[1] != source_w:
                     mask_resized_for_viz = cv2.resize(mask, (source_w, source_h), 
                                                 interpolation=cv2.INTER_LINEAR)
@@ -390,7 +405,6 @@ class EnhancedCropReinserter:
                 # Overlay on source image
                 ext_overlay = cv2.addWeighted(source_img, 0.7, ext_viz, 0.3, 0)
                 cv2.imwrite(os.path.join(debug_dir, "extension_overlay_viz.png"), ext_overlay)
-                
         # Error check before resizing
         if mask is None or mask.size == 0 or mask.shape[0] == 0 or mask.shape[1] == 0:
             print("Error: Mask is empty or invalid after processing")
@@ -418,11 +432,11 @@ class EnhancedCropReinserter:
         aligned_mask = mask_resized.copy()
         aligned_img = processed_img_resized.copy()
         
-        # Apply landmark-based alignment if selected
+        # MODIFICATION: Change the landmark-based alignment to use source landmarks only
         if self.app.reinsert_alignment_method.get() == "landmarks" and source_landmarks is not None:
             print("Using source landmarks for alignment")
             # Create a geometric estimation of where the bangs should be positioned
-            estimated_bangs_position = self.hair_utils.estimate_bangs_position(source_landmarks, source_h, source_w)
+            estimated_bangs_position = self._estimate_bangs_position(source_landmarks, source_h, source_w)
             
             # Apply a simple offset based on the estimated position
             offset_x = estimated_bangs_position['center_x'] - source_w // 2
@@ -462,32 +476,39 @@ class EnhancedCropReinserter:
         scale_x = self.app.reinsert_manual_scale_x.get()
         scale_y = self.app.reinsert_manual_scale_y.get()
 
-        # Apply scaling correctly without affecting position
-        if scale_x != 1.0 or scale_y != 1.0:
-            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
-            
-            # Determine the anchor point (top center of the mask)
-            if np.any(aligned_mask > 0):
-                # Find top edge of mask for Y scaling anchor
-                non_zero_y = np.where(np.any(aligned_mask > 0, axis=1))[0]
-                if len(non_zero_y) > 0:
-                    top_y = non_zero_y[0]
-                    # Find center of mask horizontally
-                    non_zero_x = np.where(aligned_mask[top_y, :] > 0)[0]
-                    if len(non_zero_x) > 0:
-                        center_x = (np.min(non_zero_x) + np.max(non_zero_x)) // 2
-                    else:
-                        center_x = source_w // 2
+        # FIXED IMPLEMENTATION: Apply scaling correctly without affecting position
+        # First determine the anchor point (top center of the mask)
+        # This is the point that should stay fixed during Y scaling
+        if np.any(aligned_mask > 0):
+            # Find top edge of mask for Y scaling anchor
+            non_zero_y = np.where(np.any(aligned_mask > 0, axis=1))[0]
+            if len(non_zero_y) > 0:
+                top_y = non_zero_y[0]
+                # Find center of mask horizontally
+                non_zero_x = np.where(aligned_mask[top_y, :] > 0)[0]
+                if len(non_zero_x) > 0:
+                    center_x = (np.min(non_zero_x) + np.max(non_zero_x)) // 2
                 else:
-                    top_y = 0
                     center_x = source_w // 2
             else:
                 top_y = 0
                 center_x = source_w // 2
-            
+        else:
+            top_y = 0
+            center_x = source_w // 2
+        
+        # Apply manual scaling if not at default value (1.0)
+        if scale_x != 1.0 or scale_y != 1.0:
+            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
             print(f"Scaling anchor point: ({center_x}, {top_y})")
             
-            # Create a transformation matrix that maintains the top point's position
+            # Create a combined transformation matrix that:
+            # 1. Translates the anchor point to origin
+            # 2. Scales
+            # 3. Translates back
+            
+            # For Y scaling, we want to keep the top edge at the same position
+            # For X scaling, we want to keep the center at the same position
             M = np.float32([
                 [scale_x, 0, center_x * (1 - scale_x)],
                 [0, scale_y, top_y * (1 - scale_y)]  # This keeps the top fixed during scaling
@@ -551,42 +572,117 @@ class EnhancedCropReinserter:
             cv2.imwrite(output_path, result_img)
             return True
         
-        # For more complex blending, use the chosen method
+        # Get manual offset values
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
+
+        # Apply manual offset if any is set
+        if manual_offset_x != 0 or manual_offset_y != 0:
+            print(f"Applying manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+            
+            # Create transformation matrix for the offset
+            M = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+            
+            # Apply to both processed image and mask AFTER resizing
+
+            processed_img_resized = cv2.resize(processed_img, (source_w, source_h), 
+                                        interpolation=cv2.INTER_LANCZOS4)
+            mask_resized = cv2.resize(mask, (source_w, source_h), 
+                                interpolation=cv2.INTER_LINEAR)  # Changed from INTER_NEAREST for smoother results
+            # Save offset versions for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "offset_processed.png"), processed_img_resized)
+                cv2.imwrite(os.path.join(debug_dir, "offset_mask.png"), mask_resized)
+
+
+        # Get manual scaling values
+        scale_x = self.app.reinsert_manual_scale_x.get()
+        scale_y = self.app.reinsert_manual_scale_y.get()
+
+        # Apply scaling if not at default value (1.0)
+        if scale_x != 1.0 or scale_y != 1.0:
+            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
+            
+            # Get dimensions
+            h, w = processed_img_resized.shape[:2]
+            
+            # Calculate new dimensions
+            new_w = int(w * scale_x)
+            new_h = int(h * scale_y)
+            
+            # Calculate center point for scaling around the center
+            center_x = w // 2
+            center_y = h // 2
+            
+            # Create transformation matrix
+            # First translate to origin, then scale, then translate back
+            M = np.float32([
+                [scale_x, 0, center_x * (1 - scale_x)],
+                [0, scale_y, center_y * (1 - scale_y)]
+            ])
+            
+            # Apply to processed image and mask
+            processed_img_resized = cv2.warpAffine(
+                processed_img_resized, M, (w, h),
+                flags=cv2.INTER_LANCZOS4
+            )
+            mask_resized = cv2.warpAffine(
+                mask_resized, M, (w, h),
+                flags=cv2.INTER_NEAREST
+            )
+            
+            # Save scaled versions for debugging
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "scaled_processed.png"), processed_img_resized)
+                cv2.imwrite(os.path.join(debug_dir, "scaled_mask.png"), mask_resized)
+
+
+        # If handling different masks, get configuration settings
         alignment_method = self.app.reinsert_alignment_method.get()
         blend_mode = self.app.reinsert_blend_mode.get()
         blend_extent = self.app.reinsert_blend_extent.get()
         preserve_edges = self.app.reinsert_preserve_edges.get()
         
-        # Align masks if not using "none" alignment
+        print(f"Using config settings: alignment={alignment_method}, blend={blend_mode}, extent={blend_extent}")
+        
+        # Align mask and image if not using "none" alignment
         aligned_mask = mask_resized.copy()
         aligned_img = processed_img_resized.copy()
         
         if alignment_method != "none":
             # Perform the alignment based on the selected method
-            aligned_mask, aligned_img = self.alignment_utils.align_masks(
+            aligned_mask, aligned_img = self._align_masks(
                 source_mask, mask_resized, 
                 source_img, processed_img_resized, 
                 alignment_method, 
                 debug_dir
             )
-        
-        # Apply more advanced alignment with landmarks if selected
+
+
+
+        # Inside _reinsert_with_resolution_handling method, before applying blending:
         if self.app.reinsert_alignment_method.get() == "landmarks":
-            if self.alignment_utils.face_detector is not None and self.alignment_utils.landmark_predictor is not None:
-                # Only use source landmarks (already detected at beginning of method)
+            if hasattr(self, 'face_detector') and self.face_detector is not None and \
+            hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
+                
+                # MODIFICATION: Only detect landmarks in the source image
+                source_landmarks = self._get_landmarks(source_img)
+                
                 if source_landmarks is not None:
-                    print("Using source landmarks for alignment")
+                    print("Using source landmarks for alignment. Not attempting to detect face in processed image.")
                     
-                    # Use either translation-only or full transform based on settings
+                    # Create a transformation based on just the source landmarks and geometry
+                    # We don't need processed landmarks since the processed image is just hair
+                    h, w = source_img.shape[:2]
+                    ph, pw = processed_img_resized.shape[:2]
+                    
+                    # Instead of using landmarks from both images, just use source landmarks
+                    # to position the hair at the appropriate location (e.g., above eyebrows)
                     if self.app.use_translation_only.get():
-                        # Create estimated landmarks for processed image
-                        h, w = source_img.shape[:2]
-                        ph, pw = processed_img_resized.shape[:2]
-                        
                         print("Using source landmarks for positioning only")
                         
                         # Estimate where bangs should be positioned based on face landmarks
-                        bangs_position = self.hair_utils.estimate_bangs_position(source_landmarks, h, w)
+                        bangs_position = self._estimate_bangs_position(source_landmarks, h, w)
                         
                         # Calculate the center of the processed image
                         proc_center_x = pw // 2
@@ -602,13 +698,12 @@ class EnhancedCropReinserter:
                         aligned_img = cv2.warpAffine(processed_img_resized, M, (w, h), flags=cv2.INTER_LANCZOS4)
                     else:
                         # For full transform, we still need some estimate of processed landmarks
-                        # Create a simplified set of landmarks for the processed image
+                        # Instead of detecting, we'll create synthetic landmarks for the processed image
                         # based on the proportions of the source landmarks
                         print("Estimating processed landmarks for transform")
-                        h, w = source_img.shape[:2]
-                        ph, pw = processed_img_resized.shape[:2]
                         
                         # Create a simplified set of landmarks for the processed image
+                        # This assumes the processed image is centered and contains just the hair
                         processed_landmarks = []
                         # Use the source landmarks as reference, but adjusted to the processed image proportions
                         for x, y in source_landmarks:
@@ -618,7 +713,7 @@ class EnhancedCropReinserter:
                             processed_landmarks.append((scaled_x, scaled_y))
                         
                         # Now use both sets of landmarks for the full transform
-                        aligned_mask, aligned_img = self.alignment_utils.apply_landmark_transform(
+                        aligned_mask, aligned_img = self._apply_landmark_transform(
                             source_img, processed_img_resized, source_mask, mask_resized,
                             source_landmarks, processed_landmarks, debug_dir
                         )
@@ -634,7 +729,7 @@ class EnhancedCropReinserter:
                 else:
                     print("Could not detect landmarks in source image, falling back to default alignment")
                     # Use existing alignment method...
-                    aligned_mask, aligned_img = self.alignment_utils.align_masks(
+                    aligned_mask, aligned_img = self._align_masks(
                         source_mask, mask_resized, 
                         source_img, processed_img_resized, 
                         alignment_method, 
@@ -643,7 +738,7 @@ class EnhancedCropReinserter:
             else:
                 print("Landmark detection not available, falling back to default alignment")
                 # Use existing alignment method...
-                aligned_mask, aligned_img = self.alignment_utils.align_masks(
+                aligned_mask, aligned_img = self._align_masks(
                     source_mask, mask_resized, 
                     source_img, processed_img_resized, 
                     alignment_method, 
@@ -651,9 +746,2098 @@ class EnhancedCropReinserter:
                 )
         else:
             # Use existing alignment method...
-            aligned_mask, aligned_img = self.alignment_utils.align_masks(
+            aligned_mask, aligned_img = self._align_masks(
                 source_mask, mask_resized, 
                 source_img, processed_img_resized, 
                 alignment_method, 
                 debug_dir
             )
+        # Preserve hair parting if option enabled
+        if self.app.preserve_hair_parting.get():  # Add this option to UI
+            # Detect landmarks for source and processed images
+            source_landmarks = self._get_landmarks(source_img)
+            processed_landmarks = self._get_landmarks(aligned_img)
+            
+            # Detect parting in source and processed hair
+            source_parting, _ = self._detect_hair_parting(source_mask, source_landmarks)
+            processed_parting, _ = self._detect_hair_parting(aligned_mask, processed_landmarks)
+            
+            # If partings detected, blend them
+            if source_parting is not None and processed_parting is not None:
+                # Create a blended parting that preserves the original direction
+                blended_parting = cv2.addWeighted(source_parting, 0.7, processed_parting, 0.3, 0)
+                
+                # Apply blended parting to aligned mask
+                _, aligned_mask = self._detect_hair_parting(aligned_mask, None, blended_parting)
+                
+                if debug_dir:
+                    cv2.imwrite(os.path.join(debug_dir, "parting_preserved.png"), aligned_mask)
+        
+        # Blending stage
+        if blend_mode == "alpha":
+            result_img = self._alpha_blend(
+                source_img, aligned_img, 
+                aligned_mask, 
+                blend_extent
+            )
+        elif blend_mode == "poisson":
+            # Check if mask has any content and is properly sized
+            if aligned_mask is None or np.sum(aligned_mask) == 0:
+                print("Warning: Empty mask, falling back to alpha blending")
+                blend_mode = "alpha"
+            elif aligned_mask.shape != source_img.shape[:2] or aligned_img.shape != source_img.shape:
+                print("Warning: Shape mismatch, falling back to alpha blending")
+                blend_mode = "alpha"
+                
+            try:
+                # Convert mask to correct format
+                mask_uint8 = aligned_mask.astype(np.uint8)
+                
+                # Find center of mask
+                moments = cv2.moments(mask_uint8)
+                if moments["m00"] > 0:
+                    center_x = int(moments["m10"] / moments["m00"])
+                    center_y = int(moments["m01"] / moments["m00"])
+                    
+                    # Make sure center point is within safe boundaries
+                    # (at least 1/4 of the image dimensions from any edge)
+                    h, w = source_img.shape[:2]
+                    min_distance = min(w, h) // 4
+                    
+                    center_x = max(min_distance, min(w - min_distance, center_x))
+                    center_y = max(min_distance, min(h - min_distance, center_y))
+                    
+                    center = (center_x, center_y)
+                    
+                    # Ensure the mask has non-zero values (required for seamlessClone)
+                    if np.any(mask_uint8 > 0):
+                        # Apply seamless cloning
+                        result_img = cv2.seamlessClone(
+                            aligned_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE
+                        )
+                    else:
+                        # Fallback to alpha blending if mask is empty
+                        raise ValueError("Mask has no non-zero values")
+                else:
+                    # Fallback to alpha blending if moments are zero
+                    raise ValueError("Mask moments are zero")
+            except Exception as e:
+                print(f"Poisson blending failed: {str(e)}, falling back to alpha blending")
+                # Fall back to alpha blending
+                mask_float = aligned_mask.astype(float) / 255.0
+                mask_float_3d = np.stack([mask_float] * 3, axis=2)
+                result_img = source_img * (1 - mask_float_3d) + aligned_img * mask_float_3d
+        elif blend_mode == "feathered":
+            result_img = self._feathered_blend(
+                source_img, aligned_img, 
+                aligned_mask, 
+                blend_extent
+            )
+        elif blend_mode == "hybrid":
+            # Use our new hybrid method
+            result_img = self._improved_hybrid_blend(
+                source_img, aligned_img,
+                aligned_mask,
+                blend_extent,
+                debug_dir
+            )
+        
+        # Preserve edges if requested
+        if preserve_edges:
+            result_img = self._preserve_image_edges(
+                source_img, result_img, 
+                aligned_mask
+            )
+        
+        # Save the result
+        cv2.imwrite(output_path, result_img)
+        
+        # Create comparison image for debugging
+        if debug_dir:
+            comparison = np.hstack((source_img, aligned_img, result_img))
+            cv2.imwrite(os.path.join(debug_dir, f"comparison_{os.path.basename(output_path)}"), comparison)
+        
+        return True
+
+    def _find_source_mask(self, source_path):
+        """Find the mask for a source image."""
+        source_dir = os.path.dirname(source_path)
+        source_name = os.path.basename(source_path)
+        potential_mask_dir = os.path.join(source_dir, "masks")
+        
+        if os.path.isdir(potential_mask_dir):
+            # Check for mask with same name
+            potential_mask = os.path.join(potential_mask_dir, source_name)
+            if os.path.exists(potential_mask):
+                return cv2.imread(potential_mask, cv2.IMREAD_GRAYSCALE)
+            
+            # Try different extensions
+            base_name = os.path.splitext(source_name)[0]
+            for ext in ['.png', '.jpg', '.jpeg']:
+                alt_mask_path = os.path.join(potential_mask_dir, base_name + ext)
+                if os.path.exists(alt_mask_path):
+                    return cv2.imread(alt_mask_path, cv2.IMREAD_GRAYSCALE)
+        
+        return None
+
+    def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
+        """
+        Align masks and images based on the specified method.
+        
+        Args:
+            source_mask: Mask from source image
+            processed_mask: Mask from processed image
+            source_img: Source image
+            processed_img: Processed image
+            alignment_method: Method to use for alignment
+            debug_dir: Directory to save debug visualizations
+        
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        # Ensure source_mask is valid
+        if source_mask is None:
+            print("Warning: source_mask is None, using processed mask without alignment")
+            return processed_mask, processed_img
+            
+        def clean_mask(mask, threshold=50):
+            """
+            Convert pixels below threshold to black
+            
+            Args:
+                mask: Input grayscale mask
+                threshold: Pixel intensity threshold (0-255)
+                    - Pixels below this will be set to black (0)
+                    - Pixels above will be preserved
+            
+            Returns:
+                Cleaned mask with darker pixels removed
+            """
+            # Create a copy of the mask
+            cleaned_mask = mask.copy()
+            
+            # Convert pixels below threshold to black
+            cleaned_mask[cleaned_mask < threshold] = 0
+            
+            return cleaned_mask
+        
+        # Clean source and processed masks
+        source_mask_cleaned = clean_mask(source_mask)
+        processed_mask_cleaned = clean_mask(processed_mask)
+        
+        # Debug: Save cleaned masks if debug directory is provided
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "source_mask_cleaned.png"), source_mask_cleaned)
+            cv2.imwrite(os.path.join(debug_dir, "processed_mask_cleaned.png"), processed_mask_cleaned)
+        
+        # Continue with alignment using cleaned masks
+        # Binary threshold cleaned masks if needed
+        _, source_mask_bin = cv2.threshold(source_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
+        _, processed_mask_bin = cv2.threshold(processed_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
+        
+        # Make copies to modify
+        aligned_mask = processed_mask.copy()
+        aligned_img = processed_img.copy()
+        
+        # Centroid alignment
+        if alignment_method == "centroid":
+            # Calculate centroids
+            source_moments = cv2.moments(source_mask_bin)
+            processed_moments = cv2.moments(processed_mask_bin)
+            
+            if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
+                source_cx = int(source_moments["m10"] / source_moments["m00"])
+                source_cy = int(source_moments["m01"] / source_moments["m00"])
+                processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
+                processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
+                
+                # Calculate shift
+                dx = source_cx - processed_cx
+                dy = source_cy - processed_cy
+                
+                # Apply shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        
+        # Contour-based alignment (top point alignment)
+        elif alignment_method == "contour":
+            source_points = np.argwhere(source_mask_bin > 0)
+            processed_points = np.argwhere(processed_mask_bin > 0)
+            
+            if len(source_points) > 0 and len(processed_points) > 0:
+                # Find the top point
+                source_top_y = source_points[:, 0].min()
+                source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
+                source_top_x = np.median(source_points[source_top_indices, 1])
+                
+                processed_top_y = processed_points[:, 0].min()
+                processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
+                processed_top_x = np.median(processed_points[processed_top_indices, 1])
+                
+                # Calculate shift
+                dx = int(source_top_x - processed_top_x)
+                dy = int(source_top_y - processed_top_y)
+                
+                # Apply shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        
+        # Bounding box alignment
+        elif alignment_method == "bbox":
+            source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if source_contours and processed_contours:
+                source_contour = max(source_contours, key=cv2.contourArea)
+                processed_contour = max(processed_contours, key=cv2.contourArea)
+                
+                source_x, source_y, source_w, source_h = cv2.boundingRect(source_contour)
+                processed_x, processed_y, processed_w, processed_h = cv2.boundingRect(processed_contour)
+                
+                # Calculate shifts to align top-left corners
+                dx = source_x - processed_x
+                dy = source_y - processed_y
+                
+                # Apply shift
+                M = np.float32([[1, 0, dx], [0, 1, dy]])
+                aligned_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                aligned_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+        
+        # Intersection Over Union (IoU) alignment
+        elif alignment_method == "iou":
+            best_iou = 0
+            best_mask = processed_mask.copy()
+            best_img = processed_img.copy()
+            
+            max_shift = 20  # pixels
+            for dx in range(-max_shift, max_shift + 1, 2):
+                for dy in range(-max_shift, max_shift + 1, 2):
+                    # Create shifted mask and image
+                    M = np.float32([[1, 0, dx], [0, 1, dy]])
+                    shifted_mask = cv2.warpAffine(processed_mask, M, (processed_mask.shape[1], processed_mask.shape[0]))
+                    shifted_img = cv2.warpAffine(processed_img, M, (processed_img.shape[1], processed_img.shape[0]))
+                    
+                    # Calculate IoU
+                    intersection = np.logical_and(source_mask_bin > 0, shifted_mask > 0).sum()
+                    union = np.logical_or(source_mask_bin > 0, shifted_mask > 0).sum()
+                    iou = intersection / union if union > 0 else 0
+                    
+                    # Update best if improved
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_mask = shifted_mask
+                        best_img = shifted_img
+            
+            aligned_mask = best_mask
+            aligned_img = best_img
+        
+        # Debug visualization
+        if debug_dir:
+            # Get dimensions of source image for visualization
+            h, w = source_img.shape[:2]
+            mask_viz = np.zeros((h, w, 3), dtype=np.uint8)
+            
+            # Resize masks if needed
+            if source_mask_bin.shape[0] != h or source_mask_bin.shape[1] != w:
+                source_mask_bin_resized = cv2.resize(source_mask_bin, (w, h), 
+                                                interpolation=cv2.INTER_NEAREST)
+            else:
+                source_mask_bin_resized = source_mask_bin
+                
+            if aligned_mask.shape[0] != h or aligned_mask.shape[1] != w:
+                aligned_mask_resized = cv2.resize(aligned_mask, (w, h), 
+                                            interpolation=cv2.INTER_NEAREST)
+            else:
+                aligned_mask_resized = aligned_mask
+            
+            # Use the resized masks for visualization
+            mask_viz[source_mask_bin_resized > 0] = [0, 0, 255]  # Red for source mask
+            mask_viz[aligned_mask_resized > 0] = [0, 255, 0]     # Green for aligned mask
+            
+            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_viz.png"), mask_viz)
+        
+        # Make sure to return the aligned mask and image
+        return aligned_mask, aligned_img
+
+    def _alpha_blend(self, source_img, processed_img, mask, blend_extent=8):
+        """
+        Enhanced alpha blending with better feathering, color correction, and harmonization.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to blend
+            mask: Blending mask
+            blend_extent: Extent of feathering (pixels)
+        
+        Returns:
+            numpy.ndarray: Blended image
+        """
+        # Create alpha mask with proper type conversion
+        mask_float = mask.astype(np.float32) / 255.0
+        
+        # Apply feathering if blend_extent > 0
+        if blend_extent > 0:
+            # Create feathering kernel
+            kernel = np.ones((blend_extent, blend_extent), np.uint8)
+            
+            # Create dilation and border regions
+            mask_binary = (mask > 127).astype(np.uint8) * 255
+            dilated = cv2.dilate(mask_binary, kernel, iterations=1)
+            border = cv2.bitwise_and(dilated, cv2.bitwise_not(mask_binary))
+            
+            # Create distance map for feathering
+            dist = cv2.distanceTransform(border, cv2.DIST_L2, 3)
+            dist = np.clip(dist, 0, blend_extent)
+            
+            # Normalize distances (1.0 at mask edge, 0.0 at outer edge)
+            feather = dist / blend_extent
+            
+            # Apply feathering to the mask
+            # For border pixels, we want a gradient from mask_float to 0
+            feathered_mask = mask_float.copy()
+            border_indices = (border > 0)
+            feathered_mask[border_indices] = feather[border_indices]
+            
+            # Use the feathered mask for blending
+            mask_float = feathered_mask
+        
+        # Apply improved color harmonization
+        # Step 1: Color correction at the boundary
+        if blend_extent > 0:
+            # Get blurred versions of source and processed images
+            source_blur = cv2.GaussianBlur(source_img.astype(np.float32), (21, 21), 0)
+            processed_blur = cv2.GaussianBlur(processed_img.astype(np.float32), (21, 21), 0)
+            
+            # Create a tight mask for the actual hair region (not the feathered part)
+            core_mask = (mask > 200).astype(np.float32)
+            
+            # For the border region, calculate color adjustment
+            border_float = (border > 0).astype(np.float32)
+            border_float_3d = np.stack([border_float] * 3, axis=2)
+            
+            # Calculate color ratio (processed / source) for adjustment
+            # Add epsilon to avoid division by zero
+            color_ratio = np.divide(
+                processed_blur + 1.0, 
+                source_blur + 1.0,
+                out=np.ones_like(processed_blur),
+                where=(source_blur > 10.0) & (border_float_3d > 0)
+            )
+            
+            # Apply color adjustment to processed image
+            # in the border region to match the source color tone
+            adjusted_processed = processed_img.astype(np.float32).copy()
+            adjusted_processed = np.divide(
+                adjusted_processed,
+                color_ratio,
+                out=adjusted_processed,
+                where=border_float_3d > 0
+            )
+            
+            # Apply adjustment with a gradient
+            processed_blend = processed_img * (1 - border_float_3d) + adjusted_processed * border_float_3d
+            processed_img = processed_blend.astype(np.float32)
+        
+        # Step 2: Global color harmonization - match color statistics
+        # Extract color statistics from the source hair (if visible)
+        source_hair_mask = np.zeros_like(mask_binary)
+        
+        # Try to find hair in source image outside the mask
+        # This assumes areas outside the mask may still be hair
+        try:
+            # Convert to HSV for better hair detection
+            source_hsv = cv2.cvtColor(source_img, cv2.COLOR_BGR2HSV)
+            
+            # Sample area just outside the mask where hair likely exists
+            # Dilate the mask to get the surrounding area
+            sample_area = cv2.dilate(mask_binary, np.ones((15, 15), np.uint8), iterations=1)
+            sample_area = cv2.bitwise_xor(sample_area, mask_binary)
+            
+            # If we have landmarks, estimate where hair should be
+            if hasattr(self, 'landmark_predictor') and self.landmark_predictor is not None:
+                landmarks = self._get_landmarks(source_img)
+                if landmarks is not None and len(landmarks) >= 27:
+                    # Get top of head and sides of face
+                    top_landmarks = landmarks[:17]  # Face outline
+                    
+                    # Create a mask for likely hair region
+                    top_y = min([p[1] for p in top_landmarks])
+                    hair_region = np.zeros_like(mask_binary)
+                    
+                    # Define a region above and around the face
+                    for y in range(hair_region.shape[0]):
+                        for x in range(hair_region.shape[1]):
+                            if y < top_y + 50:  # Area above and slightly below face top
+                                hair_region[y, x] = 255
+                    
+                    # Combine with sample area
+                    sample_area = cv2.bitwise_and(sample_area, hair_region)
+            
+            # Check if sample area exists
+            if np.sum(sample_area) > 0:
+                # Extract hair color from the source using HSV color range typical for hair
+                h, s, v = cv2.split(source_hsv)
+                
+                # Define hair-like HSV ranges (works for many hair colors)
+                # This is a general heuristic that may need adaptation
+                if np.sum(mask_binary) > 0:
+                    # Use a more focused sampling of where we know hair is
+                    # Find mean HSV values in the mask region in processed image
+                    processed_hsv = cv2.cvtColor(processed_img.astype(np.uint8), cv2.COLOR_BGR2HSV)
+                    
+                    # Get mean HSV values in the processed hair region
+                    processed_hair_h = processed_hsv[:,:,0][mask_binary > 0]
+                    processed_hair_s = processed_hsv[:,:,1][mask_binary > 0]
+                    processed_hair_v = processed_hsv[:,:,2][mask_binary > 0]
+                    
+                    if len(processed_hair_h) > 0:
+                        mean_h = np.mean(processed_hair_h)
+                        mean_s = np.mean(processed_hair_s)
+                        mean_v = np.mean(processed_hair_v)
+                        
+                        # Create range around the mean values
+                        h_range = 20  # Hue range (adjust as needed)
+                        s_range = 50  # Saturation range
+                        v_range = 50  # Value range
+                        
+                        h_min = max(0, mean_h - h_range)
+                        h_max = min(180, mean_h + h_range)
+                        s_min = max(0, mean_s - s_range)
+                        s_max = min(255, mean_s + s_range)
+                        v_min = max(0, mean_v - v_range)
+                        v_max = min(255, mean_v + v_range)
+                        
+                        # Create mask for source hair based on these ranges
+                        source_hair_mask = cv2.inRange(source_hsv, 
+                                                   (h_min, s_min, v_min), 
+                                                   (h_max, s_max, v_max))
+                        
+                        # Apply the sample area to limit to areas outside the bangs region
+                        source_hair_mask = cv2.bitwise_and(source_hair_mask, sample_area)
+                    else:
+                        # Fallback to generic hair detection
+                        source_hair_mask = sample_area.copy()
+        except Exception as e:
+            print(f"Error in hair color harmonization: {str(e)}")
+            # Fallback - use the sample area directly
+            source_hair_mask = sample_area.copy()
+        
+        # Apply color harmonization if we have enough hair pixels to sample
+        if np.sum(source_hair_mask) > 100:  # Ensure we have enough pixels
+            try:
+                # Get source hair pixels
+                source_hair_pixels = source_img[source_hair_mask > 0].reshape(-1, 3)
+                
+                # Get processed hair pixels
+                processed_hair_pixels = processed_img[mask_binary > 0].reshape(-1, 3)
+                
+                if len(source_hair_pixels) > 0 and len(processed_hair_pixels) > 0:
+                    # Calculate mean and std for both source and processed hair
+                    source_mean = np.mean(source_hair_pixels, axis=0)
+                    source_std = np.std(source_hair_pixels, axis=0)
+                    
+                    processed_mean = np.mean(processed_hair_pixels, axis=0)
+                    processed_std = np.std(processed_hair_pixels, axis=0)
+                    
+                    # Create adjusted processed image with matched statistics
+                    # This is a simplified color transfer
+                    processed_adjusted = processed_img.astype(np.float32).copy()
+                    
+                    # Only apply to hair region
+                    hair_region = (mask_float > 0.3)
+                    
+                    # Create 3-channel version of the hair region
+                    hair_region_3d = np.stack([hair_region] * 3, axis=2)
+                    
+                    # Adjust each channel
+                    for c in range(3):
+                        # Skip if standard deviation is too small
+                        if processed_std[c] < 1.0 or source_std[c] < 1.0:
+                            continue
+                            
+                        # Apply color matching: scale = source_std / processed_std
+                        scale = source_std[c] / processed_std[c]
+                        
+                        # Don't apply extreme scaling
+                        scale = np.clip(scale, 0.5, 2.0)
+                        
+                        # Adjust the processed image: (x - mean) * scale + new_mean
+                        channel = processed_adjusted[:,:,c]
+                        adjusted = (channel - processed_mean[c]) * scale + source_mean[c]
+                        
+                        # Apply only to hair region with gradual transition
+                        strength = 0.6  # Adjust strength of color transfer
+                        channel[hair_region] = channel[hair_region] * (1 - strength) + adjusted[hair_region] * strength
+                    
+                    # Convert back to proper type
+                    processed_img = processed_adjusted.astype(np.float32)
+            except Exception as e:
+                print(f"Error applying color harmonization: {str(e)}")
+                # Continue with original processed image
+        
+        # Create 3-channel mask for blending
+        mask_float_3d = np.stack([mask_float] * 3, axis=2)
+        
+        # Apply final blending
+        result_img = source_img.astype(np.float32) * (1 - mask_float_3d) + processed_img * mask_float_3d
+        
+        # Add very slight contrast enhancement to the blended region to make it pop
+        blend_region = (mask_float_3d > 0.1) & (mask_float_3d < 0.9)
+        if np.any(blend_region):
+            # Apply subtle contrast adjustment only to the blend border
+            result_img = result_img.astype(np.float32)
+            blended_part = result_img * blend_region
+            contrast_enhanced = cv2.addWeighted(blended_part, 1.05, blended_part, 0, 0)
+            result_img = result_img * (1 - blend_region) + contrast_enhanced * blend_region
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+    def _poisson_blend(self, source_img, processed_img, mask):
+        """
+        Perform Poisson blending with improved error handling and boundary checks.
+        """
+        try:
+            # Ensure mask is uint8 and matches image dimensions
+            mask_uint8 = mask.astype(np.uint8)
+            h, w = source_img.shape[:2]
+            
+            # Check if mask has any non-zero values
+            if np.sum(mask_uint8) == 0:
+                print("Mask is empty, falling back to alpha blending")
+                raise ValueError("Empty mask")
+                
+            # Find center of mask with boundary protection
+            moments = cv2.moments(mask_uint8)
+            if moments["m00"] > 0:
+                center_x = int(moments["m10"] / moments["m00"])
+                center_y = int(moments["m01"] / moments["m00"])
+                
+                # Ensure center is at least 1/4 of the image dimensions from any edge
+                safe_margin = min(w, h) // 4
+                center_x = max(safe_margin, min(w - safe_margin, center_x))
+                center_y = max(safe_margin, min(h - safe_margin, center_y))
+                
+                center = (center_x, center_y)
+                print(f"Using center point for Poisson blending: {center}")
+                
+                # Erode mask slightly to avoid boundary issues
+                eroded_mask = cv2.erode(mask_uint8, np.ones((3, 3), np.uint8), iterations=1)
+                
+                # Ensure both images and mask are the same size
+                if source_img.shape[:2] != processed_img.shape[:2] or source_img.shape[:2] != mask_uint8.shape[:2]:
+                    print("Warning: Shape mismatch. Resizing processed image and mask to match source.")
+                    processed_img = cv2.resize(processed_img, (w, h), interpolation=cv2.INTER_LANCZOS4)
+                    eroded_mask = cv2.resize(eroded_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+                
+                # Apply seamless cloning with checked inputs
+                if np.any(eroded_mask > 0):
+                    # Debug visualization of the mask and center point
+                    if self.app.debug_mode.get() and hasattr(self, 'debug_dir') and self.debug_dir:
+                        debug_img = source_img.copy()
+                        cv2.circle(debug_img, center, 5, (0, 0, 255), -1)  # Red dot at center
+                        mask_viz = np.zeros_like(source_img)
+                        mask_viz[eroded_mask > 0] = [0, 255, 0]  # Green for mask
+                        blend_debug = cv2.addWeighted(debug_img, 0.7, mask_viz, 0.3, 0)
+                        cv2.imwrite(os.path.join(self.debug_dir, "poisson_blend_debug.png"), blend_debug)
+                    
+                    result_img = cv2.seamlessClone(
+                        processed_img, source_img, eroded_mask, center, cv2.NORMAL_CLONE
+                    )
+                else:
+                    # Fallback to alpha blending
+                    raise ValueError("Mask has no non-zero values after erosion")
+            else:
+                # Fallback to alpha blending
+                raise ValueError("Mask moments are zero")
+                
+        except Exception as e:
+            print(f"Poisson blending failed: {str(e)}")
+            # Fall back to alpha blending
+            mask_float = mask.astype(float) / 255.0
+            mask_float_3d = np.stack([mask_float] * 3, axis=2)
+            result_img = source_img * (1 - mask_float_3d) + processed_img * mask_float_3d
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+    def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
+        """
+        Enhanced feathered blending with improved edge handling and transitions.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to blend
+            mask: Blending mask
+            blend_extent: Extent of feathering
+        
+        Returns:
+            numpy.ndarray: Blended image
+        """
+        # Convert mask to binary for processing
+        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+        
+        # Create distance transforms for inside and outside the mask
+        dist_inside = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 3)
+        dist_outside = cv2.distanceTransform(255 - binary_mask, cv2.DIST_L2, 3)
+        
+        # Normalize the distance transforms by the blend extent
+        inside_blend_extent = blend_extent * 1.5  # Slightly larger extent inside the mask
+        outside_blend_extent = blend_extent
+        
+        # Create alpha values based on distance with smoother transitions
+        alpha = np.ones_like(dist_inside, dtype=float)
+        
+        # Apply smoothstep function for more natural transitions
+        # smoothstep(x) = 3x² - 2x³ for x in [0,1], which gives a smoother S-curve
+        def smoothstep(x):
+            x = np.clip(x, 0, 1)
+            return x * x * (3 - 2 * x)
+        
+        # Inside mask: fade from 1.0 at center to transition value at border
+        inside_fade = np.clip(dist_inside / inside_blend_extent, 0, 1)
+        # Apply smoothstep for more natural falloff
+        inside_fade = smoothstep(inside_fade)
+        # Map 0->0.5, 1->1.0
+        inside_fade = 0.5 + 0.5 * inside_fade
+        
+        # Outside mask: fade from transition value at border to 0.0 outside
+        outside_fade = np.clip(1.0 - dist_outside / outside_blend_extent, 0, 1)
+        # Apply smoothstep for more natural falloff
+        outside_fade = smoothstep(outside_fade)
+        # Map 0->0.0, 1->0.5
+        outside_fade = 0.5 * outside_fade
+        
+        # Combine the fades using the binary mask
+        binary_mask_float = binary_mask.astype(float) / 255.0
+        alpha = inside_fade * binary_mask_float + outside_fade * (1.0 - binary_mask_float)
+        
+        # For hair, we can enhance the blending by adding noise to the transition
+        # This helps simulate the natural randomness of hair strands
+        if self.app.use_bangs_only.get():
+            # Create a noise pattern
+            np.random.seed(42)  # For reproducibility
+            noise = np.random.normal(0, 0.05, alpha.shape).astype(np.float32)
+            
+            # Only apply noise to the transition region
+            transition_region = (alpha > 0.1) & (alpha < 0.9)
+            alpha[transition_region] += noise[transition_region]
+            alpha = np.clip(alpha, 0, 1)
+        
+        # Apply a slight blur to the alpha for smoother transitions
+        alpha = cv2.GaussianBlur(alpha, (5, 5), 0)
+        
+        # Create 3-channel alpha
+        alpha_3d = np.stack([alpha] * 3, axis=2)
+        
+        # Apply color matching at boundaries before blending
+        # Create a narrow border region for color matching
+        border_mask = np.zeros_like(binary_mask)
+        border = cv2.dilate(binary_mask, np.ones((3, 3), np.uint8)) - binary_mask
+        border_mask[border > 0] = 255
+        
+        # If we have source color and processed color at the boundary, adjust the processed color
+        if np.sum(border_mask) > 0:
+            try:
+                # Convert to LAB color space for better color matching
+                source_lab = cv2.cvtColor(source_img, cv2.COLOR_BGR2LAB)
+                processed_lab = cv2.cvtColor(processed_img.astype(np.uint8), cv2.COLOR_BGR2LAB)
+                
+                # Sample the colors at the boundary
+                source_border = source_lab[border_mask > 0]
+                processed_border = processed_lab[border_mask > 0]
+                
+                if len(source_border) > 0 and len(processed_border) > 0:
+                    # Calculate mean color difference
+                    source_mean = np.mean(source_border, axis=0)
+                    processed_mean = np.mean(processed_border, axis=0)
+                    color_diff = source_mean - processed_mean
+                    
+                    # Apply a gradual color correction
+                    # Create a gradient mask where correction is strongest at border and fades out
+                    correction_mask = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 3)
+                    correction_mask = np.clip(1.0 - correction_mask / (blend_extent * 2), 0, 1)
+                    
+                    # Apply the correction to the LAB image
+                    for i in range(3):
+                        processed_lab[:,:,i] = np.clip(
+                            processed_lab[:,:,i] + color_diff[i] * correction_mask * 0.7,  # 70% strength
+                            0, 255 if i == 0 else 255
+                        )
+                    
+                    # Convert back to BGR
+                    processed_img = cv2.cvtColor(processed_lab, cv2.COLOR_LAB2BGR)
+            except Exception as e:
+                print(f"Error in color matching: {str(e)}")
+        
+        # Apply edge-aware blending for better hair strand preservation
+        source_gray = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+        processed_gray = cv2.cvtColor(processed_img.astype(np.uint8), cv2.COLOR_BGR2GRAY) if len(processed_img.shape) == 3 else processed_img
+        
+        # Detect edges in both images
+        source_edges = cv2.Canny(source_gray, 50, 150)
+        processed_edges = cv2.Canny(processed_gray, 50, 150)
+        
+        # Create an edge-aware alpha mask that preserves hair detail
+        edge_mask = np.zeros_like(alpha)
+        # Strengthen alpha where processed image has edges (hair strands)
+        edge_mask[processed_edges > 0] = 0.2  # Boost by 20%
+        # Weaken alpha where source image has strong edges we want to preserve
+        edge_mask[source_edges > 0] = -0.1  # Reduce by 10%
+        
+        # Apply the edge mask to the transition region
+        transition_region = (alpha > 0.2) & (alpha < 0.8)
+        alpha[transition_region] += edge_mask[transition_region]
+        alpha = np.clip(alpha, 0, 1)
+        
+        # Final smoothing of the alpha mask
+        alpha = cv2.GaussianBlur(alpha, (3, 3), 0)
+        
+        # Update 3D alpha with the enhanced version
+        alpha_3d = np.stack([alpha] * 3, axis=2)
+        
+        # Blend images
+        result_img = source_img * (1 - alpha_3d) + processed_img * alpha_3d
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+
+    def _improved_hybrid_blend(self, source_img, processed_img, mask, blend_extent=5, debug_dir=None):
+        """
+        Enhanced hybrid blending method that uses Poisson blending for better 
+        positioning and natural integration with the source image.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to insert (the bangs) - already aligned
+            mask: Blending mask (already aligned)
+            blend_extent: Blend extent from settings
+            debug_dir: Directory to save debug visualizations
+        
+        Returns:
+            numpy.ndarray: Blended result
+        """
+        # Ensure mask is in the correct format and preserve the original mask values
+        # DON'T convert to binary - this is the key change to maintain positioning consistency
+        mask_uint8 = mask.astype(np.uint8)
+        
+        # Create a debug visualization if enabled
+        if debug_dir:
+            mask_viz = np.zeros_like(source_img)
+            mask_viz[mask_uint8 > 0] = [0, 255, 0]  # Green for mask
+            mask_overlay = cv2.addWeighted(source_img, 0.7, mask_viz, 0.3, 0)
+            cv2.imwrite(os.path.join(debug_dir, "hybrid_mask_overlay.png"), mask_overlay)
+            
+            # Save the input images for reference
+            cv2.imwrite(os.path.join(debug_dir, "hybrid_source_img.png"), source_img)
+            cv2.imwrite(os.path.join(debug_dir, "hybrid_processed_img.png"), processed_img)
+            cv2.imwrite(os.path.join(debug_dir, "hybrid_mask.png"), mask_uint8)
+        
+        # Start with a basic alpha blend as a fallback
+        feathered_mask = mask_uint8.copy().astype(np.float32) / 255.0
+        
+        # Apply a slight blur for smoother edges
+        if blend_extent > 0:
+            kernel_size = max(3, min(blend_extent, 7))
+            feathered_mask = cv2.GaussianBlur(feathered_mask, (kernel_size, kernel_size), 0)
+        
+        # Create a 3-channel mask for blending
+        feathered_mask_3d = np.stack([feathered_mask] * 3, axis=2)
+        
+        # Initialize result with a simple alpha blend
+        result_img = source_img * (1 - feathered_mask_3d) + processed_img * feathered_mask_3d
+        
+        # Apply Poisson blending - this is now the primary method
+        if np.sum(mask_uint8) > 100:  # Make sure we have enough pixels
+            try:
+                # Erode mask slightly to avoid boundary issues - exactly like in the Poisson blend method
+                eroded_mask = cv2.erode(mask_uint8, np.ones((3, 3), np.uint8), iterations=1)
+                
+                # Save the eroded mask if debugging is enabled
+                if debug_dir:
+                    eroded_viz = np.zeros_like(source_img)
+                    eroded_viz[eroded_mask > 0] = [0, 255, 0]  # Green for eroded mask
+                    cv2.imwrite(os.path.join(debug_dir, "hybrid_eroded_mask.png"), eroded_mask)
+                    cv2.imwrite(os.path.join(debug_dir, "hybrid_eroded_viz.png"), eroded_viz)
+                
+                # Find center of mask with boundary protection - exactly like in Poisson blend
+                moments = cv2.moments(mask_uint8)  # Use the non-eroded mask for consistent positioning with Poisson
+                if moments["m00"] > 0:
+                    center_x = int(moments["m10"] / moments["m00"])
+                    center_y = int(moments["m01"] / moments["m00"])
+                    
+                    # Ensure center is within safe boundaries - same as Poisson blend
+                    h, w = source_img.shape[:2]
+                    min_distance = min(w, h) // 4
+                    center_x = max(min_distance, min(w - min_distance, center_x))
+                    center_y = max(min_distance, min(h - min_distance, center_y))
+                    center = (center_x, center_y)
+                    
+                    print(f"Using center point for Hybrid blending: {center}")
+                    
+                    # Use eroded_mask for seamless cloning just like the Poisson blend
+                    poisson_result = cv2.seamlessClone(
+                        processed_img, source_img, eroded_mask, center, cv2.NORMAL_CLONE
+                    )
+                    
+                    # Save the poisson result for debugging
+                    if debug_dir:
+                        debug_img = source_img.copy()
+                        cv2.circle(debug_img, center, 5, (0, 0, 255), -1)  # Red dot at center
+                        mask_viz = np.zeros_like(source_img)
+                        mask_viz[eroded_mask > 0] = [0, 255, 0]  # Green for mask
+                        blend_debug = cv2.addWeighted(debug_img, 0.7, mask_viz, 0.3, 0)
+                        cv2.imwrite(os.path.join(debug_dir, "hybrid_poisson_debug.png"), blend_debug)
+                        cv2.imwrite(os.path.join(debug_dir, "hybrid_poisson_result.png"), poisson_result)
+                    
+                    # Use the Poisson result directly as our final result
+                    result_img = poisson_result.astype(np.float32)
+                    
+                    # Create an outer edge mask for a subtle blending with the original
+                    # Use the original mask_uint8 (not eroded) for the outer edge calculation
+                    outer_edge = cv2.dilate(mask_uint8, np.ones((3, 3), np.uint8), iterations=1) - mask_uint8
+                    if np.any(outer_edge):
+                        outer_edge_float = outer_edge.astype(np.float32) / 255.0
+                        outer_edge_float = cv2.GaussianBlur(outer_edge_float, (3, 3), 0)
+                        outer_edge_3d = np.stack([outer_edge_float] * 3, axis=2)
+                        
+                        # Apply a very subtle blend at the outer edge only
+                        result_img = result_img * (1 - outer_edge_3d * 0.2) + source_img * (outer_edge_3d * 0.2)
+                else:
+                    # Fallback to alpha blending if moments are zero
+                    raise ValueError("Mask moments are zero")
+            except Exception as e:
+                print(f"Poisson blending failed: {str(e)}, using alpha blend")
+        
+        # Add subtle detail enhancement to make hair strands more visible
+        if self.app.use_bangs_only.get():
+            # Focus enhancement only on the bangs area
+            hair_area = mask_uint8 > 0
+            hair_area_3d = np.stack([hair_area] * 3, axis=2)
+            
+            # Create a detail layer using unsharp mask
+            result_uint8 = np.clip(result_img, 0, 255).astype(np.uint8)
+            blurred = cv2.GaussianBlur(result_uint8, (0, 0), 1.5)
+            detail_layer = cv2.addWeighted(result_uint8, 1.5, blurred, -0.5, 0)
+            
+            # Apply detail enhancement only to hair area with a mask
+            result_img = np.where(
+                hair_area_3d, 
+                cv2.addWeighted(result_uint8, 0.8, detail_layer, 0.2, 0).astype(np.float32),
+                result_img
+            )
+        
+        # Save the final result for debugging
+        if debug_dir:
+            final_result = np.clip(result_img, 0, 255).astype(np.uint8)
+            cv2.imwrite(os.path.join(debug_dir, "hybrid_final_result.png"), final_result)
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
+
+
+
+
+
+
+    def _preserve_image_edges(self, source_img, result_img, mask):
+        """
+        Preserve original image edges outside the mask region.
+        
+        Args:
+            source_img: Original source image
+            result_img: Blended result image
+            mask: Blending mask
+        
+        Returns:
+            numpy.ndarray: Result image with preserved edges
+        """
+        # Detect edges in source image
+        gray_source = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+        edges = cv2.Canny(gray_source, 50, 150)
+        
+        # Dilate edges to make them more prominent
+        edge_mask = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+        
+        # Only preserve edges outside the mask
+        edge_mask = edge_mask & ~mask
+        
+        # Convert edge mask to 3 channels
+        edge_mask_3d = np.stack([edge_mask / 255.0] * 3, axis=2)
+        
+        # Keep original pixel values at edges
+        preserved_result = source_img * edge_mask_3d + result_img * (1 - edge_mask_3d)
+        
+        return np.clip(preserved_result, 0, 255).astype(np.uint8)
+    
+    def _extend_bangs_area(self, mask, extend_pixels=30, forehead_ratio=0.3, min_opacity=0.7, source_landmarks=None):
+        """
+        Extends the isolated bangs mask directly downward following the mask's contours.
+        
+        Args:
+            mask: The isolated bangs mask to extend
+            extend_pixels: How many pixels to extend downward
+            forehead_ratio: Not used, kept for backward compatibility 
+            min_opacity: Minimum opacity at the furthest point of extension
+            source_landmarks: Optional landmarks for face-aware extension
+            
+        Returns:
+            numpy.ndarray: Extended bangs mask
+        """
+        # Basic error checking
+        if mask is None:
+            print("Input mask is None in extend_bangs_area")
+            return None
+        
+        # Check if mask is valid
+        if mask.size == 0 or mask.shape[0] == 0 or mask.shape[1] == 0:
+            print("Input mask has invalid dimensions")
+            return mask
+        
+        # Check if mask is empty (all zeros)
+        if np.max(mask) == 0:
+            print("Warning: Empty mask, nothing to extend")
+            return mask
+        
+        print(f"Extending bangs mask downward by {extend_pixels} pixels")
+        
+        # Keep a copy of the original isolated bangs mask
+        original_mask = mask.copy()
+        height, width = mask.shape[:2]
+        
+        # Create the output mask - initialize with the original mask
+        extended_mask = original_mask.copy()
+        
+        # If using landmarks and they're available, adjust extension amount
+        if source_landmarks is not None and len(source_landmarks) >= 27:
+            try:
+                # Get eyebrow positions for scaling
+                eyebrow_points = source_landmarks[17:27]
+                eyebrow_y = min([int(p[1]) for p in eyebrow_points])
+                face_height = source_landmarks[8][1] - eyebrow_y  # Chin to eyebrows
+                
+                # Scale extension based on face proportions
+                extend_factor = max(1.0, min(2.0, face_height / 180))
+                adjusted_extend = int(extend_pixels * extend_factor)
+                
+                print(f"Face height: {face_height}, adjusting extension from {extend_pixels} to {adjusted_extend}")
+                extend_pixels = adjusted_extend
+            except Exception as e:
+                print(f"Error adjusting extension with landmarks: {str(e)}")
+        
+        # IMPORTANT - Make sure extend_pixels is a reasonable value to avoid tiny extensions
+        extend_pixels = max(10, extend_pixels)  # Ensure minimum extension of 10 pixels
+        print(f"Final extension amount: {extend_pixels} pixels")
+        
+        # Calculate gradient falloff power based on extension amount
+        # For larger extensions, use a gentler falloff to make the extension more visible
+        if extend_pixels >= 70:
+            falloff_power = 0.3  # Very gentle falloff for very large extensions
+        elif extend_pixels >= 50:
+            falloff_power = 0.4  # Gentle falloff for large extensions
+        elif extend_pixels >= 30:
+            falloff_power = 0.5  # Medium falloff for medium extensions
+        else:
+            falloff_power = 0.7  # Steeper falloff for small extensions
+            
+        print(f"Using falloff power: {falloff_power} for extension amount: {extend_pixels}")
+        
+        # For very large extensions, also allow a small upward extension to better blend with hair
+        allow_upward = (extend_pixels >= 60)
+        upward_pixels = min(10, extend_pixels // 10) if allow_upward else 0
+        if upward_pixels > 0:
+            print(f"Allowing {upward_pixels} pixels of upward extension for smoother blending")
+        
+        # Find bottom boundary of mask for each column
+        bottom_boundary = np.zeros(width, dtype=int)
+        for x in range(width):
+            column_pixels = np.where(original_mask[:, x] > 0)[0]
+            if len(column_pixels) > 0:
+                bottom_boundary[x] = np.max(column_pixels)
+        
+        # Initialize top_boundary regardless of whether we're doing upward extension
+        top_boundary = np.ones(width, dtype=int) * height
+        
+        # If we're doing upward extension, also find the top boundary of the mask
+        if upward_pixels > 0:
+            for x in range(width):
+                    column_pixels = np.where(original_mask[:, x] > 0)[0]
+                    if len(column_pixels) > 0:
+                        top_boundary[x] = np.min(column_pixels)
+        
+        # For each column in the mask:
+        pixels_extended = 0
+        for x in range(width):
+            # Find the bottom edge of the mask in this column
+            bottom_y = bottom_boundary[x]
+            
+            # If this column has no mask pixels, skip it
+            if bottom_y <= 0:
+                continue
+            
+            # Get the original value at the bottom edge
+            original_value = original_mask[bottom_y, x]
+            
+            # Skip if value is too low (nearly transparent)
+            if original_value < 20:
+                continue
+                
+            # Calculate how far to extend downward - use the full extend_pixels value
+            extension_amount = min(extend_pixels, height - bottom_y - 1)
+            if extension_amount <= 0:
+                continue
+                
+            # Apply the extension with gradient falloff
+            for y_offset in range(1, extension_amount + 1):
+                y = bottom_y + y_offset
+                
+                # Skip if we'd go beyond the image
+                if y >= height:
+                        break
+            
+                # Calculate falloff ratio (1.0 at top, decreasing downward)
+                # Use non-linear falloff for more natural appearance
+                # The falloff_power controls the rate of fading - smaller = slower fade
+                falloff = 1.0 - (y_offset / extension_amount) ** falloff_power
+                
+                # Calculate opacity based on original value and falloff
+                # Preserve the original opacity pattern but fade out
+                opacity = int(original_value * max(min_opacity, falloff))
+                
+                # Add slight noise for natural appearance
+                if self.app.use_bangs_only.get():
+                    noise_factor = 0.05  # 5% noise
+                    noise = (((x * 17 + y * 31) % 10) - 5) / 100.0
+                    opacity = int(np.clip(opacity * (1.0 + noise * noise_factor), 0, 255))
+                
+                # Set the pixel in the extended mask and count the extension
+                if opacity > 0:
+                    extended_mask[y, x] = opacity
+                    pixels_extended += 1
+            
+            # Handle upward extension if enabled
+            if upward_pixels > 0:
+                top_y = top_boundary[x]
+                # Skip if top is already at the top of the image
+                if top_y <= 0 or top_y >= height:
+                    continue
+                
+                # Get the value at the top edge
+                top_value = original_mask[top_y, x]
+                if top_value < 20:
+                    continue
+                    
+                # Calculate how far to extend upward
+                upward_amount = min(upward_pixels, top_y)
+                if upward_amount <= 0:
+                    continue
+                    
+                # Apply the upward extension with gradient falloff
+                for y_offset in range(1, upward_amount + 1):
+                    y = top_y - y_offset
+                    
+                    # Skip if we'd go beyond the image
+                    if y < 0:
+                        break
+                    
+                    # More aggressive falloff for upward extension
+                    falloff = 1.0 - (y_offset / upward_amount) ** 0.9
+                    
+                    # Reduce opacity more for upward extension
+                    opacity = int(top_value * falloff * 0.7)
+                    
+                    # Add slight noise
+                    if self.app.use_bangs_only.get():
+                        noise = (((x * 17 + y * 31) % 10) - 5) / 100.0
+                        opacity = int(np.clip(opacity * (1.0 + noise * 0.03), 0, 255))
+                    
+                    # Set the pixel and count the extension
+                    if opacity > 0:
+                        extended_mask[y, x] = opacity
+                        pixels_extended += 1
+        
+        print(f"Extended {pixels_extended} pixels downward from the original mask")
+        
+        # Smooth the result slightly for natural appearance
+        return cv2.GaussianBlur(extended_mask, (3, 3), 0)
+
+    def _improve_landmark_alignment(self, source_landmarks, processed_landmarks):
+        """
+        Calculate a robust transformation matrix based on facial landmarks
+        with better error handling for incomplete landmarks.
+        
+        Args:
+            source_landmarks: List of (x, y) landmarks from the source image
+            processed_landmarks: List of (x, y) landmarks from the processed image
+                
+        Returns:
+            tuple: (transformation_matrix, success_flag)
+        """
+        import numpy as np
+        import cv2
+        
+        # Validate input landmarks
+        if not source_landmarks or not processed_landmarks:
+            print("Error: Missing landmarks for alignment")
+            return None, False
+        
+        try:
+            # Convert landmarks to numpy arrays if they aren't already
+            source_points = np.array(source_landmarks)
+            processed_points = np.array(processed_landmarks)
+            
+            # Check if we have enough landmarks
+            if len(source_points) < 5 or len(processed_points) < 5:
+                print(f"Not enough landmarks for alignment: source={len(source_points)}, processed={len(processed_points)}")
+                return None, False
+            
+            # Get the minimum number of landmarks available in both arrays
+            min_landmarks = min(len(source_points), len(processed_points))
+            
+            # Define key landmark indices that are robust for alignment
+            # Only use indices that are guaranteed to be available
+            if min_landmarks >= 68:  # Full facial landmarks available
+                key_indices = [
+                    0, 8, 16,           # Jaw line (chin and sides)
+                    19, 24,             # Eyebrows
+                    27, 30, 33,         # Nose
+                    36, 39, 42, 45,     # Eyes
+                    48, 54              # Mouth
+                ]
+            elif min_landmarks >= 27:  # At least has eyebrows and nose
+                # Use a subset of landmarks
+                key_indices = [
+                    0, 8, 16,           # Face outline points if available
+                    19, 24,             # Eyebrows
+                    27                  # Nose bridge top
+                ]
+            else:
+                # Use all available landmarks for very limited sets
+                key_indices = list(range(min_landmarks))
+            
+            # Extract the selected landmarks, making sure not to go out of bounds
+            source_key_points = []
+            processed_key_points = []
+            
+            for i in key_indices:
+                if i < len(source_points) and i < len(processed_points):
+                    source_key_points.append(source_points[i])
+                    processed_key_points.append(processed_points[i])
+            
+            # Convert to numpy arrays for the transformation calculation
+            source_key_points = np.array(source_key_points, dtype=np.float32)
+            processed_key_points = np.array(processed_key_points, dtype=np.float32)
+            
+            # Make sure we have enough points for a transformation
+            if len(source_key_points) < 3:
+                print("Not enough matched key points for alignment")
+                return None, False
+            
+            # Estimate an affine transformation that allows for rotation, scaling, and translation
+            transformation_matrix, inliers = cv2.estimateAffinePartial2D(
+                processed_key_points, source_key_points, 
+                method=cv2.RANSAC, 
+                ransacReprojThreshold=3.0,
+                confidence=0.99,
+                maxIters=2000
+            )
+            
+            # Check if we got a valid transformation
+            if transformation_matrix is None or inliers is None or np.sum(inliers) < 3:
+                print("Warning: Could not estimate a good transformation matrix, falling back to simpler alignment")
+                return None, False
+            
+            # Debug info about the transformation
+            print(f"Estimated transformation matrix with {np.sum(inliers)} inliers out of {len(source_key_points)} points")
+            
+            # Decompose the matrix to understand the transformation better
+            scale_x = np.sqrt(transformation_matrix[0, 0]**2 + transformation_matrix[0, 1]**2)
+            scale_y = np.sqrt(transformation_matrix[1, 0]**2 + transformation_matrix[1, 1]**2)
+            theta = np.arctan2(transformation_matrix[0, 1], transformation_matrix[0, 0]) * 180 / np.pi
+            tx, ty = transformation_matrix[0, 2], transformation_matrix[1, 2]
+            
+            print(f"Translation: ({tx:.2f}, {ty:.2f}), Rotation: {theta:.2f}°, Scale: ({scale_x:.2f}, {scale_y:.2f})")
+            
+            # If the transformation seems too extreme, limit it
+            max_scale = 1.5
+            min_scale = 0.5
+            max_rotation = 30.0  # degrees
+            
+            if (scale_x > max_scale or scale_y > max_scale or 
+                scale_x < min_scale or scale_y < min_scale or 
+                abs(theta) > max_rotation):
+                
+                print("Warning: Limiting extreme transformation values")
+                
+                # Limit scaling
+                scale_x = np.clip(scale_x, min_scale, max_scale)
+                scale_y = np.clip(scale_y, min_scale, max_scale)
+                
+                # Limit rotation
+                theta = np.clip(theta, -max_rotation, max_rotation)
+                theta_rad = theta * np.pi / 180.0
+                
+                # Reconstruct the rotation/scaling part of the matrix
+                transformation_matrix[0, 0] = scale_x * np.cos(theta_rad)
+                transformation_matrix[0, 1] = scale_x * np.sin(theta_rad)
+                transformation_matrix[1, 0] = -scale_y * np.sin(theta_rad)
+                transformation_matrix[1, 1] = scale_y * np.cos(theta_rad)
+            
+            return transformation_matrix, True
+            
+        except Exception as e:
+            print(f"Error in landmark alignment: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None, False
+
+    def _apply_landmark_transform(self, source_img, processed_img, source_mask, processed_mask, 
+                                source_landmarks, processed_landmarks, debug_dir=None):
+        """
+        Apply improved landmark-based alignment to align processed image and mask with source.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to align
+            source_mask: Mask for source image (or None)
+            processed_mask: Mask for processed image
+            source_landmarks: Pre-computed landmarks for source image
+            processed_landmarks: Pre-computed landmarks for processed image
+            debug_dir: Directory to save debug visualizations
+            
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        import numpy as np
+        import cv2
+        import os
+        
+        h, w = source_img.shape[:2]
+        
+        # Get the transformation matrix using improved landmark alignment
+        transform_matrix, success = self._improve_landmark_alignment(source_landmarks, processed_landmarks)
+        
+        if not success or transform_matrix is None:
+            print("Could not calculate transformation matrix. Falling back to default alignment.")
+            # Return the unmodified inputs as fallback
+            return processed_mask, processed_img
+        
+        # Apply the transformation to the processed image and mask
+        aligned_img = cv2.warpAffine(
+            processed_img, transform_matrix, (w, h), 
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+        )
+        
+        aligned_mask = cv2.warpAffine(
+            processed_mask, transform_matrix, (w, h), 
+            flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+        )
+        
+        # Apply manual offsets if specified
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
+        
+        if manual_offset_x != 0 or manual_offset_y != 0:
+            print(f"Applying manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+            offset_matrix = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+            
+            aligned_img = cv2.warpAffine(
+                aligned_img, offset_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, offset_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
+        
+        # Apply manual scaling if specified
+        scale_x = self.app.reinsert_manual_scale_x.get()
+        scale_y = self.app.reinsert_manual_scale_y.get()
+        
+        if scale_x != 1.0 or scale_y != 1.0:
+            print(f"Applying manual scaling: X={scale_x}, Y={scale_y}")
+            
+            # Calculate center for scaling
+            center_x = w // 2
+            center_y = h // 2
+            
+            # Create transformation matrix for scaling around the center
+            scale_matrix = np.float32([
+                [scale_x, 0, center_x * (1 - scale_x)],
+                [0, scale_y, center_y * (1 - scale_y)]
+            ])
+            
+            aligned_img = cv2.warpAffine(
+                aligned_img, scale_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, scale_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
+        
+        # Apply manual rotation if specified
+        rotation_angle = self.app.reinsert_manual_rotation.get()
+        if rotation_angle != 0:
+            print(f"Applying manual rotation: {rotation_angle} degrees")
+            
+            # Calculate center of rotation
+            center_x = w // 2
+            center_y = h // 2
+            
+            # Get rotation matrix
+            rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), -rotation_angle, 1.0)
+            
+            # Apply rotation
+            aligned_img = cv2.warpAffine(
+                aligned_img, rotation_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, rotation_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
+        
+        # Save debug visualization
+        if debug_dir:
+            # Draw landmarks on images
+            source_vis = source_img.copy()
+            processed_vis = processed_img.copy()
+            aligned_vis = aligned_img.copy()
+            
+            # Draw source landmarks
+            for i, (x, y) in enumerate(source_landmarks):
+                cv2.circle(source_vis, (int(x), int(y)), 2, (0, 255, 0), -1)
+                if i in [0, 8, 16, 27, 30, 36, 39, 42, 45, 48, 54]:  # Key points
+                    cv2.circle(source_vis, (int(x), int(y)), 4, (255, 0, 0), -1)
+                    
+                    
+            # Draw processed landmarks
+            for i, (x, y) in enumerate(processed_landmarks):
+                cv2.circle(processed_vis, (int(x), int(y)), 2, (0, 0, 255), -1)
+                if i in [0, 8, 16, 27, 30, 36, 39, 42, 45, 48, 54]:  # Key points
+                    cv2.circle(processed_vis, (int(x), int(y)), 4, (255, 0, 0), -1)
+            
+            # Create visualization of the alignment
+            combined = np.hstack((source_vis, processed_vis, aligned_vis))
+            cv2.imwrite(os.path.join(debug_dir, "improved_landmark_alignment.png"), combined)
+            
+            # Save the aligned mask
+            cv2.imwrite(os.path.join(debug_dir, "aligned_mask_improved_landmarks.png"), aligned_mask)
+            
+            # Overlay visualization showing source and aligned masks
+            mask_overlay = np.zeros((h, w, 3), dtype=np.uint8)
+            if source_mask is not None:
+                mask_overlay[source_mask > 127] = [0, 0, 255]  # Source mask in red
+            mask_overlay[aligned_mask > 127] = [0, 255, 0]    # Aligned mask in green
+            cv2.imwrite(os.path.join(debug_dir, "mask_alignment_comparison.png"), mask_overlay)
+        
+        return aligned_mask, aligned_img
+
+
+
+    def _apply_translation_only_transform(self, source_img, processed_img, source_mask, processed_mask, 
+                                source_landmarks, processed_landmarks, debug_dir=None):
+        """
+        Apply landmark-based alignment but only use translation component (no rotation).
+        Enhanced error handling for when landmarks are incomplete.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image to align
+            source_mask: Mask for source image (or None)
+            processed_mask: Mask for processed image
+            source_landmarks: Pre-computed landmarks for source image
+            processed_landmarks: Pre-computed landmarks for processed image
+            debug_dir: Directory to save debug visualizations
+            
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        import numpy as np
+        import cv2
+        import os
+        
+        h, w = source_img.shape[:2]
+        
+        # Make sure we have landmarks to work with
+        if source_landmarks is None or processed_landmarks is None:
+            print("Missing landmarks, using direct alignment")
+            return processed_mask, processed_img
+        
+        # Calculate centers of face landmarks
+        source_center = np.mean(np.array(source_landmarks), axis=0)
+        processed_center = np.mean(np.array(processed_landmarks), axis=0)
+        
+        # Just use translation between centers
+        tx = source_center[0] - processed_center[0]
+        ty = source_center[1] - processed_center[1]
+        
+        print(f"Using translation only: tx={tx:.2f}, ty={ty:.2f}")
+        
+        # Create a translation-only matrix
+        translation_matrix = np.float32([
+            [1, 0, tx],
+            [0, 1, ty]
+        ])
+        
+        # Apply translation-only transformation
+        aligned_img = cv2.warpAffine(
+            processed_img, translation_matrix, (w, h), 
+            flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+        )
+        
+        aligned_mask = cv2.warpAffine(
+            processed_mask, translation_matrix, (w, h), 
+            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
+        )
+        
+        # Apply manual offsets if specified
+        manual_offset_x = self.app.reinsert_manual_offset_x.get()
+        manual_offset_y = self.app.reinsert_manual_offset_y.get()
+        
+        if manual_offset_x != 0 or manual_offset_y != 0:
+            print(f"Applying manual offset: X={manual_offset_x}, Y={manual_offset_y}")
+            offset_matrix = np.float32([[1, 0, manual_offset_x], [0, 1, manual_offset_y]])
+            
+            aligned_img = cv2.warpAffine(
+                aligned_img, offset_matrix, (w, h),
+                flags=cv2.INTER_LANCZOS4, borderMode=cv2.BORDER_TRANSPARENT
+            )
+            
+            aligned_mask = cv2.warpAffine(
+                aligned_mask, offset_matrix, (w, h),
+                flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_TRANSPARENT
+            )
+        
+        # Save debug visualization
+        if debug_dir:
+            # Draw landmarks on images
+            source_vis = source_img.copy()
+            processed_vis = processed_img.copy()
+            aligned_vis = aligned_img.copy()
+            
+            # Draw landmarks
+            for i, (x, y) in enumerate(source_landmarks):
+                cv2.circle(source_vis, (int(x), int(y)), 2, (0, 255, 0), -1)
+            
+            for i, (x, y) in enumerate(processed_landmarks):
+                cv2.circle(processed_vis, (int(x), int(y)), 2, (0, 0, 255), -1)
+            
+            # Create visualizations
+            cv2.imwrite(os.path.join(debug_dir, "source_landmarks.png"), source_vis)
+            cv2.imwrite(os.path.join(debug_dir, "processed_landmarks.png"), processed_vis)
+            cv2.imwrite(os.path.join(debug_dir, "aligned_translation_only.png"), aligned_vis)
+            
+            # Save the aligned mask
+            cv2.imwrite(os.path.join(debug_dir, "aligned_mask_translation_only.png"), aligned_mask)
+        
+        return aligned_mask, aligned_img
+
+    def _align_with_landmarks(self, source_img, processed_img, source_mask, processed_mask, 
+                                source_landmarks, processed_landmarks, debug_dir=None):
+        """
+        Align processed hair mask and image based on facial landmarks, using translation only.
+        This preserves the original orientation while correctly positioning the hair.
+        
+        Args:
+            source_img: Original source image
+            processed_img: Processed image with hair to insert
+            source_mask: Mask for source image
+            processed_mask: Mask for processed image
+            source_landmarks: Pre-computed landmarks for source image
+            processed_landmarks: Pre-computed landmarks for processed image
+            debug_dir: Directory to save debug visualizations
+            
+        Returns:
+            tuple: (aligned_mask, aligned_image)
+        """
+        import numpy as np
+        import cv2
+        import os
+        
+        # Validate input
+        if source_landmarks is None or processed_landmarks is None:
+            print("Could not detect landmarks in one or both images")
+            return processed_mask, processed_img
+        
+        # Check if we should use translation-only or full alignment
+        use_translation_only = self.app.use_translation_only.get()
+        
+        if use_translation_only:
+            # Use the translation-only method
+            aligned_mask, aligned_img = self._apply_translation_only_transform(
+                source_img, processed_img, source_mask, processed_mask,
+                source_landmarks, processed_landmarks, debug_dir
+            )
+            
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "aligned_translation_only.png"), aligned_img)
+        else:
+            # Use the full alignment method for comparison
+            aligned_mask, aligned_img = self._apply_landmark_transform(
+                source_img, processed_img, source_mask, processed_mask,
+                source_landmarks, processed_landmarks, debug_dir
+            )
+            
+            if debug_dir:
+                cv2.imwrite(os.path.join(debug_dir, "aligned_full_transform.png"), aligned_img)
+        
+        return aligned_mask, aligned_img
+
+    def _get_landmarks(self, image):
+        """
+        Enhanced face detection with better fallbacks and diagnostics.
+        """
+        if self.face_detector is None or self.landmark_predictor is None:
+            print("Facial landmark detection not available")
+            return None
+            
+        # Convert to grayscale for detection
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        # Print some diagnostics about the image
+        print(f"Image shape for face detection: {image.shape}")
+        print(f"Image intensity range: {np.min(gray)} to {np.max(gray)}")
+        
+        # Try detection with different upsample factors
+        for upsample_factor in [0, 1, 2]:  # Try no upsampling, then 1x, then 2x
+            print(f"Attempting face detection with upsample factor {upsample_factor}")
+            faces = self.face_detector(gray, upsample_factor)
+            
+            if faces:
+                print(f"Detected {len(faces)} faces with upsample factor {upsample_factor}")
+                # Use largest face by area
+                largest_face = max(faces, key=lambda rect: rect.width() * rect.height())
+                
+                # Get landmarks
+                try:
+                    shape = self.landmark_predictor(gray, largest_face)
+                    landmarks = [(shape.part(i).x, shape.part(i).y) for i in range(68)]
+                    print(f"Successfully extracted {len(landmarks)} landmarks")
+                    return landmarks
+                except Exception as e:
+                    print(f"Error detecting landmarks: {str(e)}")
+                    continue  # Try next upsample factor if landmarks failed
+        
+        # If we reach here, no detection succeeded
+        print("No faces detected with any upsampling, using geometric fallback")
+        
+        # Create a full set of 68 estimated facial landmarks based on image geometry
+        h, w = image.shape[:2]
+        
+        # Create a full set of 68 estimated facial landmarks based on image geometry
+        landmarks = []
+        
+        # Jaw line (points 0-16)
+        for i in range(17):
+            angle = (i / 16.0) * np.pi
+            radius = min(w, h) * 0.45
+            x = int(w/2 - np.cos(angle) * radius)
+            y = int(h/2 + np.sin(angle) * radius)
+            landmarks.append((x, y))
+        
+        # Eyebrows (points 17-26)
+        eyebrow_y = int(h * 0.3)
+        for i in range(5):  # Left eyebrow
+            x = int(w * (0.2 + i * 0.06))
+            y = eyebrow_y
+            landmarks.append((x, y))
+        
+        for i in range(5):  # Right eyebrow
+            x = int(w * (0.8 - i * 0.06))
+            y = eyebrow_y
+            landmarks.append((x, y))
+        
+        # Nose (points 27-35)
+        nose_bridge_top_y = int(h * 0.35)
+        nose_tip_y = int(h * 0.5)
+        nose_width = int(w * 0.1)
+        
+        # Nose bridge (vertical line from between eyebrows to tip)
+        for i in range(4):
+            x = int(w / 2)
+            y = int(nose_bridge_top_y + (nose_tip_y - nose_bridge_top_y) * (i / 3.0))
+            landmarks.append((x, y))
+        
+        # Nose base (horizontal line below tip)
+        for i in range(5):
+            x = int(w/2 + nose_width * (-1 + i/2.0))
+            y = nose_tip_y + int(h * 0.02)
+            landmarks.append((x, y))
+        
+        # Eyes (points 36-47)
+        eye_y = int(h * 0.38)
+        left_eye_x = int(w * 0.3)
+        right_eye_x = int(w * 0.7)
+        eye_width = int(w * 0.07)
+        
+        # Left eye (6 points)
+        for i in range(6):
+            angle = (i / 6.0) * 2 * np.pi
+            x = int(left_eye_x + np.cos(angle) * eye_width)
+            y = int(eye_y + np.sin(angle) * (eye_width * 0.4))
+            landmarks.append((x, y))
+        
+        # Right eye (6 points)
+        for i in range(6):
+            angle = (i / 6.0) * 2 * np.pi
+            x = int(right_eye_x + np.cos(angle) * eye_width)
+            y = int(eye_y + np.sin(angle) * (eye_width * 0.4))
+            landmarks.append((x, y))
+        
+        # Outer lips (points 48-59)
+        mouth_y = int(h * 0.7)
+        mouth_width = int(w * 0.3)
+        mouth_height = int(h * 0.06)
+        
+        for i in range(12):
+            angle = (i / 12.0) * 2 * np.pi
+            x = int(w/2 + np.cos(angle) * mouth_width/2)
+            y = int(mouth_y + np.sin(angle) * mouth_height/2)
+            landmarks.append((x, y))
+        
+        # Inner lips (points 60-67)
+        inner_mouth_width = mouth_width * 0.7
+        inner_mouth_height = mouth_height * 0.7
+        
+        for i in range(8):
+            angle = (i / 8.0) * 2 * np.pi
+            x = int(w/2 + np.cos(angle) * inner_mouth_width/2)
+            y = int(mouth_y + np.sin(angle) * inner_mouth_height/2)
+            landmarks.append((x, y))
+        
+        print("Using fallback geometric landmarks")
+        return landmarks
+    
+    def _enhance_image_for_detection(self, gray):
+        """DISABLED: Apply image enhancements to improve face detection."""
+        return gray
+    
+    def _try_scaled_detection(self, image, scale_factor=0.75):
+        """DISABLED: Try detecting faces with image scaling."""
+        return []
+    
+    def create_hairline_curve(self, width, height, extend_pixels, forehead_left, forehead_right, center_x, top_y):
+        """
+        Creates a simple downward-only extension curve with natural falloff.
+        
+        Note: This is maintained for backward compatibility but the main extension
+        is now performed directly within _extend_bangs_area.
+        """
+        curve = np.zeros((height, width), dtype=np.uint8)
+        
+        # Enhanced extension height
+        extension_height = int(extend_pixels * 1.5)
+        
+        # Width of the area to extend
+        area_width = forehead_right - forehead_left
+        
+        # For each column in the target area
+        for x in range(max(0, forehead_left), min(width, forehead_right + 1)):
+            # Calculate normalized horizontal distance from center
+            x_dist = 2.0 * abs(x - center_x) / area_width if area_width > 0 else 0
+            
+            # Calculate how far down to extend based on distance from center
+            # The center extends farthest, edges extend less
+            local_extend = extension_height * (1.0 - 0.4 * x_dist**2)
+            
+            # Fill the extension with a gradient
+            for y in range(top_y, min(height, int(top_y + local_extend))):
+                # Calculate normalized position in the extension
+                y_norm = (y - top_y) / local_extend if local_extend > 0 else 1.0
+                
+                # Apply falloff based on vertical position
+                opacity = int(255 * (1.0 - y_norm**1.2))
+                
+                # Add some noise for more natural look
+                noise = (((x * 13 + y * 29) % 10) - 5) / 150.0
+                opacity = int(max(0, min(255, opacity + opacity * noise)))
+                
+                curve[y, x] = opacity
+            
+        # Apply a slight blur for smoother transitions
+        curve = cv2.GaussianBlur(curve, (5, 5), 0)
+        
+        return curve
+
+    def _isolate_bangs_region(self, mask, landmarks=None):
+        """
+        Improved bangs isolation with better hairline curve detection.
+        
+        Args:
+            mask: The full hair mask
+            landmarks: Optional facial landmarks for better bangs detection
+            
+        Returns:
+            numpy.ndarray: Mask containing only the bangs region
+        """
+        if mask is None:
+            return None
+                
+        # Create empty mask for bangs
+        bangs_mask = np.zeros_like(mask)
+        height, width = mask.shape[:2]
+        
+        # Find non-zero points in the mask to determine where the hair is
+        non_zero_points = np.argwhere(mask > 0)
+        if len(non_zero_points) == 0:
+            print("Warning: Empty mask, nothing to isolate for bangs")
+            return bangs_mask
+        
+        # Find the top-most point of the hair
+        top_y = np.min(non_zero_points[:, 0])
+        
+        # Adjust top portion percentage based on the presence of landmarks
+        if landmarks is not None and len(landmarks) >= 27:
+            # Use more of the mask when we have landmarks for better guidance
+            top_percent = 0.4  # Take top 40% of the mask - increased from 30%
+            
+            # Use eyebrow position to help determine how much to isolate
+            eyebrow_points = landmarks[17:27]
+            if len(eyebrow_points) > 0:
+                eyebrow_y = min([p[1] for p in eyebrow_points])
+                # If eyebrows are low in the image, take more of the mask
+                eyebrow_ratio = eyebrow_y / height
+                if eyebrow_ratio > 0.3:  # Eyebrows are lower down
+                    top_percent = 0.5  # Take even more of the mask
+                print(f"Using eyebrow position ratio {eyebrow_ratio:.2f} to set top_percent to {top_percent:.2f}")
+        else:
+            # Default to 35% when we don't have landmarks - increased from 25%
+            top_percent = 0.35
+        
+        print(f"Isolating top {top_percent*100:.1f}% of mask as bangs region")
+        bangs_bottom = int(height * top_percent)
+        
+        # Create a more natural curved bottom edge if landmarks are available
+        if landmarks is not None and len(landmarks) >= 27:
+            # Use eyebrow landmarks to create a curved bottom line
+            eyebrow_points = landmarks[17:27]  # Eyebrow landmarks
+            
+            try:
+                # Get eyebrow y-positions
+                eyebrow_ys = [p[1] for p in eyebrow_points]
+                eyebrow_top = max(0, int(min(eyebrow_ys)) - 10)  # Slight padding above eyebrows
+                
+                # Calculate a more natural curved boundary using the eyebrow shape
+                x_points = np.arange(width)
+                y_points = np.ones(width, dtype=int) * (top_y + bangs_bottom)
+                
+                # Form a curved bottom edge based on eyebrow position
+                if len(eyebrow_points) >= 5:
+                    # Get x positions of eyebrow points
+                    eyebrow_xs = [int(p[0]) for p in eyebrow_points]
+                    eyebrow_ys = [int(p[1]) for p in eyebrow_points]
+                    
+                    # Ensure we have enough points for interpolation
+                    if len(eyebrow_xs) >= 3:
+                        # Create a quadratic curve following eyebrow shape
+                        from scipy.interpolate import interp1d
+                        
+                        # Sort points by x coordinate for proper interpolation
+                        sorted_indices = np.argsort(eyebrow_xs)
+                        sorted_xs = np.array(eyebrow_xs)[sorted_indices]
+                        sorted_ys = np.array(eyebrow_ys)[sorted_indices]
+                        
+                        # Create interpolation function (use quadratic if possible)
+                        try:
+                            if len(sorted_xs) >= 3:
+                                f = interp1d(sorted_xs, sorted_ys, kind='quadratic', 
+                                            bounds_error=False, fill_value='extrapolate')
+                            else:
+                                f = interp1d(sorted_xs, sorted_ys, kind='linear', 
+                                            bounds_error=False, fill_value='extrapolate')
+                            
+                            # Generate points along the curve
+                            for x in range(width):
+                                if x >= 0 and x < width:
+                                    # Calculate y position based on interpolated curve
+                                    # Adjust to be above eyebrows
+                                    curve_y = int(f(x)) - 15  # 15 pixels above eyebrows
+                                    
+                                    # Ensure it's within reasonable bounds 
+                                    # (not too high or too low)
+                                    max_y = top_y + bangs_bottom
+                                    curve_y = min(max_y, max(top_y, curve_y))
+                                    
+                                    # Update the y-position for this x-coordinate
+                                    y_points[x] = curve_y
+                        except Exception as e:
+                            print(f"Error creating curved boundary: {str(e)}")
+                            # Continue with default approach
+                
+                # Apply the calculated boundary
+                for x in range(width):
+                    # Get the boundary y-position for this column
+                    boundary_y = y_points[x]
+                    
+                    # Apply the mask from top to boundary
+                    if x < width and top_y < boundary_y and boundary_y < height:
+                        bangs_mask[top_y:boundary_y, x] = mask[top_y:boundary_y, x]
+            
+            except Exception as e:
+                print(f"Error creating curved bangs boundary: {str(e)}")
+                # Fall back to original approach
+                bangs_region = mask[top_y:min(top_y + bangs_bottom, height), :]
+                bangs_mask[top_y:min(top_y + bangs_bottom, height), :] = bangs_region
+        else:
+            # Original approach without landmarks - straight cutoff
+            bangs_region = mask[top_y:min(top_y + bangs_bottom, height), :]
+            bangs_mask[top_y:min(top_y + bangs_bottom, height), :] = bangs_region
+        
+        # Add a gradient for smoother transition
+        gradient_height = int(bangs_bottom * 0.4)  # Bottom 40% of bangs has gradient
+        gradient_start = min(top_y + bangs_bottom - gradient_height, height)
+        
+        for y in range(gradient_start, min(top_y + bangs_bottom, height)):
+            fade_ratio = 1.0 - ((y - gradient_start) / float(max(1, min(top_y + bangs_bottom, height) - gradient_start)))
+            fade_ratio = fade_ratio ** 0.8  # Adjust power for more gradual falloff
+            if y < bangs_mask.shape[0]:  # Safety check
+                bangs_mask[y, :] = (bangs_mask[y, :].astype(float) * fade_ratio).astype(np.uint8)
+        
+        # Apply slight Gaussian blur for smoother edges
+        bangs_mask = cv2.GaussianBlur(bangs_mask, (5, 5), 0)
+        
+        return bangs_mask
+
+    def _detect_hair_parting(self, mask, landmarks=None):
+        """
+        Detect and enhance the hair parting line in the mask.
+        
+        Args:
+            mask: Hair mask image
+            landmarks: Optional facial landmarks for guidance
+            
+        Returns:
+            tuple: (parting_line, enhanced_mask)
+        """
+        # Create copy of mask
+        enhanced_mask = mask.copy()
+        
+        # Ensure mask is grayscale
+        if len(mask.shape) > 2:
+            mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        else:
+            mask_gray = mask
+        
+        # Threshold mask to binary
+        _, binary_mask = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
+        
+        # Apply morphological operations to find potential parting
+        kernel = np.ones((3, 3), np.uint8)
+        eroded = cv2.erode(binary_mask, kernel, iterations=2)
+        
+        # Find difference (potential parting lines)
+        potential_parting = binary_mask - eroded
+        
+        # Use connected components to find the parting line
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(potential_parting)
+        
+        # If we have landmarks, use them to help identify the correct parting
+        parting_line = None
+        if landmarks is not None:
+            # Find the center line of the face
+            middle_points = [(landmarks[27][0], landmarks[27][1]),  # Nose bridge top
+                            (landmarks[30][0], landmarks[30][1])]  # Nose tip
+            
+            # Create a vertical line approximating face midline
+            face_midline_x = int(np.mean([p[0] for p in middle_points]))
+            
+            # Find component closest to this midline
+            best_dist = float('inf')
+            best_component = 0
+            
+            for i in range(1, num_labels):  # Skip background (0)
+                if stats[i, cv2.CC_STAT_AREA] < 20:  # Skip very small components
+                    continue
+                    
+                # Calculate distance to face midline
+                component_x = centroids[i][0]
+                dist = abs(component_x - face_midline_x)
+                
+                if dist < best_dist:
+                    best_dist = dist
+                    best_component = i
+            
+            if best_component > 0:
+                parting_mask = np.zeros_like(binary_mask)
+                parting_mask[labels == best_component] = 255
+                parting_line = parting_mask
+        else:
+            # Without landmarks, use the longest thin connected component in the upper part
+            best_length = 0
+            best_component = 0
+            
+            for i in range(1, num_labels):  # Skip background (0)
+                # Calculate length/width ratio
+                width = stats[i, cv2.CC_STAT_WIDTH]
+                height = stats[i, cv2.CC_STAT_HEIGHT]
+                area = stats[i, cv2.CC_STAT_AREA]
+                
+                # Skip components that are too small or too square
+                if area < 20 or min(width, height) == 0:
+                    continue
+                
+                length_ratio = max(width, height) / (min(width, height) + 1)
+                
+                # Check if component is in upper half
+                top = stats[i, cv2.CC_STAT_TOP]
+                if top < mask.shape[0] / 2 and length_ratio > 3 and length_ratio > best_length:
+                    best_length = length_ratio
+                    best_component = i
+            
+            if best_component > 0:
+                parting_mask = np.zeros_like(binary_mask)
+                parting_mask[labels == best_component] = 255
+                parting_line = parting_mask
+        
+        # If we found a parting line, enhance it in the mask
+        if parting_line is not None:
+            # Dilate the parting slightly to make it more visible
+            parting_enhanced = cv2.dilate(parting_line, kernel, iterations=1)
+            
+            # Create a blend of the original mask with a gap for the parting
+            parting_factor = 0.7  # Strength of the parting (lower value = more visible parting)
+            enhanced_mask = enhanced_mask * (1 - parting_enhanced/255 * (1-parting_factor))
+            enhanced_mask = enhanced_mask.astype(np.uint8)
+        
+        return parting_line, enhanced_mask
+
+    def _create_face_protection_mask(self, mask, landmarks, protection_strength):
+        """
+        Create a mask that protects facial features from being covered by bangs.
+        
+        Args:
+            mask: The original bangs mask
+            landmarks: Facial landmarks
+            protection_strength: Strength of the face protection (0.1 to 1.0)
+            
+        Returns:
+            numpy.ndarray: Modified mask with face protection
+        """
+        if landmarks is None or len(landmarks) < 68:
+            return mask
+            
+        # Create an empty mask for face protection
+        protection_mask = np.zeros_like(mask, dtype=np.float32)
+        
+        # Get key facial feature points
+        # Eyes
+        left_eye = np.array(landmarks[36:42])
+        right_eye = np.array(landmarks[42:48])
+        
+        # Eyebrows
+        left_eyebrow = np.array(landmarks[17:22])
+        right_eyebrow = np.array(landmarks[22:27])
+        
+        # Nose bridge
+        nose_bridge = np.array(landmarks[27:31])
+        
+        # Create protection zones
+        def create_protection_zone(points, radius, strength):
+            center = np.mean(points, axis=0).astype(np.int32)
+            y, x = np.ogrid[:mask.shape[0], :mask.shape[1]]
+            dist = np.sqrt((x - center[0])**2 + (y - center[1])**2)
+            
+            # Create a gradual falloff
+            falloff = np.clip(1 - (dist / radius), 0, 1)
+            falloff = falloff * strength
+            
+            return falloff
+        
+        # Add protection zones for each facial feature
+        # Stronger protection for eyes
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(left_eye, radius=30, 
+                                                       strength=protection_strength))
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(right_eye, radius=30, 
+                                                       strength=protection_strength))
+        
+        # Medium protection for eyebrows
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(left_eyebrow, radius=25, 
+                                                       strength=protection_strength * 0.8))
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(right_eyebrow, radius=25, 
+                                                       strength=protection_strength * 0.8))
+        
+        # Light protection for nose bridge
+        protection_mask = np.maximum(protection_mask, 
+                                   create_protection_zone(nose_bridge, radius=20, 
+                                                       strength=protection_strength * 0.6))
+        
+        # Smooth the protection mask
+        protection_mask = cv2.GaussianBlur(protection_mask, (15, 15), 0)
+        
+        # Invert and apply the protection mask to the original mask
+        protected_mask = mask.astype(np.float32) * (1 - protection_mask)
+        
+        # Convert back to uint8
+        protected_mask = np.clip(protected_mask, 0, 255).astype(np.uint8)
+        
+        return protected_mask
+
+    def _estimate_bangs_position(self, landmarks, height, width):
+        """
+        Estimates where bangs should be positioned based on facial landmarks.
+        
+        Args:
+            landmarks: Facial landmarks from the source image
+            height: Height of the image
+            width: Width of the image
+            
+        Returns:
+            dict: Contains estimated position information
+        """
+        if landmarks is None or len(landmarks) < 17:
+            # If no landmarks, use geometric center and top 20%
+            return {
+                'center_x': width // 2,
+                'top_y': int(height * 0.2),
+                'width': int(width * 0.4),
+                'height': int(height * 0.15)
+            }
+        
+        try:
+            # Get eyebrow positions
+            if len(landmarks) >= 27:
+                eyebrow_points = landmarks[17:27]  # Standard eyebrow landmarks
+                eyebrow_y = min([p[1] for p in eyebrow_points])
+                left_x = min([p[0] for p in eyebrow_points])
+                right_x = max([p[0] for p in eyebrow_points])
+            else:
+                # Fallback if eyebrow landmarks aren't available
+                # Use top of face
+                top_points = [landmarks[i] for i in range(min(8, len(landmarks)))]
+                eyebrow_y = min([p[1] for p in top_points]) + int(height * 0.1)
+                left_x = min([p[0] for p in top_points])
+                right_x = max([p[0] for p in top_points]) 
+            
+            # Calculate bangs parameters
+            center_x = (left_x + right_x) // 2
+            bangs_width = int((right_x - left_x) * 1.2)  # Make slightly wider than eyebrows
+            top_y = max(0, eyebrow_y - int(height * 0.15))  # Place above eyebrows
+            bangs_height = eyebrow_y - top_y
+            
+            return {
+                'center_x': center_x,
+                'top_y': top_y,
+                'width': bangs_width,
+                'height': bangs_height,
+                'eyebrow_y': eyebrow_y,
+                'left_x': left_x,
+                'right_x': right_x
+            }
+        
+        except Exception as e:
+            print(f"Error estimating bangs position: {str(e)}")
+            # Fallback to simple geometric positioning
+            return {
+                'center_x': width // 2,
+                'top_y': int(height * 0.2),
+                'width': int(width * 0.4),
+                'height': int(height * 0.15)
+            }
