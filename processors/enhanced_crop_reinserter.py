@@ -9,12 +9,11 @@ import numpy as np
 import re
 import json
 
-# Import specialized modules
+# Import hair processing modules
 from processors.hair_processing.bangs_processor import isolate_bangs_region, extend_bangs_area, create_face_protection_mask
 from processors.hair_processing.alignment import align_masks, apply_landmark_transform, apply_translation_only_transform
-from processors.hair_processing.blending import blend_images, alpha_blend, poisson_blend, feathered_blend, preserve_image_edges
+from processors.hair_processing.blending import blend_images
 from processors.hair_processing.landmarks import get_landmarks, estimate_bangs_position
-
 
 class EnhancedCropReinserter:
     """Reinserts processed regions back into original images, handling resolution differences."""
@@ -265,8 +264,29 @@ class EnhancedCropReinserter:
         # 3. Detect landmarks in source image (if available)
         source_landmarks = get_landmarks(source_img, self.face_detector, self.landmark_predictor) if hasattr(self, 'face_detector') else None
         
+        # Create a config dictionary for function parameters
+        config = {
+            'use_bangs_only': self.app.use_bangs_only.get(),
+            'extend_bangs': self.app.extend_bangs.get(),
+            'bangs_extension_amount': self.app.bangs_extension_amount.get(),
+            'bangs_width_ratio': self.app.bangs_width_ratio.get(),
+            'protect_face_from_bangs': self.app.protect_face_from_bangs.get(),
+            'face_protection_strength': self.app.face_protection_strength.get(),
+            'align_method': self.app.reinsert_alignment_method.get(),
+            'scale_x': self.app.reinsert_manual_scale_x.get(),
+            'scale_y': self.app.reinsert_manual_scale_y.get(),
+            'offset_x': self.app.reinsert_manual_offset_x.get(),
+            'offset_y': self.app.reinsert_manual_offset_y.get(),
+            'rotation': self.app.reinsert_manual_rotation.get() if hasattr(self.app, 'reinsert_manual_rotation') else 0.0,
+            'use_translation_only': self.app.use_translation_only.get() if hasattr(self.app, 'use_translation_only') else True,
+            'blend_mode': self.app.reinsert_blend_mode.get(),
+            'blend_extent': self.app.reinsert_blend_extent.get(),
+            'preserve_edges': self.app.reinsert_preserve_edges.get(),
+            'mask_only': self.app.reinsert_mask_only.get()
+        }
+        
         # 4. Process bangs if bangs-only mode is enabled
-        if self.app.use_bangs_only.get():
+        if config['use_bangs_only']:
             # If we have a source mask, use it for isolation as it's more accurate
             if source_mask is not None:
                 print("Using source mask for bangs isolation")
@@ -280,9 +300,9 @@ class EnhancedCropReinserter:
                 cv2.imwrite(os.path.join(debug_dir, "isolated_bangs_mask.png"), mask)
         
         # 5. Apply bangs extension if enabled
-        if self.app.extend_bangs.get() and mask is not None:
-            extension_amount = self.app.bangs_extension_amount.get()
-            width_ratio = self.app.bangs_width_ratio.get()
+        if config['extend_bangs'] and mask is not None:
+            extension_amount = config['bangs_extension_amount']
+            width_ratio = config['bangs_width_ratio']
             min_opacity = max(0.5, 0.9 - (extension_amount / 100.0))
             
             # Save pre-extension mask if debugging
@@ -303,8 +323,8 @@ class EnhancedCropReinserter:
                 cv2.imwrite(os.path.join(debug_dir, "extended_bangs_mask.png"), mask)
         
         # 6. Apply face protection if enabled
-        if self.app.protect_face_from_bangs.get() and source_landmarks is not None:
-            protection_strength = self.app.face_protection_strength.get()
+        if config['protect_face_from_bangs'] and source_landmarks is not None:
+            protection_strength = config['face_protection_strength']
             mask = create_face_protection_mask(mask, source_landmarks, protection_strength)
             
             # Save face-protected mask if debugging
@@ -317,53 +337,51 @@ class EnhancedCropReinserter:
             mask = cv2.resize(mask, (source_w, source_h), interpolation=cv2.INTER_LINEAR)
         
         # 8. Apply transformations (alignment, scaling, rotation, offset)
-        # Get transformation parameters
-        params = {
-            'align_method': self.app.reinsert_alignment_method.get(),
-            'scale_x': self.app.reinsert_manual_scale_x.get(),
-            'scale_y': self.app.reinsert_manual_scale_y.get(),
-            'offset_x': self.app.reinsert_manual_offset_x.get(),
-            'offset_y': self.app.reinsert_manual_offset_y.get(),
-            'rotation': self.app.reinsert_manual_rotation.get() if hasattr(self.app, 'reinsert_manual_rotation') else 0.0,
-            'use_translation_only': self.app.use_translation_only.get() if hasattr(self.app, 'use_translation_only') else True
+        # Create manual parameter dictionary for alignment functions
+        manual_params = {
+            'scale_x': config['scale_x'],
+            'scale_y': config['scale_y'],
+            'offset_x': config['offset_x'],
+            'offset_y': config['offset_y'],
+            'rotation': config['rotation']
         }
         
         # First align the mask if needed
         aligned_mask = mask
         aligned_img = processed_img
         
-        if params['align_method'] != 'none':
-            if params['align_method'] == 'landmarks' and source_landmarks is not None:
+        if config['align_method'] != 'none':
+            if config['align_method'] == 'landmarks' and source_landmarks is not None:
                 # Create a set of processed landmarks based on geometric estimation
-                processed_landmarks = get_landmarks(processed_img)
+                processed_landmarks = get_landmarks(processed_img, self.face_detector, self.landmark_predictor)
                 
                 # Apply landmark-based alignment
-                if params['use_translation_only']:
+                if config['use_translation_only']:
                     aligned_mask, aligned_img = apply_translation_only_transform(
                         source_img, processed_img, source_mask, mask,
-                        source_landmarks, processed_landmarks, params, debug_dir
+                        source_landmarks, processed_landmarks, manual_params, debug_dir
                     )
                 else:
                     aligned_mask, aligned_img = apply_landmark_transform(
                         source_img, processed_img, source_mask, mask,
-                        source_landmarks, processed_landmarks, params, debug_dir
+                        source_landmarks, processed_landmarks, manual_params, debug_dir
                     )
             else:
                 # Use standard alignment methods
                 aligned_mask, aligned_img = align_masks(
                     source_mask, mask, source_img, processed_img, 
-                    params['align_method'], debug_dir
+                    config['align_method'], debug_dir
                 )
         
         # 9. Apply blending
         blend_params = {
-            'mode': self.app.reinsert_blend_mode.get(),
-            'extent': self.app.reinsert_blend_extent.get(),
-            'preserve_edges': self.app.reinsert_preserve_edges.get()
+            'mode': config['blend_mode'],
+            'extent': config['blend_extent'],
+            'preserve_edges': config['preserve_edges']
         }
         
         # Blend the images
-        if self.app.reinsert_mask_only.get():
+        if config['mask_only']:
             # Mask-only mode: only blend the masked regions
             result_img = blend_images(source_img, aligned_img, aligned_mask, blend_params)
         else:
