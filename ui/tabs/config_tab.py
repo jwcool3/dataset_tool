@@ -861,7 +861,7 @@ class ConfigTab:
         blend_combo = ttk.Combobox(
             blend_frame,
             textvariable=self.parent.reinsert_blend_mode,
-            values=["alpha", "poisson", "feathered", "hybrid"],
+            values=["alpha", "poisson", "feathered"],
             width=15,
             state="readonly"
         )
@@ -981,10 +981,9 @@ class ConfigTab:
         explanation_frame.pack(fill=tk.X, pady=5, padx=5)
         
         explanation_text = (
-            "• Use 'alpha' for simple transparent blending\n"
-            "• Use 'poisson' when you want seamless texture integration\n"
-            "• Use 'feathered' for smooth transitions between original and new hair\n"
-            "• Use 'hybrid' for best results combining poisson and feathered methods\n"
+            "• Use 'centroid' alignment when hair shape is similar but positioned differently\n"
+            "• Use 'bbox' alignment when dealing with very different hair sizes\n"
+            "• 'feathered' blending helps smooth transitions between original and new hair\n"
             "• Increase 'Blend Extent' for more gradual blending at mask edges\n"
             "• Try different alignment methods if hair positioning seems off"
         )
