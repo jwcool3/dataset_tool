@@ -21,5 +21,6 @@ __all__ = [
     'SquarePadder',
     'CropReinserter',
     'MaskExpander',
-    'EnhancedCropReinserter'  # Add to __all__
+    'EnhancedCropReinserter',
+    'HairProcessing'
 ]
