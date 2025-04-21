@@ -577,72 +577,14 @@ class EnhancedCropReinserter:
             best_dx = 0
             best_dy = 0
             
-            # Optimize performance by downsampling for initial alignment
-            # This drastically reduces computation time while maintaining accuracy
-            scale_factor = 0.25  # Use 1/2 resolution for initial search
-            small_source_mask = cv2.resize(source_mask_bin, None, fx=scale_factor, fy=scale_factor, 
-                                          interpolation=cv2.INTER_NEAREST)
-            small_processed_mask = cv2.resize(processed_mask, None, fx=scale_factor, fy=scale_factor, 
-                                             interpolation=cv2.INTER_NEAREST)
-            _, small_processed_mask_bin = cv2.threshold(small_processed_mask, 127, 255, cv2.THRESH_BINARY)
-            
-            # Calculate smaller dimensions for the downsampled search
-            small_h, small_w = small_source_mask.shape[:2]
-            
             # Use adaptive search range based on image size
-            max_shift = min(w, h) // 4  # 12.5% of image dimension
-            small_max_shift = int(max_shift * scale_factor)  # Scale down the shift range
+            max_shift = min(w, h) // 10  # 10% of image dimension
             
-            # First do a coarse grid search on downsampled masks
-            step_size = max(1, small_max_shift // 4)
-            
-            # Pre-calculate masks for vectorized operations
-            small_source_bool = small_source_mask > 0
-
-            # Track when we're not improving to potentially early stop
-            no_improvement_count = 0
-            
-            for dx in range(-small_max_shift, small_max_shift + 1, step_size):
-                # Early stopping if we're not seeing improvements
-                if no_improvement_count > 10:  # Stop after 10 iterations without improvement
-                    break
-                    
-                for dy in range(-small_max_shift, small_max_shift + 1, step_size):
-                    # Shift the mask using numpy's roll function - much faster than transformation
-                    shifted_mask_bool = np.roll(np.roll(small_processed_mask_bin > 0, dx, axis=1), dy, axis=0)
-                    
-                    # Calculate IoU using vectorized operations
-                    intersection = np.logical_and(small_source_bool, shifted_mask_bool).sum()
-                    union = np.logical_or(small_source_bool, shifted_mask_bool).sum()
-                    iou = intersection / union if union > 0 else 0
-                    
-                    # Update best if improved
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_dx = dx
-                        best_dy = dy
-                        no_improvement_count = 0
-                    else:
-                        no_improvement_count += 1
-            
-            # Scale up the shifts back to original resolution
-            best_dx = int(best_dx / scale_factor)
-            best_dy = int(best_dy / scale_factor)
-            
-            # Then fine-tune around the best coarse result at full resolution
-            fine_range = max(1, step_size // 5)
-            fine_step = 1  # Use smaller steps for fine-tuning
-            best_fine_iou = 0
-            
-            # Cache the binary source mask for faster operations
-            source_mask_bool = source_mask_bin > 0
-            
-            # Limit the fine-tuning search area
-            dx_range = range(max(-max_shift, best_dx - fine_range), min(max_shift + 1, best_dx + fine_range + 1), fine_step)
-            dy_range = range(max(-max_shift, best_dy - fine_range), min(max_shift + 1, best_dy + fine_range + 1), fine_step)
-            
-            for dx in dx_range:
-                for dy in dy_range:
+            # Use coarse-to-fine approach for efficiency
+            # First do a coarse grid search
+            step_size = max(1, max_shift // 5)
+            for dx in range(-max_shift, max_shift + 1, step_size):
+                for dy in range(-max_shift, max_shift + 1, step_size):
                     # Create translation parameters
                     test_params = {'translation': (dx, dy)}
                     
@@ -655,22 +597,53 @@ class EnhancedCropReinserter:
                     
                     # Threshold the shifted mask for IoU calculation
                     _, shifted_mask_bin = cv2.threshold(shifted_mask, 127, 255, cv2.THRESH_BINARY)
-                    shifted_mask_bool = shifted_mask_bin > 0
                     
-                    # Calculate IoU using vectorized operations
-                    intersection = np.logical_and(source_mask_bool, shifted_mask_bool).sum()
-                    union = np.logical_or(source_mask_bool, shifted_mask_bool).sum()
+                    # Calculate IoU
+                    intersection = np.logical_and(source_mask_bin > 0, shifted_mask_bin > 0).sum()
+                    union = np.logical_or(source_mask_bin > 0, shifted_mask_bin > 0).sum()
                     iou = intersection / union if union > 0 else 0
                     
                     # Update best if improved
-                    if iou > best_fine_iou:
-                        best_fine_iou = iou
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_dx = dx
+                        best_dy = dy
+            
+            # Then fine-tune around the best coarse result
+            fine_range = step_size
+            for dx in range(best_dx - fine_range, best_dx + fine_range + 1):
+                for dy in range(best_dy - fine_range, best_dy + fine_range + 1):
+                    # Skip if we already tested this in coarse phase
+                    if dx % step_size == 0 and dy % step_size == 0 and not (dx == best_dx and dy == best_dy):
+                        continue
+                        
+                    # Create translation parameters
+                    test_params = {'translation': (dx, dy)}
+                    
+                    # Apply translation to get shifted mask
+                    _, shifted_mask = self._apply_transformation(
+                        processed_img,
+                        processed_mask,
+                        test_params
+                    )
+                    
+                    # Threshold the shifted mask for IoU calculation
+                    _, shifted_mask_bin = cv2.threshold(shifted_mask, 127, 255, cv2.THRESH_BINARY)
+                    
+                    # Calculate IoU
+                    intersection = np.logical_and(source_mask_bin > 0, shifted_mask_bin > 0).sum()
+                    union = np.logical_or(source_mask_bin > 0, shifted_mask_bin > 0).sum()
+                    iou = intersection / union if union > 0 else 0
+                    
+                    # Update best if improved
+                    if iou > best_iou:
+                        best_iou = iou
                         best_dx = dx
                         best_dy = dy
             
             # Set best translation parameters
             transformation_params['translation'] = (best_dx, best_dy)
-            print(f"IoU alignment found optimal shift: ({best_dx}, {best_dy}) with IoU: {best_fine_iou:.4f}")
+            print(f"IoU alignment found optimal shift: ({best_dx}, {best_dy}) with IoU: {best_iou:.4f}")
         
         # Apply the determined transformation
         aligned_img, aligned_mask = self._apply_transformation(
@@ -720,62 +693,63 @@ class EnhancedCropReinserter:
         
         return aligned_mask, aligned_img
     
+    # Improved blending methods
     def _alpha_blend(self, source_img, processed_img, mask, blend_extent=0):
         """
-        Perform basic alpha blending between two images using a mask.
+        Perform alpha blending with optional feathering.
+        Vectorized implementation for better performance.
         
         Args:
             source_img: Original source image
             processed_img: Processed image to blend
             mask: Blending mask
-            blend_extent: How much to feather the blend
+            blend_extent: Extent of feathering (0 = no feathering)
         
         Returns:
             numpy.ndarray: Blended image
         """
-        # Prevent black outline issues by applying morphological operations
-        kernel = np.ones((3, 3), np.uint8)
-        cleaned_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        # Ensure all inputs have the same size
+        h, w = source_img.shape[:2]
+        if processed_img.shape[:2] != (h, w):
+            processed_img = cv2.resize(processed_img, (w, h), interpolation=cv2.INTER_LANCZOS4)
         
-        # Create a float version of the mask for blending
-        mask_float = cleaned_mask.astype(np.float32) / 255.0
+        if mask.shape[:2] != (h, w):
+            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
         
-        # Apply feathering at the edges if requested
+        # Create alpha mask
+        mask_float = mask.astype(np.float32) / 255.0
+        
+        # Apply feathering if blend_extent > 0
         if blend_extent > 0:
-            # Create a border mask for feathering
-            dilated = cv2.dilate(cleaned_mask, np.ones((blend_extent, blend_extent), np.uint8))
-            eroded = cv2.erode(cleaned_mask, np.ones((blend_extent//2, blend_extent//2), np.uint8))
-            border = cv2.subtract(dilated, eroded)
+            # Create feathering kernel
+            kernel = np.ones((blend_extent, blend_extent), np.uint8)
+        
+            # Create dilation and border regions
+            dilated = cv2.dilate(mask, kernel, iterations=1)
+            border = cv2.bitwise_and(dilated, cv2.bitwise_not(mask))
             
-            # Create a gradual falloff at the borders
-            border_float = border.astype(np.float32) / 255.0
-            feathered_border = cv2.GaussianBlur(border_float, (blend_extent*2+1, blend_extent*2+1), blend_extent/2)
+            # Create distance map for feathering
+            dist = cv2.distanceTransform(cv2.bitwise_not(border), cv2.DIST_L2, 3)
+            dist[dist > blend_extent] = blend_extent
             
-            # Apply feathering only at the borders
-            mask_float = mask_float * (1 - border_float) + mask_float * feathered_border * border_float
-        
-        # Convert to 3-channel for blending
-        mask_3ch = np.stack([mask_float] * 3, axis=2)
-        
-        # Perform the blend
-        result = source_img.astype(np.float32) * (1.0 - mask_3ch) + processed_img.astype(np.float32) * mask_3ch
-        
-        # Apply bilateral filter at the edge to prevent artifacts
-        border_mask = cv2.dilate(cleaned_mask, kernel, iterations=2) - cv2.erode(cleaned_mask, kernel, iterations=2)
-        if np.any(border_mask > 0):
-            # Apply bilateral filter to entire image
-            filtered = cv2.bilateralFilter(result.astype(np.uint8), 9, 75, 75)
+            # Normalize distances
+            feather = dist / blend_extent
             
-            # Apply filtered version only at borders
-            border_3ch = np.stack([border_mask > 0] * 3, axis=2)
-            result = np.where(border_3ch, filtered, result)
+            # Create alpha mask with feathering
+            mask_float[border > 0] = 1.0 - feather[border > 0]
         
-        return np.clip(result, 0, 255).astype(np.uint8)
+        # Create 3-channel mask for vectorized blending
+        mask_float_3d = np.stack([mask_float] * 3, axis=2)
+        
+        # Apply blending with vectorized operations
+        result_img = source_img.astype(np.float32) * (1 - mask_float_3d) + processed_img.astype(np.float32) * mask_float_3d
+        
+        return np.clip(result_img, 0, 255).astype(np.uint8)
 
     def _poisson_blend(self, source_img, processed_img, mask):
         """
-        Perform advanced blending with custom gradient-domain approach.
-        Specifically designed for hair blending with challenging masks.
+        Perform Poisson blending for seamless integration.
+        Enhanced with better error handling and center point selection.
         
         Args:
             source_img: Original source image
@@ -793,143 +767,52 @@ class EnhancedCropReinserter:
         if mask.shape[:2] != (h, w):
             mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
         
-        # Clean up the mask to prevent black outlines
-        kernel = np.ones((3, 3), np.uint8)
-        cleaned_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        
-        # Create a simple alpha blend as a starting point - this preserves sharpness
-        mask_norm = cleaned_mask.astype(np.float32) / 255.0
-        mask_3ch = np.stack([mask_norm] * 3, axis=2)
-        alpha_blend = source_img.astype(np.float32) * (1 - mask_3ch) + processed_img.astype(np.float32) * mask_3ch
-        
-        # Create a high-quality feathered blend as our fallback
-        fallback_result = self._feathered_blend(source_img, processed_img, cleaned_mask, blend_extent=10)
-        
-        # Detect any black pixles in the processed image within the mask area
-        dark_pixels = np.zeros_like(cleaned_mask)
-        dark_condition = (
-            (processed_img[:,:,0] < 30) & 
-            (processed_img[:,:,1] < 30) & 
-            (processed_img[:,:,2] < 30)
-        )
-        dark_pixels[(cleaned_mask > 127) & dark_condition] = 255
-        
-        # If we have significant dark pixels in the mask, use color from nearby non-dark pixels
-        if np.sum(dark_pixels > 0) > 100:  # Arbitrary threshold for "significant"
-            print("Fixing dark pixels in mask area")
-            
-            # Create a slightly larger mask for sampling colors
-            sample_mask = cv2.dilate(cleaned_mask, kernel, iterations=2)
-            
-            # Find non-dark pixels in the sample area
-            valid_colors = processed_img[(sample_mask > 127) & ~dark_condition]
-            
-            if len(valid_colors) > 0:
-                # Use average color of non-dark pixels
-                avg_color = np.mean(valid_colors, axis=0).astype(np.uint8)
-                
-                # Replace dark pixels with this color
-                for ch in range(3):
-                    processed_img[:,:,ch] = np.where(
-                        (cleaned_mask > 127) & dark_condition,
-                        avg_color[ch],
-                        processed_img[:,:,ch]
-                    )
-        
         try:
-            # Create a narrow transition region where we'll focus our blending
-            # This helps keep the rest of the image sharp
-            dilated_mask = cv2.dilate(cleaned_mask, kernel, iterations=2)
-            eroded_mask = cv2.erode(cleaned_mask, kernel, iterations=2)
-            boundary_mask = cv2.subtract(dilated_mask, eroded_mask)
+            # Ensure mask is uint8
+            mask_uint8 = mask.astype(np.uint8)
             
-            # Create a smooth transition mask
-            transition_mask = cv2.GaussianBlur(boundary_mask.astype(np.float32) / 255.0, (15, 15), 5.0)
+            # Dilate mask slightly to ensure better blending
+            kernel = np.ones((3, 3), np.uint8)
+            mask_uint8 = cv2.dilate(mask_uint8, kernel, iterations=1)
             
-            # Enhanced edge preservation (only process the hair boundaries)
-            try:
-                # Binary mask for the final boundary region
-                _, binary_mask = cv2.threshold(cleaned_mask, 127, 255, cv2.THRESH_BINARY)
+            # Find center of mask
+            moments = cv2.moments(mask_uint8)
+            
+            if moments["m00"] > 0:
+                center_x = int(moments["m10"] / moments["m00"])
+                center_y = int(moments["m01"] / moments["m00"])
                 
-                # Find boundary only by dilating and subtracting
-                boundary_only = cv2.subtract(
-                    cv2.dilate(binary_mask, kernel, iterations=3),
-                    cv2.erode(binary_mask, kernel, iterations=1)
-                )
+                # Ensure center is in a valid region (at least some distance from edges)
+                center_x = np.clip(center_x, w//10, w*9//10)
+                center_y = np.clip(center_y, h//10, h*9//10)
                 
-                # Create a normalized mask for the transition region
-                boundary_float = boundary_only.astype(np.float32) / 255.0
+                center = (center_x, center_y)
                 
-                # Create a very localized transition band (10-15 pixels around hair edge)
-                edge_blend_mask = cv2.GaussianBlur(boundary_float, (9, 9), 3.0)
-                edge_blend_mask_3ch = np.stack([edge_blend_mask] * 3, axis=2)
-                
-                # Create center and contour for seamless cloning attempt
-                contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if contours and len(contours) > 0:
-                    # Find largest contour by area
-                    largest_contour = max(contours, key=cv2.contourArea)
-                    
-                    # Get moments for centroid
-                    M = cv2.moments(largest_contour)
-                    if M["m00"] > 0:
-                        center_x = int(M["m10"] / M["m00"])
-                        center_y = int(M["m01"] / M["m00"])
-                        
-                        # Create a safe center point
-                        center_x = max(w//6, min(w*5//6, center_x))
-                        center_y = max(h//6, min(h*5//6, center_y))
-                        
-                        # Try OpenCV's mixed clone with a more conservative mask
-                        working_mask = cv2.erode(binary_mask, kernel, iterations=1)
-                        
-                        try:
-                            # Try seamless cloning just at the hair region
-                            clone_result = cv2.seamlessClone(
-                                processed_img,
-                                source_img,
-                                working_mask,
-                                (center_x, center_y),
-                                cv2.MIXED_CLONE
-                            )
-                            
-                            # Only blend the seamless clone at the edges to preserve sharpness
-                            # This is critical - limit the blending effect to just the boundary
-                            blended_edges = source_img.astype(np.float32) * (1 - edge_blend_mask_3ch) + \
-                                           clone_result.astype(np.float32) * edge_blend_mask_3ch
-                            
-                            # Final merge: use the raw alpha blend where mask is definite yes/no
-                            # Use the edge-enhanced blend only at the boundary region
-                            final_blend = alpha_blend * (1 - edge_blend_mask_3ch * 0.8) + \
-                                          blended_edges * edge_blend_mask_3ch * 0.8
-                            
-                            # Return the result with properly constrained values
-                            return np.clip(final_blend, 0, 255).astype(np.uint8)
-                        except Exception as e:
-                            print(f"Seamless clone failed: {str(e)}")
-            
-            except Exception as e:
-                print(f"Enhanced edge processing failed: {str(e)}")
-            
-            # If all else fails, our original alpha blend was sharp, 
-            # just enhance the edges a bit with the fallback
-            transition_mask_3ch = np.stack([transition_mask] * 3, axis=2)
-            result = alpha_blend * (1 - transition_mask_3ch * 0.5) + \
-                     fallback_result.astype(np.float32) * transition_mask_3ch * 0.5
-            
-            return np.clip(result, 0, 255).astype(np.uint8)
+                # Make sure mask has non-zero values
+                if np.any(mask_uint8 > 0):
+                    # Apply seamless cloning
+                    result_img = cv2.seamlessClone(
+                        processed_img, source_img, mask_uint8, center, cv2.NORMAL_CLONE
+                    )
+                    return result_img
+                else:
+                    print("Warning: Mask has no non-zero values for Poisson blending")
+            else:
+                print("Warning: Could not calculate moments for Poisson blending")
                 
         except Exception as e:
-            print(f"Advanced blending failed: {str(e)}")
+            print(f"Poisson blending failed: {str(e)}")
             import traceback
             traceback.print_exc()
         
-        # Fallback to a simple feathered blend - still preserves most sharpness
-        return fallback_result
+        # Fallback to alpha blending
+        print("Falling back to alpha blending")
+        return self._alpha_blend(source_img, processed_img, mask, blend_extent=5)
 
     def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
         """
-        Perform feathered blending with improved anti-aliasing and artifact prevention.
+        Perform feathered blending with gradual transition.
+        Enhanced with multi-stage blending for better hair edges.
         
         Args:
             source_img: Original source image
@@ -938,7 +821,7 @@ class EnhancedCropReinserter:
             blend_extent: Extent of feathering
         
         Returns:
-            numpy.ndarray: Blended image with smooth transitions
+            numpy.ndarray: Blended image
         """
         # Ensure all inputs have the same size
         h, w = source_img.shape[:2]
@@ -948,113 +831,82 @@ class EnhancedCropReinserter:
         if mask.shape[:2] != (h, w):
             mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
         
-        # Apply morphological closing to remove black outline issues
-        kernel = np.ones((3, 3), np.uint8)
-        cleaned_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        # Convert mask to binary
+        _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
-        # Check for and fix black pixels in the mask area
-        dark_pixels = np.zeros_like(cleaned_mask)
-        dark_condition = (
-            (processed_img[:,:,0] < 30) & 
-            (processed_img[:,:,1] < 30) & 
-            (processed_img[:,:,2] < 30)
-        )
-        dark_pixels[(cleaned_mask > 127) & dark_condition] = 255
+        # Create distance transforms
+        dist_inside = cv2.distanceTransform(binary_mask, cv2.DIST_L2, 3)
+        dist_outside = cv2.distanceTransform(255 - binary_mask, cv2.DIST_L2, 3)
         
-        if np.sum(dark_pixels > 0) > 50:  # Significant dark pixels found
-            print("ANTI-BLACK-OUTLINE: Fixing dark pixels in mask area for feathered blend")
-            
-            # Create a modified processed image with dark pixels replaced
-            fixed_processed_img = processed_img.copy()
-            
-            # Create a slightly dilated mask for sampling colors
-            sample_mask = cv2.dilate(cleaned_mask, kernel, iterations=3)
-            
-            # Find non-dark pixels in the expanded mask area
-            valid_sample = (sample_mask > 127) & ~dark_condition
-            if np.any(valid_sample):
-                # Sample colors from non-dark pixels in the mask area
-                valid_colors = processed_img[valid_sample]
-                if len(valid_colors) > 0:
-                    # Use average color of valid pixels
-                    avg_color = np.mean(valid_colors, axis=0).astype(np.uint8)
-                    
-                    # Replace dark pixels with this color
-                    dark_area = (cleaned_mask > 127) & dark_condition
-                    fixed_processed_img[dark_area] = avg_color
-                    
-                    # Use the fixed image for blending
-                    processed_img = fixed_processed_img
+        # Create alpha values based on distance
+        alpha = np.ones_like(dist_inside, dtype=np.float32)
         
-        # Ensure mask consistency with threshold
-        _, binary_mask = cv2.threshold(cleaned_mask, 127, 255, cv2.THRESH_BINARY)
+        # Inside mask: fade from 1.0 at center to 0.5 at border
+        fade_inside = np.clip(dist_inside / blend_extent, 0, 1)
+        alpha = 0.5 + 0.5 * fade_inside
         
-        # For a clean blend, first create an anti-aliased mask
-        anti_aliased_mask = cv2.GaussianBlur(binary_mask, (3, 3), 0.8)
-        mask_float = anti_aliased_mask.astype(np.float32) / 255.0
+        # Outside mask: fade from 0.5 at border to 0.0 outside
+        fade_outside = np.clip(1.0 - dist_outside / blend_extent, 0, 1)
+        outside_region = (binary_mask == 0)
+        alpha[outside_region] = fade_outside[outside_region] * 0.5
         
-        # Build a clean inner region and a well-defined border region
-        inner_kernel = np.ones((3, 3), np.uint8)
-        outer_kernel = np.ones((blend_extent, blend_extent), np.uint8)
-        
-        # Identify inner solid region and outer border region 
-        inner_region = cv2.erode(binary_mask, inner_kernel, iterations=1)
-        outer_region = cv2.dilate(binary_mask, outer_kernel, iterations=1)
-        
-        # Border is everything between inner and outer
-        border_region = cv2.subtract(outer_region, inner_region)
-        
-        # Convert to floating point for math operations
-        inner_float = inner_region.astype(np.float32) / 255.0
-        border_float = border_region.astype(np.float32) / 255.0
-        
-        # Process the border region with distance transforms
-        if np.any(border_region > 0):
-            # Create distance maps from inner and outer boundaries
-            dist_from_inner = cv2.distanceTransform(cv2.bitwise_not(inner_region), cv2.DIST_L2, 3)
-            dist_from_outer = cv2.distanceTransform(outer_region, cv2.DIST_L2, 3)
-            
-            # Normalize distances based on blend extent
-            max_dist = blend_extent + 1
-            # 1.0 at inner edge, decreasing outward
-            inner_factor = np.clip(1.0 - (dist_from_inner / max_dist), 0, 1)
-            # 1.0 at outer edge, decreasing inward
-            outer_factor = np.clip(1.0 - (dist_from_outer / max_dist), 0, 1)
-            
-            # Border alpha combines both distance factors for a smooth transition
-            border_alpha = inner_factor * outer_factor
-            border_alpha = border_alpha * border_float  # Mask to border region only
-            
-            # Clean up the border alpha with a small blur for smoothness
-            border_alpha = cv2.GaussianBlur(border_alpha, (3, 3), 0.5)
-            
-            # Combine inner region (alpha=1.0) with border region (alpha=gradient)
-            alpha = inner_float + border_alpha
-        else:
-            # If no border region (e.g., very small blend_extent), just use the anti-aliased mask
-            alpha = mask_float
-        
-        # Create 3-channel alpha for blending
+        # Create 3-channel alpha
         alpha_3d = np.stack([alpha] * 3, axis=2)
         
-        # Apply the blend
+        # Try to use edge-preserving filtering on the alpha mask
+        try:
+            # Convert images to grayscale for edge detection
+            gray_source = cv2.cvtColor(source_img, cv2.COLOR_BGR2GRAY) if len(source_img.shape) == 3 else source_img
+            gray_processed = cv2.cvtColor(processed_img, cv2.COLOR_BGR2GRAY) if len(processed_img.shape) == 3 else processed_img
+            
+            # Detect edges in both images
+            edges_source = cv2.Canny(gray_source, 50, 150)
+            edges_processed = cv2.Canny(gray_processed, 50, 150)
+            
+            # Combine edges
+            combined_edges = cv2.bitwise_or(edges_source, edges_processed)
+            
+            # Dilate edges slightly
+            kernel = np.ones((3, 3), np.uint8)
+            combined_edges = cv2.dilate(combined_edges, kernel, iterations=1)
+            
+            # Adjust alpha at edges - prefer source image at source edges and processed at processed edges
+            for y in range(h):
+                for x in range(w):
+                    if edges_source[y, x] > 0 and binary_mask[y, x] > 0:
+                        # Source edge inside mask - reduce alpha to show more of source
+                        alpha_3d[y, x] *= 0.3
+                    elif edges_processed[y, x] > 0 and binary_mask[y, x] > 0:
+                        # Processed edge inside mask - increase alpha to show more of processed
+                        alpha_3d[y, x] = min(alpha_3d[y, x] * 1.5, 1.0)
+        except Exception as e:
+            print(f"Edge-preserving adjustment failed: {str(e)}")
+        
+        # Blend images
         result_img = source_img.astype(np.float32) * (1 - alpha_3d) + processed_img.astype(np.float32) * alpha_3d
+        result_img = np.clip(result_img, 0, 255).astype(np.uint8)
         
-        # Apply a final edge-preserving filter at the border for quality
-        # This helps with fine details like individual hair strands
-        border_region_3d = np.stack([border_float] * 3, axis=2)
+        # Apply bilateral filter to smooth color transitions while preserving edges
+        try:
+            # Create a mask of the transition area
+            transition_mask = np.zeros_like(mask)
+            transition_mask[(alpha > 0.1) & (alpha < 0.9)] = 255
+            
+            # Apply bilateral filter only to the transition area
+            if np.any(transition_mask > 0):
+                # Make a copy of the result
+                filtered_result = result_img.copy()
+                
+                # Apply bilateral filter
+                filtered_result = cv2.bilateralFilter(result_img, d=9, sigmaColor=20, sigmaSpace=7)
+                
+                # Only copy the filtered pixels in the transition area
+                transition_mask_3d = np.stack([transition_mask > 0] * 3, axis=2)
+                result_img[transition_mask_3d] = filtered_result[transition_mask_3d]
+        except Exception as e:
+            print(f"Bilateral filtering failed: {str(e)}")
         
-        if np.any(border_region > 0):
-            # Apply bilateral filter to smooth edges while preserving detail
-            try:
-                filtered_result = cv2.bilateralFilter(result_img.astype(np.uint8), 9, 75, 75)
-                # Blend the filtered result only at the border region
-                result_img = result_img * (1 - border_region_3d * 0.7) + filtered_result.astype(np.float32) * border_region_3d * 0.7
-            except Exception as e:
-                print(f"Edge filtering failed: {str(e)}")
-        
-        # Final output
-        return np.clip(result_img, 0, 255).astype(np.uint8)
+        return result_img
 
     def _preserve_image_edges(self, source_img, result_img, mask):
         """
@@ -1245,7 +1097,7 @@ class EnhancedCropReinserter:
         top_y = np.min(mask_points[:, 0]) if len(mask_points) > 0 else 0
         
         # Define bangs height as a percentage of the image height
-        bangs_height = int(height * 0.30)  # Top 25% of the mask
+        bangs_height = int(height * 0.25)  # Top 25% of the mask
         bangs_bottom = min(height, top_y + bangs_height)
         
         # Find horizontal extent of mask at the top portion
@@ -1470,403 +1322,6 @@ class EnhancedCropReinserter:
         
         return protected_mask
     
-    def _ensure_full_mask_coverage(self, source_mask, processed_mask, aligned_mask):
-        """
-        Ensure the aligned mask fully covers the source mask to avoid black gaps in hair.
-        
-        Args:
-            source_mask: Mask from source image
-            processed_mask: Mask from processed image
-            aligned_mask: Mask after alignment
-            
-        Returns:
-            numpy.ndarray: Fixed mask with full coverage
-        """
-        if source_mask is None or aligned_mask is None:
-            return aligned_mask
-            
-        # Create binary versions of masks with lower threshold to capture more area
-        _, source_bin = cv2.threshold(source_mask, 10, 255, cv2.THRESH_BINARY)
-        _, aligned_bin = cv2.threshold(aligned_mask, 10, 255, cv2.THRESH_BINARY) 
-        
-        # Find gaps in coverage
-        gaps = cv2.bitwise_and(source_bin, cv2.bitwise_not(aligned_bin))
-        
-        # If no gaps, return the original
-        if not np.any(gaps > 0):
-            return aligned_mask
-        
-        # Create a dilated version of the aligned mask to fill small gaps
-        kernel = np.ones((5, 5), np.uint8)
-        dilated_mask = cv2.dilate(aligned_bin, kernel, iterations=2)
-        
-        # Fill gaps with the dilated mask
-        filled_mask = cv2.bitwise_or(aligned_mask, cv2.bitwise_and(dilated_mask, gaps))
-        
-        # Additional step: Ensure no thin dark lines at boundaries by applying a morphological closing
-        # This specifically targets the black outlines issue
-        closing_kernel = np.ones((3, 3), np.uint8)
-        filled_mask = cv2.morphologyEx(filled_mask, cv2.MORPH_CLOSE, closing_kernel)
-        
-        # Gaussian blur the edges very slightly to avoid pixelated outlines
-        # Create a border-only mask
-        mask_border = cv2.dilate(filled_mask, np.ones((3, 3), np.uint8)) - filled_mask
-        
-        # Apply slight blur only to the border
-        filled_mask_float = filled_mask.astype(np.float32)
-        border_blur = cv2.GaussianBlur(filled_mask.astype(np.float32), (3, 3), 0.5)
-        
-        # Only use blurred values for the border regions
-        filled_mask_float[mask_border > 0] = border_blur[mask_border > 0]
-        
-        # Convert back to uint8
-        return filled_mask_float.astype(np.uint8)
-
-    def _fill_mask_gaps_aggressive(self, source_mask, processed_mask, aligned_mask):
-        """
-        Aggressively fill mask gaps with a more complex approach.
-        This is used when the standard gap filling doesn't provide sufficient coverage.
-        
-        Args:
-            source_mask: Original source mask
-            processed_mask: Processed image mask
-            aligned_mask: Current aligned mask with gaps
-            
-        Returns:
-            numpy.ndarray: Enhanced mask with gaps filled
-        """
-        if source_mask is None or aligned_mask is None:
-            return aligned_mask
-            
-        # Create binary versions of masks
-        _, source_bin = cv2.threshold(source_mask, 20, 255, cv2.THRESH_BINARY)
-        _, aligned_bin = cv2.threshold(aligned_mask, 20, 255, cv2.THRESH_BINARY)
-        
-        # Find the gaps
-        gap_mask = cv2.bitwise_and(source_bin, cv2.bitwise_not(aligned_bin))
-        
-        # No gaps, return original
-        if not np.any(gap_mask > 0):
-            return aligned_mask
-            
-        print("Applying aggressive gap filling")
-        
-        # Create a robust filled version using both source and aligned masks
-        filled_mask = aligned_mask.copy()
-        
-        # Use distance transform to create a smooth transition from aligned mask to source mask
-        # This preserves the structure of the aligned mask while filling gaps
-        
-        # First create extended aligned mask through dilation
-        kernel_size = max(3, int(np.sqrt(np.sum(gap_mask > 0)) / 20))  # Adaptive kernel size based on gap size
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-        
-        # Calculate how far each pixel is from the aligned mask
-        dist_to_aligned = cv2.distanceTransform(cv2.bitwise_not(aligned_bin), cv2.DIST_L2, 5)
-        
-        # Calculate how far each pixel is from the gap region
-        dist_to_gap = cv2.distanceTransform(cv2.bitwise_not(gap_mask), cv2.DIST_L2, 5)
-        
-        # Normalize distances to 0-1 range for blending
-        max_dist = np.max(dist_to_aligned) if np.max(dist_to_aligned) > 0 else 1
-        norm_dist_to_aligned = dist_to_aligned / max_dist
-        
-        # Create a decay function that decreases with distance from aligned mask
-        decay = np.exp(-norm_dist_to_aligned * 2)  # Exponential decay
-        
-        # Apply the fill only within the gap area, with a smooth falloff
-        gap_indices = np.where(gap_mask > 0)
-        if len(gap_indices[0]) > 0:
-            fill_values = np.maximum(255 * decay[gap_indices], 200)  # Ensure at least 80% opacity
-            filled_mask[gap_indices] = fill_values.astype(np.uint8)
-            
-        # Apply smoothing
-        filled_mask = cv2.GaussianBlur(filled_mask, (3, 3), 0.8)
-        
-        # NEW: Ensure inner parts have high opacity
-        filled_mask = self._ensure_high_inner_opacity(filled_mask, min_opacity=0.95)
-        
-        return filled_mask
-
-    def _fill_gaps_with_color(self, source_img, processed_img, source_mask, processed_mask, aligned_mask, remove_artifacts=True):
-        """
-        Fill gaps with color sampled from nearby regions and remove thin artifacts.
-        
-        Args:
-            source_img: Original source image
-            processed_img: Processed image with red hair
-            source_mask: Mask from source image
-            processed_mask: Mask from processed image
-            aligned_mask: Current aligned mask
-            remove_artifacts: Whether to remove thin artifacts at hair boundaries
-            
-        Returns:
-            tuple: (fixed_mask, color_map) where color_map contains sampled colors for each gap
-        """
-        if source_mask is None or aligned_mask is None:
-            return aligned_mask, None
-        
-        # Ensure consistent dimensions
-        h, w = source_img.shape[:2]
-        if aligned_mask.shape[:2] != (h, w):
-            aligned_mask = cv2.resize(aligned_mask, (w, h), interpolation=cv2.INTER_NEAREST)
-        
-        # Create binary versions of masks
-        _, source_bin = cv2.threshold(source_mask, 30, 255, cv2.THRESH_BINARY)
-        _, aligned_bin = cv2.threshold(aligned_mask, 30, 255, cv2.THRESH_BINARY)
-        
-        # Find gaps (areas in source mask not covered by aligned mask)
-        gap_mask = cv2.bitwise_and(source_bin, cv2.bitwise_not(aligned_bin))
-        
-        # If no gaps, return original
-        if not np.any(gap_mask > 0):
-            return aligned_mask, None
-        
-        print("Filling gaps with sampled hair color")
-        
-        # Create a new mask and color map
-        fixed_mask = aligned_mask.copy()
-        color_map = np.zeros_like(processed_img)
-        
-        # Find connected components in the gap mask
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(gap_mask)
-        
-        # For each gap component, sample nearby colors from the processed hair
-        for i in range(1, num_labels):  # Skip background (0)
-            # Get component position
-            x = stats[i, cv2.CC_STAT_LEFT]
-            y = stats[i, cv2.CC_STAT_TOP]
-            width = stats[i, cv2.CC_STAT_WIDTH]
-            height = stats[i, cv2.CC_STAT_HEIGHT]
-            area = stats[i, cv2.CC_STAT_AREA]
-            
-            # Skip very small gaps
-            if area < 5:
-                continue
-            
-            # Create a mask for this component
-            component_mask = np.zeros_like(gap_mask)
-            component_mask[labels == i] = 255
-            
-            # Expand region to sample from surrounding hair
-            sample_radius = 15  # Look within 15 pixels for hair color
-            sample_region_x1 = max(0, x - sample_radius)
-            sample_region_y1 = max(0, y - sample_radius)
-            sample_region_x2 = min(w, x + width + sample_radius)
-            sample_region_y2 = min(h, y + height + sample_radius)
-            
-            # Create a mask for the expanded region
-            sample_region_mask = np.zeros_like(gap_mask)
-            sample_region_mask[sample_region_y1:sample_region_y2, sample_region_x1:sample_region_x2] = 255
-            
-            # Find hair pixels in the sample region (from processed image)
-            hair_sample_mask = cv2.bitwise_and(aligned_bin, sample_region_mask)
-            
-            # If we found hair pixels to sample from
-            if np.any(hair_sample_mask > 0):
-                # Get the average color of nearby hair pixels
-                hair_pixels = processed_img[hair_sample_mask > 0]
-                if len(hair_pixels) > 0:
-                    avg_color = np.mean(hair_pixels, axis=0).astype(np.uint8)
-                    
-                    # For redder hair, bias toward red values
-                    # This prioritizes sampling the red hair for gap filling
-                    if avg_color[2] > avg_color[0] + 20:  # If R value is significantly higher than B
-                        # It's already a reddish color, use it
-                        sampled_color = avg_color
-                    else:
-                        # Sample from the wider image to find a red hair color
-                        # Look for pixels that are clearly red hair
-                        red_hair_mask = np.zeros_like(aligned_bin)
-                        red_condition = (processed_img[:,:,2] > processed_img[:,:,0] + 40) & (processed_img[:,:,2] > processed_img[:,:,1] + 20)
-                        red_hair_mask[red_condition & (aligned_bin > 0)] = 255
-                        
-                        if np.any(red_hair_mask > 0):
-                            red_pixels = processed_img[red_hair_mask > 0]
-                            sampled_color = np.mean(red_pixels, axis=0).astype(np.uint8)
-                        else:
-                            # If we can't find red hair, use the average we calculated earlier
-                            sampled_color = avg_color
-                    
-                    # Fill the gap with the sampled color
-                    color_map[component_mask > 0] = sampled_color
-                    
-                    # Set the mask to full opacity for the gap
-                    fixed_mask[component_mask > 0] = 255
-            
-            else:
-                # If we couldn't find hair pixels nearby, use a default red hair color
-                default_red_hair = np.array([60, 50, 150], dtype=np.uint8)  # BGR format
-                color_map[component_mask > 0] = default_red_hair
-                fixed_mask[component_mask > 0] = 255
-        
-        # Remove thin blonde artifact lines only if remove_artifacts is enabled
-        if remove_artifacts:
-            # First, detect thin lines by looking for isolated bright pixels at the boundaries
-            kernel = np.ones((3, 3), np.uint8)
-            
-            # Find the edge of the hair mask
-            dilated = cv2.dilate(aligned_bin, kernel, iterations=1)
-            edge_mask = cv2.subtract(dilated, aligned_bin)
-            
-            # Look for blonde/light pixels at the edge
-            light_color_condition = (processed_img[:,:,0] > 150) & (processed_img[:,:,1] > 150) & (processed_img[:,:,2] > 150)
-            artifact_candidates = edge_mask & light_color_condition
-            
-            # Further refine by finding thin structures
-            opened = cv2.morphologyEx(artifact_candidates.astype(np.uint8), cv2.MORPH_OPEN, kernel)
-            artifacts = cv2.subtract(artifact_candidates.astype(np.uint8), opened)
-            
-            # Remove these artifacts from the mask
-            if np.any(artifacts > 0):
-                print("Removing thin blonde artifact lines")
-                fixed_mask[artifacts > 0] = 0
-        
-        # COMMENTED OUT: Complex black border detection and removal code (performance optimization)
-        """
-        # NEW CODE: Detect and remove black border artifacts around the mask
-        print("Checking for black border artifacts")
-        
-        # Create binary version of the fixed mask
-        _, fixed_bin = cv2.threshold(fixed_mask, 30, 255, cv2.THRESH_BINARY)
-        
-        # Dilate the mask slightly to find its outer edge
-        kernel_border = np.ones((3, 3), np.uint8)
-        dilated_mask = cv2.dilate(fixed_bin, kernel_border, iterations=1)
-        
-        # Find the border region (1-pixel wide edge)
-        border_region = cv2.subtract(dilated_mask, fixed_bin)
-        
-        # Look for dark pixels in the processed image at the border
-        dark_border_condition = (
-            (processed_img[:,:,0] < 30) & 
-            (processed_img[:,:,1] < 30) & 
-            (processed_img[:,:,2] < 30)
-        )
-        
-        # Identify black border pixels
-        black_border = np.zeros_like(border_region)
-        black_border[(border_region > 0) & dark_border_condition] = 255
-        
-        # If we found black border pixels
-        if np.any(black_border > 0):
-            print("Removing black border artifacts")
-            
-            # For each black border pixel, sample color from nearby non-border hair
-            for y, x in zip(*np.where(black_border > 0)):
-                # Create a small sampling region around this pixel
-                sample_x1 = max(0, x - 5)
-                sample_y1 = max(0, y - 5)
-                sample_x2 = min(w, x + 6)
-                sample_y2 = min(h, y + 6)
-                
-                # Find hair pixels in this sampling region (not on the border)
-                sample_region = fixed_bin[sample_y1:sample_y2, sample_x1:sample_x2]
-                border_in_region = border_region[sample_y1:sample_y2, sample_x1:sample_x2]
-                
-                # Hair pixels inside the mask but not on the border
-                hair_pixels = np.where((sample_region > 0) & (border_in_region == 0))
-                
-                if len(hair_pixels[0]) > 0:
-                    # Calculate offsets for the original image
-                    y_offsets, x_offsets = hair_pixels
-                    y_coords = sample_y1 + y_offsets
-                    x_coords = sample_x1 + x_offsets
-                    
-                    # Sample colors from these positions
-                    sampled_colors = processed_img[y_coords, x_coords]
-                    
-                    # Average the sampled colors
-                    if len(sampled_colors) > 0:
-                        avg_color = np.mean(sampled_colors, axis=0).astype(np.uint8)
-                        
-                        # Apply this color to the black border pixel
-                        color_map[y, x] = avg_color
-                        fixed_mask[y, x] = 255  # Ensure it's included in the mask
-                else:
-                    # If no nearby hair pixels, use a default red hair color
-                    color_map[y, x] = np.array([60, 50, 150], dtype=np.uint8)
-                    fixed_mask[y, x] = 255
-        
-        # Apply a slight dilation to the mask to cover any remaining thin gaps
-        fixed_mask = cv2.dilate(fixed_mask, kernel_border, iterations=1)
-        
-        # Ensure the color map has values wherever the mask is active
-        new_mask_pixels = (fixed_mask > 0) & np.all(color_map == 0, axis=2)
-        if np.any(new_mask_pixels):
-            # For any new mask pixels without colors, sample from the processed image
-            color_map[new_mask_pixels] = processed_img[new_mask_pixels]
-        
-        # NEW STEP: Ensure inner parts have high opacity
-        fixed_mask = self._ensure_high_inner_opacity(fixed_mask, min_opacity=0.95)
-        """
-        
-        return fixed_mask, color_map
-
-    def _ensure_high_inner_opacity(self, mask, min_opacity=0.9):
-        """
-        Ensure the inner parts of a mask have at least the specified minimum opacity.
-        This helps prevent artifacts in the central regions of masks.
-        
-        Args:
-            mask: Input grayscale mask
-            min_opacity: Minimum opacity for inner regions (0.0-1.0)
-            
-        Returns:
-            numpy.ndarray: Mask with boosted inner opacity
-        """
-        # COMMENTED OUT: Complex opacity boosting (performance optimization)
-        return mask
-        """
-        if mask is None:
-            return None
-            
-        # Convert min_opacity to grayscale value (0-255)
-        min_value = int(min_opacity * 255)
-        
-        # Create a binary version as reference
-        _, binary = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        
-        # More aggressive: make almost all mask areas full opacity
-        # Identify both the inner part and most of the mask except the very edge
-        small_kernel = np.ones((3, 3), np.uint8)
-        medium_kernel = np.ones((5, 5), np.uint8)
-        large_kernel = np.ones((9, 9), np.uint8)
-        
-        # Inner part (far from edges)
-        inner_part = cv2.erode(binary, medium_kernel, iterations=2)
-        
-        # Main part (everything except the very edge)
-        main_part = cv2.erode(binary, small_kernel, iterations=1)
-        
-        # Just the edge pixels
-        edge_part = cv2.subtract(binary, main_part)
-        
-        # Create a boosted copy
-        boosted_mask = mask.copy()
-        
-        # Make inner part fully opaque
-        boosted_mask[inner_part > 0] = 255
-        
-        # Make main part at least 95% opaque
-        main_area = (main_part > 0) & (inner_part == 0) & (boosted_mask < 240)
-        if np.any(main_area):
-            boosted_mask[main_area] = 240
-        
-        # For edge pixels, ensure they're at least at min_opacity
-        edge_area = (edge_part > 0) & (boosted_mask < min_value) & (boosted_mask > 0)
-        if np.any(edge_area):
-            boosted_mask[edge_area] = min_value
-            
-        # Apply a very slight blur to smooth transitions at edges while keeping the rest fully opaque
-        blurred_edges = cv2.GaussianBlur(boosted_mask.astype(np.float32), (3, 3), 0.5)
-        
-        # Only use the blurred values for edge pixels
-        result = boosted_mask.copy()
-        result[edge_part > 0] = blurred_edges[edge_part > 0]
-        
-        return result
-        """
 
     def _align_with_source_landmarks(self, source_img, processed_img, source_mask, processed_mask, 
                                 source_landmarks, debug_dir=None):
@@ -2014,137 +1469,6 @@ class EnhancedCropReinserter:
         
         return aligned_mask, aligned_img
     
-    def _clean_mask_boundaries(self, source_img, processed_img, mask):
-        """
-        Specialized function to detect and clean black outlines/artifacts at mask boundaries.
-        This targets the specific issue of black lines appearing where masks meet.
-        
-        Args:
-            source_img: Original source image
-            processed_img: Processed image
-            mask: Mask to clean
-            
-        Returns:
-            numpy.ndarray: Cleaned mask
-        """
-        # COMMENTED OUT: Complex mask boundary cleaning (performance optimization)
-        return mask
-        """
-        if mask is None:
-            return None
-            
-        # Ensure the mask is the right size
-        h, w = source_img.shape[:2]
-        if mask.shape[:2] != (h, w):
-            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
-            
-        # Create a working copy
-        cleaned_mask = mask.copy()
-        
-        # Create binary version
-        _, binary_mask = cv2.threshold(mask, 30, 255, cv2.THRESH_BINARY)
-        
-        # Create different sized kernels for multi-scale analysis
-        kernel_small = np.ones((3, 3), np.uint8)
-        kernel_medium = np.ones((5, 5), np.uint8)
-        
-        # Find the mask boundary region (slightly wider than just 1 pixel)
-        dilated = cv2.dilate(binary_mask, kernel_medium, iterations=1)
-        eroded = cv2.erode(binary_mask, kernel_small, iterations=1)
-        boundary = cv2.subtract(dilated, eroded)
-        
-        # Look for dark pixels in the processed image at boundary regions
-        dark_condition = (
-            (processed_img[:,:,0] < 40) & 
-            (processed_img[:,:,1] < 40) & 
-            (processed_img[:,:,2] < 40)
-        )
-        
-        # Find dark boundary pixels
-        dark_boundary = np.zeros_like(boundary)
-        dark_boundary[(boundary > 0) & dark_condition] = 255
-        
-        # If dark boundaries are found, remove them by sampling from nearby valid pixels
-        if np.any(dark_boundary > 0):
-            print("Cleaning dark artifacts at mask boundaries")
-            
-            # For optimization, only process if significant dark boundaries are found
-            # Calculate the percentage of dark boundary pixels
-            dark_boundary_percentage = np.sum(dark_boundary > 0) / np.sum(boundary > 0) if np.sum(boundary > 0) > 0 else 0
-            
-            if dark_boundary_percentage > 0.05:  # Only process if more than 5% of boundary is dark
-                # Dilate the mask to cover the dark boundaries
-                cleaned_mask = cv2.dilate(mask, kernel_small, iterations=1)
-                
-                # Create a filled border by dilating again and using the result for boundary areas
-                border_filler = cv2.dilate(binary_mask, kernel_medium, iterations=2)
-                
-                # Where we have dark boundary pixels, use the dilated mask
-                cleaned_mask[dark_boundary > 0] = 255
-                
-                print(f"Adjusted {dark_boundary_percentage:.1%} of boundary pixels")
-        
-        return cleaned_mask
-        """
-
-    def _clean_input_mask(self, mask):
-        """
-        Clean an input mask by removing dark gray pixels and ensuring clean edges.
-        This function specifically targets the issue of very dark gray pixels outlining masks.
-        
-        Args:
-            mask: Input grayscale mask
-            
-        Returns:
-            numpy.ndarray: Cleaned mask with proper binary edges
-        """
-        # COMMENTED OUT: Complex mask cleaning (performance optimization)
-        return mask
-        """
-        if mask is None:
-            return None
-            
-        # Step 1: Convert to strict binary with an aggressive threshold
-        # This will remove not just dark gray but any semi-transparent pixels
-        _, binary_mask = cv2.threshold(mask, 200, 255, cv2.THRESH_BINARY)
-        
-        # Step 2: Create a clean edge mask
-        kernel_small = np.ones((3, 3), np.uint8)
-        kernel_medium = np.ones((5, 5), np.uint8)
-        
-        # Identify edges with different levels of detail
-        dilated = cv2.dilate(binary_mask, kernel_small, iterations=1)
-        eroded = cv2.erode(binary_mask, kernel_small, iterations=1)
-        edges = cv2.subtract(dilated, eroded)
-        
-        # Step 3: Now check the original mask values along the edges
-        # to find any non-white pixels that might create outlines
-        problem_edges = np.zeros_like(edges)
-        problem_edges[(edges > 0) & (mask < 250)] = 255
-        
-        print(f"Cleaning input mask (threshold={np.sum(problem_edges > 0)} edge pixels detected)")
-        
-        # Always perform thorough cleaning
-        # Create a clean mask from the binary version
-        cleaned_mask = binary_mask.copy()
-        
-        # Apply slight blur only at edges to prevent aliasing/jagged edges
-        blurred = cv2.GaussianBlur(binary_mask.astype(np.float32), (3, 3), 0.5)
-        
-        # Only use blurred values at edge pixels
-        cleaned_mask[edges > 0] = blurred[edges > 0]
-        
-        # Final aggressive clean - anything below 50% opacity becomes 0, anything above becomes at least 240
-        _, cleaned_mask = cv2.threshold(cleaned_mask, 127, 255, cv2.THRESH_BINARY)
-        
-        # Ensure any remaining mask areas are at least 95% opaque
-        mask_areas = cleaned_mask > 0
-        if np.any(mask_areas):
-            cleaned_mask[mask_areas] = np.maximum(cleaned_mask[mask_areas], 240)
-        
-        return cleaned_mask
-        """
-
     def _reinsert_with_resolution_handling(self, source_path, processed_path, mask_path, output_path, debug_dir=None):
         """
         Reinsert a processed image region into the source image with enhanced mask alignment.
@@ -2178,23 +1502,6 @@ class EnhancedCropReinserter:
             if mask is None:
                 print(f"Failed to load mask: {mask_path}")
                 return False
-            
-            # COMMENTED OUT: Clean the mask to remove dark gray pixels that might create outlines
-            # mask = self._clean_input_mask(mask)
-            
-            # Save the clean input mask for debugging
-            if debug_dir:
-                os.makedirs(debug_dir, exist_ok=True)
-                # cv2.imwrite(os.path.join(debug_dir, "clean_input_mask.png"), mask)
-            
-            # COMMENTED OUT: Ensure the mask is clean from the beginning
-            # kernel = np.ones((3, 3), np.uint8)
-            # mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-            
-            # Save the pre-processed mask for debugging
-            if debug_dir:
-                os.makedirs(debug_dir, exist_ok=True)
-                # cv2.imwrite(os.path.join(debug_dir, "preprocessed_mask.png"), mask)
         else:
             print(f"No mask found at {mask_path}")
             return False
@@ -2271,14 +1578,6 @@ class EnhancedCropReinserter:
         # Check if the source has a different hair mask
         source_mask = self._find_source_mask(source_path)
         
-        # COMMENTED OUT: If we have a source mask, clean it as well to ensure no dark outlines
-        # if source_mask is not None:
-        #     source_mask = self._clean_input_mask(source_mask)
-        #     
-        #     # Save the cleaned source mask for debugging
-        #     if debug_dir:
-        #         cv2.imwrite(os.path.join(debug_dir, "clean_source_mask.png"), source_mask)
-
         # If we're not handling different masks, simply use standard blending
         if not self.app.reinsert_handle_different_masks.get() or source_mask is None:
             # Improve basic alpha blending with edge-preserving approach
@@ -2436,32 +1735,6 @@ class EnhancedCropReinserter:
                 debug_dir
             )
                 
-        # After alignment is complete, ensure mask fully covers source mask
-        if self.app.fill_mask_gaps.get():
-            aligned_mask = self._ensure_full_mask_coverage(source_mask, mask_resized, aligned_mask)
-            
-            # COMMENTED OUT: NEW: Ensure inner parts have high opacity
-            # aligned_mask = self._ensure_high_inner_opacity(aligned_mask, min_opacity=0.95)
-            
-            if debug_dir:
-                # cv2.imwrite(os.path.join(debug_dir, "aligned_mask_high_opacity.png"), aligned_mask)
-                pass
-        
-        # If gaps are still substantial, use the aggressive method
-        if self.app.fill_mask_gaps.get() and self.app.debug_mode.get():  # Save debug info if in debug mode
-            _, gap_check = cv2.threshold(aligned_mask, 30, 255, cv2.THRESH_BINARY)
-            _, source_check = cv2.threshold(source_mask, 30, 255, cv2.THRESH_BINARY)
-            remaining_gaps = cv2.bitwise_and(source_check, cv2.bitwise_not(gap_check))
-            gap_percentage = np.sum(remaining_gaps > 0) / np.sum(source_check > 0) if np.sum(source_check > 0) > 0 else 0
-            
-            if gap_percentage > 0.05:  # If more than 5% gaps remain
-                print(f"Substantial gaps remain ({gap_percentage:.1%}), applying aggressive fill")
-                aligned_mask = self._fill_mask_gaps_aggressive(source_mask, mask_resized, aligned_mask)
-                
-                if debug_dir:
-                    cv2.imwrite(os.path.join(debug_dir, "initial_gaps_before_fill.png"), remaining_gaps)
-                    cv2.imwrite(os.path.join(debug_dir, "mask_after_initial_aggressive_fill.png"), aligned_mask)
-        
         # Preserve hair parting if option enabled
         if self.app.preserve_hair_parting.get():
             # Detect landmarks for source and processed images
@@ -2490,68 +1763,6 @@ class EnhancedCropReinserter:
                 if debug_dir:
                     cv2.imwrite(os.path.join(debug_dir, "source_parting_applied.png"), aligned_mask)
         
-        # Final check to ensure full coverage before blending
-        if self.app.fill_mask_gaps.get():
-            aligned_mask = self._ensure_full_mask_coverage(source_mask, mask_resized, aligned_mask)
-        
-        # If gaps are still substantial, use the aggressive method
-        if self.app.fill_mask_gaps.get() and self.app.debug_mode.get():  # Save debug info if in debug mode
-            _, gap_check = cv2.threshold(aligned_mask, 30, 255, cv2.THRESH_BINARY)
-            _, source_check = cv2.threshold(source_mask, 30, 255, cv2.THRESH_BINARY)
-            remaining_gaps = cv2.bitwise_and(source_check, cv2.bitwise_not(gap_check))
-            gap_percentage = np.sum(remaining_gaps > 0) / np.sum(source_check > 0) if np.sum(source_check > 0) > 0 else 0
-            
-            if gap_percentage > 0.05:  # If more than 5% gaps remain
-                print(f"Substantial gaps remain ({gap_percentage:.1%}), applying aggressive fill")
-                aligned_mask = self._fill_mask_gaps_aggressive(source_mask, mask_resized, aligned_mask)
-                
-                if debug_dir:
-                    cv2.imwrite(os.path.join(debug_dir, "final_gaps_before_fill.png"), remaining_gaps)
-                    cv2.imwrite(os.path.join(debug_dir, "mask_after_final_aggressive_fill.png"), aligned_mask)
-        
-        # Fix gaps with appropriate hair color and remove artifacts
-        if self.app.use_color_specific_fill.get():
-            fixed_mask, color_map = self._fill_gaps_with_color(
-                source_img, aligned_img, source_mask, mask_resized, aligned_mask,
-                remove_artifacts=self.app.remove_artifacts.get())
-    
-            if color_map is not None:
-                # Where we've filled gaps, use the color map instead of the processed image
-                gap_areas = np.all(color_map > 0, axis=2)
-                if np.any(gap_areas):
-                    # Create a version of the aligned image with gaps filled
-                    filled_img = aligned_img.copy()
-                    filled_img[gap_areas] = color_map[gap_areas]
-                    
-                    # Use this filled version for blending
-                    aligned_img = filled_img
-                    aligned_mask = fixed_mask
-                    
-                    if debug_dir:
-                        cv2.imwrite(os.path.join(debug_dir, "mask_after_color_gap_filling.png"), aligned_mask)
-                        cv2.imwrite(os.path.join(debug_dir, "image_with_filled_gaps.png"), aligned_img)
-        
-        # Apply enhanced textured gap filling and artifact removal
-        if hasattr(self.app, 'use_textured_gap_filling') and self.app.use_textured_gap_filling.get():
-            enhanced_mask, enhanced_img = self._fill_gaps_with_textured_color(
-                source_img, aligned_img, source_mask, mask_resized, aligned_mask)
-
-            # Use the enhanced versions for blending
-            aligned_mask = enhanced_mask
-            aligned_img = enhanced_img
-            
-        # COMMENTED OUT: IMPORTANT NEW STEP: Clean any black borders or artifacts at mask boundaries
-        # This specifically targets the black outlines we're seeing in the mask
-        # aligned_mask = self._clean_mask_boundaries(source_img, aligned_img, aligned_mask)
-        
-        # COMMENTED OUT: Ensure high opacity in the inner parts of mask right before blending
-        # aligned_mask = self._ensure_high_inner_opacity(aligned_mask, min_opacity=0.95)
-        
-        if debug_dir:
-            # cv2.imwrite(os.path.join(debug_dir, "mask_after_boundary_cleaning.png"), aligned_mask)
-            # cv2.imwrite(os.path.join(debug_dir, "final_mask_before_blend.png"), aligned_mask)
-            pass
-
         # Blending stage with improved methods
         if blend_mode == "alpha":
             result_img = self._alpha_blend(
@@ -2577,9 +1788,6 @@ class EnhancedCropReinserter:
                 source_img, result_img, 
                 aligned_mask
             )
-        
-        # COMMENTED OUT: FINAL STEP: Check and fix any remaining black border artifacts
-        # result_img = self._eliminate_black_borders(result_img, aligned_mask)
         
         # Save the result
         cv2.imwrite(output_path, result_img)
@@ -2989,340 +2197,3 @@ class EnhancedCropReinserter:
             cv2.imwrite(os.path.join(debug_dir, "mask_alignment_translation_only.png"), mask_overlay)
         
         return aligned_mask, aligned_img
-    
-
-    def _fill_gaps_with_textured_color(self, source_img, processed_img, source_mask, processed_mask, aligned_mask):
-        """
-        Fill gaps with textured hair color sampled from nearby regions and ensure smooth blending.
-        
-        Args:
-            source_img: Original source image
-            processed_img: Processed image with red hair
-            source_mask: Mask from source image
-            processed_mask: Mask from processed image
-            aligned_mask: Current aligned mask
-            
-        Returns:
-            tuple: (fixed_mask, enhanced_img) where enhanced_img has gaps filled with textured hair
-        """
-        if source_mask is None or aligned_mask is None:
-            return aligned_mask, processed_img
-        
-        # Ensure consistent dimensions
-        h, w = source_img.shape[:2]
-        if aligned_mask.shape[:2] != (h, w):
-            aligned_mask = cv2.resize(aligned_mask, (w, h), interpolation=cv2.INTER_NEAREST)
-        
-        # Create binary versions of masks with lower threshold to catch more of the hair
-        _, source_bin = cv2.threshold(source_mask, 20, 255, cv2.THRESH_BINARY)
-        _, aligned_bin = cv2.threshold(aligned_mask, 20, 255, cv2.THRESH_BINARY)
-        
-        # Find the main gaps (areas in source mask not covered by aligned mask)
-        gap_mask = cv2.bitwise_and(source_bin, cv2.bitwise_not(aligned_bin))
-        
-        # Also check for black edge gaps (small black lines between hair areas)
-        # Dilate both masks slightly to bridge small gaps
-        kernel = np.ones((3, 3), np.uint8)
-        dilated_source = cv2.dilate(source_bin, kernel, iterations=1)
-        dilated_aligned = cv2.dilate(aligned_bin, kernel, iterations=1)
-        
-        # Find potential gap areas (should be covered by EITHER mask)
-        potential_area = cv2.bitwise_or(dilated_source, dilated_aligned)
-        
-        # Find actual covered areas (covered by BOTH dilated masks)
-        covered_area = cv2.bitwise_and(dilated_source, dilated_aligned)
-        
-        # Edge gaps are in the potential area but not in the covered area
-        edge_gaps = cv2.bitwise_and(potential_area, cv2.bitwise_not(covered_area))
-        
-        # Combine with main gaps
-        all_gaps = cv2.bitwise_or(gap_mask, edge_gaps)
-        
-        # If no gaps, return original
-        if not np.any(all_gaps > 0):
-            return aligned_mask, processed_img
-        
-        print("Filling gaps with textured hair color")
-        
-        # Create a new mask and enhanced image
-        fixed_mask = aligned_mask.copy()
-        enhanced_img = processed_img.copy()
-        
-        # Find connected components in the gaps
-        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(all_gaps)
-        
-        # Create texture generators - we'll use these to add natural variation to hair
-        def create_hair_texture(base_color, size, variation=15):
-            """Create a patch of textured hair based on a color"""
-            # Start with the base color
-            texture = np.ones((*size, 3), dtype=np.uint8) * base_color
-            
-            # Add random variations to create a hair-like texture
-            noise = np.random.randint(-variation, variation+1, (*size, 3))
-            texture = np.clip(texture.astype(np.int32) + noise, 0, 255).astype(np.uint8)
-            
-            # Add some directional streaks for hair-like appearance
-            for i in range(0, size[0], 3):  # Every few rows
-                # Slightly darker/lighter streak
-                streak_variation = np.random.randint(-10, 11)
-                streak_width = np.random.randint(1, 3)
-                streak_length = np.random.randint(size[1]//4, size[1])
-                streak_start = np.random.randint(0, size[1] - streak_length)
-                
-                for j in range(streak_start, streak_start + streak_length):
-                    if j < size[1]:
-                        for k in range(streak_width):
-                            if i+k < size[0]:
-                                texture[i+k, j] = np.clip(
-                                    texture[i+k, j].astype(np.int32) + streak_variation,
-                                    0, 255
-                                ).astype(np.uint8)
-            
-            return texture
-        
-        # Sample red hair colors from the processed image
-        red_hair_samples = []
-        
-        # Look for pixels that are clearly red hair
-        red_condition = (processed_img[:,:,2] > processed_img[:,:,0] + 30) & (processed_img[:,:,1] < processed_img[:,:,2] - 10)
-        red_hair_pixels = processed_img[red_condition & (aligned_bin > 0)]
-        
-        if len(red_hair_pixels) > 20:  # If we found enough red hair pixels
-            # Take a random sample of 10 slightly different red hair colors
-            indices = np.random.choice(len(red_hair_pixels), min(20, len(red_hair_pixels)), replace=False)
-            red_hair_samples = [red_hair_pixels[i] for i in indices]
-        else:
-            # If we couldn't find enough red hair, use some default reddish hair colors
-            red_hair_samples = [
-                np.array([60, 50, 150], dtype=np.uint8),  # Reddish
-                np.array([70, 60, 160], dtype=np.uint8),  # Slightly brighter
-                np.array([50, 40, 140], dtype=np.uint8),  # Slightly darker
-                np.array([65, 55, 155], dtype=np.uint8),  # Another variation
-            ]
-        
-        # Process each gap component
-        for i in range(1, num_labels):  # Skip background (0)
-            # Get component position and size
-            x = stats[i, cv2.CC_STAT_LEFT]
-            y = stats[i, cv2.CC_STAT_TOP]
-            width = stats[i, cv2.CC_STAT_WIDTH]
-            height = stats[i, cv2.CC_STAT_HEIGHT]
-            area = stats[i, cv2.CC_STAT_AREA]
-            
-            # Skip very tiny gaps
-            if area < 3:
-                continue
-            
-            # Create a mask for this component
-            component_mask = np.zeros_like(all_gaps)
-            component_mask[labels == i] = 255
-            
-            # Different handling based on gap size
-            if area < 100:  # Small gaps - simple fill
-                # Choose a random red hair color from our samples
-                hair_color = red_hair_samples[np.random.randint(0, len(red_hair_samples))]
-                
-                # Add some subtle texture
-                for y_offset in range(height):
-                    for x_offset in range(width):
-                        y_pos = y + y_offset
-                        x_pos = x + x_offset
-                        
-                        if y_pos < h and x_pos < w and component_mask[y_pos, x_pos] > 0:
-                            # Add small random variation to color
-                            variation = np.random.randint(-10, 11, 3)
-                            enhanced_img[y_pos, x_pos] = np.clip(
-                                hair_color.astype(np.int32) + variation, 
-                                0, 255
-                            ).astype(np.uint8)
-            else:
-                # Larger gaps - create more complex texture
-                # Choose a base color (average of samples)
-                base_color = np.mean(red_hair_samples, axis=0).astype(np.uint8)
-                
-                # Create textured patch
-                texture_patch = create_hair_texture(base_color, (height, width), variation=20)
-                
-                # Apply texture to the gap area
-                for y_offset in range(height):
-                    for x_offset in range(width):
-                        y_pos = y + y_offset
-                        x_pos = x + x_offset
-                        
-                        if y_pos < h and x_pos < w and component_mask[y_pos, x_pos] > 0:
-                            enhanced_img[y_pos, x_pos] = texture_patch[y_offset, x_offset]
-            
-            # Set mask to full opacity for filled gaps (with slight feathering at edges)
-            dilated_component = cv2.dilate(component_mask, kernel, iterations=1)
-            border = cv2.subtract(dilated_component, component_mask)
-            
-            # Full opacity in the main component
-            fixed_mask[component_mask > 0] = 255
-            
-            # Partial opacity at borders for better blending
-            if np.any(border > 0):
-                fixed_mask[border > 0] = np.maximum(fixed_mask[border > 0], 180)  # At least 70% opacity
-        
-        # Now handle thin blonde artifact lines
-        light_condition = (processed_img[:,:,0] > 150) & (processed_img[:,:,1] > 150) & (processed_img[:,:,2] > 150)
-        
-        # Find the edge of the hair mask
-        edge_mask = cv2.subtract(cv2.dilate(aligned_bin, kernel, iterations=2), 
-                                cv2.erode(aligned_bin, kernel, iterations=2))
-        
-        # Look for blonde/light pixels at the edge
-        artifact_candidates = edge_mask & light_condition
-        
-        # Further refine by finding thin structures
-        artifact_candidates = artifact_candidates.astype(np.uint8) * 255
-        opened = cv2.morphologyEx(artifact_candidates, cv2.MORPH_OPEN, kernel)
-        artifacts = cv2.subtract(artifact_candidates, opened)
-        
-        # Remove these artifacts from the mask and fill with appropriate color
-        if np.any(artifacts > 0):
-            print("Removing thin blonde artifact lines")
-            
-            # For each artifact pixel, sample from nearby hair
-            for y in range(h):
-                for x in range(w):
-                    if artifacts[y, x] > 0:
-                        # Get a 5x5 region around this point
-                        y1, y2 = max(0, y-5), min(h, y+6)
-                        x1, x2 = max(0, x-5), min(w, x+6)
-                        
-                        # Find non-artifact hair pixels in this region
-                        region_mask = aligned_bin[y1:y2, x1:x2] & ~artifact_candidates[y1:y2, x1:x2]
-                        
-                        if np.any(region_mask > 0):
-                            # Sample color from nearby hair
-                            nearby_hair = processed_img[y1:y2, x1:x2][region_mask > 0]
-                            sample_color = np.median(nearby_hair, axis=0).astype(np.uint8)
-                            
-                            # Add some variation
-                            variation = np.random.randint(-10, 11, 3)
-                            enhanced_img[y, x] = np.clip(
-                                sample_color.astype(np.int32) + variation, 
-                                0, 255
-                            ).astype(np.uint8)
-                        else:
-                            # If no nearby hair, use a red hair sample
-                            enhanced_img[y, x] = red_hair_samples[np.random.randint(0, len(red_hair_samples))]
-                        
-                        # Remove from mask
-                        fixed_mask[y, x] = 0
-        
-        # Final pass: ensure smooth transitions everywhere
-        # Dilate the fixed mask to find transition zones
-        dilated_fixed = cv2.dilate(fixed_mask, kernel, iterations=2)
-        transition_zone = cv2.subtract(dilated_fixed, fixed_mask)
-        
-        # Apply a gradient in the transition zone
-        if np.any(transition_zone > 0):
-            # Apply distance transform for a gradient effect
-            dist = cv2.distanceTransform(transition_zone, cv2.DIST_L2, 3)
-            max_dist = np.max(dist)
-            if max_dist > 0:
-                # Convert to a normalized gradient (0.0 to 1.0)
-                gradient = 1.0 - (dist / max_dist)
-                
-                # Apply the gradient to fixed_mask in transition zones
-                fixed_mask[transition_zone > 0] = np.clip(
-                    (gradient[transition_zone > 0] * 255).astype(np.uint8),
-                    0, 255
-                )
-        
-        # Final blur to smooth mask edges
-        fixed_mask = cv2.GaussianBlur(fixed_mask, (3, 3), 0)
-        
-        return fixed_mask, enhanced_img
-
-    def _eliminate_black_borders(self, image, mask):
-        """
-        Explicitly find and eliminate any remaining black borders in the blended result.
-        
-        Args:
-            image: Blended image that might have black border artifacts
-            mask: Mask used for blending
-            
-        Returns:
-            numpy.ndarray: Image with black borders removed/replaced
-        """
-        # COMMENTED OUT: Complex black border removal (performance optimization)
-        return image
-        """
-        if image is None or mask is None:
-            return image
-            
-        # Create a binary version of the mask (slightly dilated to cover potential borders)
-        kernel = np.ones((3, 3), np.uint8)
-        _, binary_mask = cv2.threshold(mask, 30, 255, cv2.THRESH_BINARY)
-        mask_area = cv2.dilate(binary_mask, kernel, iterations=1)
-        
-        # More aggressively define what we consider "dark" - catch dark gray too
-        dark_condition = (
-            (image[:,:,0] < 50) & 
-            (image[:,:,1] < 50) & 
-            (image[:,:,2] < 50)
-        )
-        
-        # Find dark pixels in the mask area
-        dark_border_pixels = (mask_area > 0) & dark_condition
-        
-        # If there are ANY dark pixels in the mask area, fix them
-        if np.sum(dark_border_pixels) > 0:
-            print(f"CRITICAL: Removing {np.sum(dark_border_pixels)} dark border artifacts in final result")
-            
-            # Create a fixed copy of the image
-            fixed_image = image.copy()
-            
-            # Create a larger sampling area around the mask
-            sampling_area = cv2.dilate(mask_area, kernel, iterations=5)
-            
-            # Find non-dark pixels in the sampling area to use as replacements
-            valid_pixels = sampling_area > 0 & ~dark_condition
-            
-            if np.any(valid_pixels):
-                # For each dark border pixel, find and use the closest non-dark pixel
-                y_indices, x_indices = np.where(dark_border_pixels)
-                
-                # For efficiency with many pixels, use a radial sampling approach
-                # Sample from increasing circles until non-dark pixels are found
-                for y, x in zip(y_indices, x_indices):
-                    found_color = False
-                    
-                    # Try sample colors from nearby non-dark pixels
-                    for radius in range(1, 15):
-                        if found_color:
-                            break
-                            
-                        # Sample in a square around the pixel
-                        x1 = max(0, x - radius)
-                        y1 = max(0, y - radius)
-                        x2 = min(image.shape[1] - 1, x + radius)
-                        y2 = min(image.shape[0] - 1, y + radius)
-                        
-                        # Extract region
-                        region = image[y1:y2+1, x1:x2+1]
-                        region_valid = ~dark_condition[y1:y2+1, x1:x2+1]
-                        
-                        # If we found valid pixels in this region
-                        if np.any(region_valid):
-                            # Get average color of valid pixels
-                            valid_colors = region[region_valid]
-                            avg_color = np.mean(valid_colors, axis=0).astype(np.uint8)
-                            
-                            # Replace the dark pixel with this color
-                            fixed_image[y, x] = avg_color
-                            found_color = True
-                            break
-                    
-                    # If no suitable color found in neighbors, use a default color
-                    if not found_color:
-                        # Use a reddish hair color as fallback
-                        fixed_image[y, x] = np.array([80, 80, 180], dtype=np.uint8)  # BGR format with more red
-                
-                return fixed_image
-        
-        # No significant dark borders found, return original
-        return image
-        """

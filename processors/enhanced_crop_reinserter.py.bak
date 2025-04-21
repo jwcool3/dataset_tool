@@ -59,110 +59,106 @@ class EnhancedCropReinserter:
             self.face_detector = None
             self.landmark_predictor = None
 
+        self.last_alignment = None  # Store previous frame alignment parameters
+        self.alignment_history = []  # Store several previous alignments for smoothing
+        self.max_history = 5  # Maximum number of previous alignments to store
+
 
     def _apply_transformation(self, img, mask, transformation_params, debug_dir=None, debug_prefix=None):
         """
-        Apply a series of standard transformations to an image and its mask.
-        Optimized for better performance with vectorized operations.
+        Apply transformation to image and mask based on provided parameters.
         
         Args:
-            img: The image to transform
-            mask: The mask to transform
-            transformation_params: Dictionary containing transformation parameters:
-                - 'matrix': Optional affine transformation matrix (2x3 numpy array)
-                - 'translation': Optional (dx, dy) tuple for translation
-                - 'scale': Optional (scale_x, scale_y) tuple for scaling
-                - 'rotation': Optional rotation angle in degrees (around center)
-                - 'interpolation': Optional interpolation method for the image (default: cv2.INTER_LANCZOS4)
-                - 'mask_interpolation': Optional interpolation method for the mask (default: cv2.INTER_NEAREST)
-                - 'border_mode': Optional border mode (default: cv2.BORDER_TRANSPARENT)
-            debug_dir: Optional directory to save debug images
-            debug_prefix: Optional prefix for debug image filenames
+            img: Input image
+            mask: Input mask
+            transformation_params: Dictionary of transformation parameters
+            debug_dir: Directory to save debug visualizations
+            debug_prefix: Prefix for debug filenames
             
         Returns:
-            tuple: (transformed_img, transformed_mask)
+            tuple: Transformed image and mask
         """
         # Get image dimensions
         h, w = img.shape[:2]
         
-        # Create copies to modify
-        transformed_img = img.copy()
-        transformed_mask = mask.copy() if mask is not None else None
+        # Create transformation matrix
+        M = np.eye(3, 3, dtype=np.float32)
         
-        # Set default interpolation and border mode if not specified
-        img_interpolation = transformation_params.get('interpolation', cv2.INTER_LANCZOS4)
-        mask_interpolation = transformation_params.get('mask_interpolation', cv2.INTER_NEAREST)
-        border_mode = transformation_params.get('border_mode', cv2.BORDER_TRANSPARENT)
-        
-        # Calculate composite transformation matrix for efficiency
-        # Start with identity matrix
-        composite_matrix = np.eye(2, 3, dtype=np.float32)
-        transform_applied = False
-            
-        # Apply transformations in sequence to build a composite matrix
-        # First, collect translation
-        tx, ty = 0, 0
-        if 'translation' in transformation_params and transformation_params['translation'] is not None:
+        # Apply translation if specified
+        if 'translation' in transformation_params:
             tx, ty = transformation_params['translation']
-            transform_applied = True
             
-        # Handle scale
-        sx, sy = 1.0, 1.0
-        if 'scale' in transformation_params and transformation_params['scale'] is not None:
+            # Ensure tx and ty are valid integers to prevent extreme values
+            if not isinstance(tx, int) or abs(tx) > 1000:
+                print(f"Warning: Invalid x translation value {tx}, resetting to 0")
+                tx = 0
+            if not isinstance(ty, int) or abs(ty) > 1000:
+                print(f"Warning: Invalid y translation value {ty}, resetting to 0")
+                ty = 0
+                
+            translation_matrix = np.array([
+                [1, 0, tx],
+                [0, 1, ty],
+                [0, 0, 1]
+            ], dtype=np.float32)
+            M = self._combine_transforms(M, translation_matrix)
+        
+        # Apply scale if specified
+        if 'scale' in transformation_params:
             sx, sy = transformation_params['scale']
             
-            if sx != 1.0 or sy != 1.0:
-                transform_applied = True
-                # Create scale matrix around center
-                center_x, center_y = w // 2, h // 2
-                scale_matrix = np.float32([
-                    [sx, 0, center_x * (1 - sx)],
-                    [0, sy, center_y * (1 - sy)]
-                ])
+            # Ensure sx and sy are valid floats to prevent extreme values
+            if not isinstance(sx, (int, float)) or abs(sx) > 1000:
+                print(f"Warning: Invalid x scale value {sx}, resetting to 1.0")
+                sx = 1.0
+            if not isinstance(sy, (int, float)) or abs(sy) > 1000:
+                print(f"Warning: Invalid y scale value {sy}, resetting to 1.0")
+                sy = 1.0
                 
-                # Combine with current matrix
-                composite_matrix = self._combine_transforms(scale_matrix, composite_matrix)
+            scale_matrix = np.array([
+                [sx, 0, 0],
+                [0, sy, 0],
+                [0, 0, 1]
+            ], dtype=np.float32)
+            M = self._combine_transforms(M, scale_matrix)
         
-        # Handle rotation
-        if 'rotation' in transformation_params and transformation_params['rotation'] is not None:
+        # Apply rotation if specified
+        if 'rotation' in transformation_params:
             angle = transformation_params['rotation']
             
-            if angle != 0:
-                transform_applied = True
-                # Calculate center of rotation (image center)
-                center_x, center_y = w // 2, h // 2
+            # Ensure angle is a valid float to prevent extreme values
+            if not isinstance(angle, (int, float)) or abs(angle) > 180:
+                print(f"Warning: Invalid rotation angle {angle}, resetting to 0")
+                angle = 0
                 
-                # Get rotation matrix
-                rotation_matrix = cv2.getRotationMatrix2D((center_x, center_y), -angle, 1.0)
-                
-                # Combine with current matrix
-                composite_matrix = self._combine_transforms(rotation_matrix, composite_matrix)
+            rotation_matrix = np.array([
+                [np.cos(np.radians(angle)), -np.sin(np.radians(angle)), 0],
+                [np.sin(np.radians(angle)), np.cos(np.radians(angle)), 0],
+                [0, 0, 1]
+            ], dtype=np.float32)
+            M = self._combine_transforms(M, rotation_matrix)
         
-        # Apply explicit affine transformation if provided (typically from landmark alignment)
-        if 'matrix' in transformation_params and transformation_params['matrix'] is not None:
-            transform_applied = True
+        # Apply matrix if specified
+        if 'matrix' in transformation_params:
             matrix = transformation_params['matrix']
-            composite_matrix = self._combine_transforms(matrix, composite_matrix)
+            matrix_matrix = np.array([
+                [matrix[0, 0], matrix[0, 1], matrix[0, 2]],
+                [matrix[1, 0], matrix[1, 1], matrix[1, 2]],
+                [0, 0, 1]
+            ], dtype=np.float32)
+            M = self._combine_transforms(M, matrix_matrix)
         
-        # Add translation to the composite matrix
-        if tx != 0 or ty != 0:
-            composite_matrix[0, 2] += tx
-            composite_matrix[1, 2] += ty
+        # Convert matrix to 2x3 format
+        M = M[:2, :]
         
-        # Apply the combined transformation if any transform was requested
-        if transform_applied:
-            transformed_img = cv2.warpAffine(
-                transformed_img, composite_matrix, (w, h),
-                flags=img_interpolation,
-                borderMode=border_mode
-            )
-            
-            if transformed_mask is not None:
-                transformed_mask = cv2.warpAffine(
-                    transformed_mask, composite_matrix, (w, h),
-                    flags=mask_interpolation,
-                    borderMode=border_mode
-                )
+        # Apply transformation to image
+        transformed_img = cv2.warpAffine(img, M, (w, h))
+        
+        # Apply transformation to mask
+        if mask is not None:
+            transformed_mask = cv2.warpAffine(mask, M, (w, h))
+        else:
+            transformed_mask = None
         
         # Save debug images if requested
         if debug_dir is not None and debug_prefix is not None:
@@ -175,7 +171,7 @@ class EnhancedCropReinserter:
     
     def _combine_transforms(self, matrix_a, matrix_b):
         """
-        Combine two 2x3 affine transformation matrices.
+        Combine two transformation matrices.
         
         Args:
             matrix_a: First transformation matrix
@@ -184,15 +180,61 @@ class EnhancedCropReinserter:
         Returns:
             numpy.ndarray: Combined transformation matrix
         """
-        # Convert 2x3 matrices to 3x3 matrices for multiplication
-        a_full = np.vstack([matrix_a, [0, 0, 1]])
-        b_full = np.vstack([matrix_b, [0, 0, 1]])
+        # Check dimensions and handle different matrix shapes
+        # First ensure both are 3x3 matrices for proper multiplication
+        
+        # Check and convert matrix_a to 3x3 if needed
+        if matrix_a.shape == (2, 3):
+            a_full = np.vstack([matrix_a, [0, 0, 1]])
+        elif matrix_a.shape == (3, 3):
+            a_full = matrix_a
+        else:
+            # Handle other cases (should not occur with proper input)
+            print(f"Warning: Unexpected matrix_a shape: {matrix_a.shape}, attempting to fix")
+            if len(matrix_a.shape) == 2 and matrix_a.shape[0] <= 3 and matrix_a.shape[1] <= 4:
+                # Try to convert to 3x3
+                temp = np.eye(3, 3)
+                rows = min(matrix_a.shape[0], 3)
+                cols = min(matrix_a.shape[1], 3)
+                temp[:rows, :cols] = matrix_a[:rows, :cols]
+                a_full = temp
+            else:
+                # Return identity if we can't handle it
+                print(f"Error: Cannot handle matrix_a shape: {matrix_a.shape}")
+                return np.eye(2, 3)
+            
+        # Check and convert matrix_b to 3x3 if needed
+        if matrix_b.shape == (2, 3):
+            b_full = np.vstack([matrix_b, [0, 0, 1]])
+        elif matrix_b.shape == (3, 3):
+            b_full = matrix_b
+        else:
+            # Handle other cases (should not occur with proper input)
+            print(f"Warning: Unexpected matrix_b shape: {matrix_b.shape}, attempting to fix")
+            if len(matrix_b.shape) == 2 and matrix_b.shape[0] <= 3 and matrix_b.shape[1] <= 4:
+                # Try to convert to 3x3
+                temp = np.eye(3, 3)
+                rows = min(matrix_b.shape[0], 3)
+                cols = min(matrix_b.shape[1], 3)
+                temp[:rows, :cols] = matrix_b[:rows, :cols]
+                b_full = temp
+            else:
+                # Return the first matrix if we can't handle it
+                print(f"Error: Cannot handle matrix_b shape: {matrix_b.shape}")
+                if matrix_a.shape == (2, 3):
+                    return matrix_a
+                return np.eye(2, 3)
         
         # Multiply matrices
-        result_full = np.matmul(a_full, b_full)
-        
-        # Return the 2x3 part
-        return result_full[:2, :]
+        try:
+            result_full = np.matmul(a_full, b_full)
+            # Return the 2x3 part
+            return result_full[:2, :]
+        except ValueError as e:
+            print(f"Matrix multiplication error: {e}")
+            print(f"Matrix A shape: {a_full.shape}, Matrix B shape: {b_full.shape}")
+            # Return identity transform as fallback
+            return np.eye(2, 3)
     
     def _get_landmarks(self, image, image_path=None):
         """
@@ -450,123 +492,51 @@ class EnhancedCropReinserter:
 
     def _align_masks(self, source_mask, processed_mask, source_img, processed_img, alignment_method, debug_dir=None):
         """
-        Align masks and images based on the specified method.
-        Enhanced with better cleaning and more robust alignment.
+        Align masks using the specified method.
         
         Args:
-            source_mask: Mask from source image
-            processed_mask: Mask from processed image
+            source_mask: Source image mask
+            processed_mask: Processed image mask
             source_img: Source image
             processed_img: Processed image
-            alignment_method: Method to use for alignment
+            alignment_method: Method to use for alignment ('none', 'centroid', 'iou', 'edges')
             debug_dir: Directory to save debug visualizations
         
         Returns:
-            tuple: (aligned_mask, aligned_image)
+            tuple: Aligned mask and aligned image
         """
-        def clean_mask(mask, threshold=50):
-            """
-            Convert pixels below threshold to black
-            
-            Args:
-                mask: Input grayscale mask
-                threshold: Pixel intensity threshold (0-255)
-                    - Pixels below this will be set to black (0)
-                    - Pixels above will be preserved
-            
-            Returns:
-                Cleaned mask with darker pixels removed
-            """
-            # Create a copy of the mask
-            cleaned_mask = mask.copy()
-            
-            # Convert pixels below threshold to black
-            cleaned_mask[cleaned_mask < threshold] = 0
-            
-            return cleaned_mask
+        h, w = source_mask.shape[:2]
         
-        # Ensure the processed image and mask match the source dimensions
-        h, w = source_img.shape[:2]
+        # Convert masks to binary for accurate alignment
+        _, source_mask_bin = cv2.threshold(source_mask, 127, 255, cv2.THRESH_BINARY)
+        _, processed_mask_bin = cv2.threshold(processed_mask, 127, 255, cv2.THRESH_BINARY)
         
-        if processed_img.shape[:2] != (h, w):
-            processed_img = cv2.resize(processed_img, (w, h), interpolation=cv2.INTER_LANCZOS4)
+        # Initialize transformation parameters
+        transformation_params = {
+            'translation': (0, 0),
+            'rotation': 0,
+            'scale': (1.0, 1.0)  # Fixed: Use tuple instead of float
+        }
         
-        if processed_mask is not None and processed_mask.shape[:2] != (h, w):
-            processed_mask = cv2.resize(processed_mask, (w, h), interpolation=cv2.INTER_NEAREST)
+        # No alignment
+        if alignment_method == "none":
+            pass
         
-        # Clean source and processed masks
-        source_mask_cleaned = clean_mask(source_mask)
-        processed_mask_cleaned = clean_mask(processed_mask)
-        
-        # Debug: Save cleaned masks if debug directory is provided
-        if debug_dir:
-            cv2.imwrite(os.path.join(debug_dir, "source_mask_cleaned.png"), source_mask_cleaned)
-            cv2.imwrite(os.path.join(debug_dir, "processed_mask_cleaned.png"), processed_mask_cleaned)
-        
-        # Continue with alignment using cleaned masks
-        # Binary threshold cleaned masks if needed
-        _, source_mask_bin = cv2.threshold(source_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
-        _, processed_mask_bin = cv2.threshold(processed_mask_cleaned, 127, 255, cv2.THRESH_BINARY)
-        
-        # Default transformation parameters (no transformation)
-        transformation_params = {}
-        
-        # Centroid alignment
-        if alignment_method == "centroid":
-            # Calculate centroids
+        # Center of Mass alignment
+        elif alignment_method == "centroid":
+            # Find center of mass for both masks
             source_moments = cv2.moments(source_mask_bin)
             processed_moments = cv2.moments(processed_mask_bin)
             
-            if source_moments["m00"] > 0 and processed_moments["m00"] > 0:
-                source_cx = int(source_moments["m10"] / source_moments["m00"])
-                source_cy = int(source_moments["m01"] / source_moments["m00"])
-                processed_cx = int(processed_moments["m10"] / processed_moments["m00"])
-                processed_cy = int(processed_moments["m01"] / processed_moments["m00"])
+            if source_moments['m00'] > 0 and processed_moments['m00'] > 0:
+                source_cx = source_moments['m10'] / source_moments['m00']
+                source_cy = source_moments['m01'] / source_moments['m00']
+                processed_cx = processed_moments['m10'] / processed_moments['m00']
+                processed_cy = processed_moments['m01'] / processed_moments['m00']
                 
-                # Calculate shift
-                dx = source_cx - processed_cx
-                dy = source_cy - processed_cy
-                
-                # Set translation parameters
-                transformation_params['translation'] = (dx, dy)
-        
-        # Contour-based alignment (top point alignment)
-        elif alignment_method == "contour":
-            source_points = np.argwhere(source_mask_bin > 0)
-            processed_points = np.argwhere(processed_mask_bin > 0)
-            
-            if len(source_points) > 0 and len(processed_points) > 0:
-                # Find the top point
-                source_top_y = source_points[:, 0].min()
-                source_top_indices = np.where(source_points[:, 0] == source_top_y)[0]
-                source_top_x = np.median(source_points[source_top_indices, 1])
-                
-                processed_top_y = processed_points[:, 0].min()
-                processed_top_indices = np.where(processed_points[:, 0] == processed_top_y)[0]
-                processed_top_x = np.median(processed_points[processed_top_indices, 1])
-                
-                # Calculate shift
-                dx = int(source_top_x - processed_top_x)
-                dy = int(source_top_y - processed_top_y)
-                
-                # Set translation parameters
-                transformation_params['translation'] = (dx, dy)
-        
-        # Bounding box alignment
-        elif alignment_method == "bbox":
-            source_contours, _ = cv2.findContours(source_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            processed_contours, _ = cv2.findContours(processed_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if source_contours and processed_contours:
-                source_contour = max(source_contours, key=cv2.contourArea)
-                processed_contour = max(processed_contours, key=cv2.contourArea)
-                
-                source_x, source_y, source_w, source_h = cv2.boundingRect(source_contour)
-                processed_x, processed_y, processed_w, processed_h = cv2.boundingRect(processed_contour)
-                
-                # Calculate shifts to align top-left corners
-                dx = source_x - processed_x
-                dy = source_y - processed_y
+                # Calculate translation
+                dx = int(source_cx - processed_cx)
+                dy = int(source_cy - processed_cy)
                 
                 # Set translation parameters
                 transformation_params['translation'] = (dx, dy)
@@ -577,9 +547,32 @@ class EnhancedCropReinserter:
             best_dx = 0
             best_dy = 0
             
+            # Check if we have previous alignment data for temporal consistency
+            if hasattr(self, 'last_alignment') and self.last_alignment is not None:
+                # Use the previous frame's alignment as a starting point
+                initial_dx, initial_dy = self.last_alignment
+                
+                # Initialize best values with previous alignment
+                best_dx = initial_dx
+                best_dy = initial_dy
+                
+                # Calculate IoU with previous alignment
+                test_params = {'translation': (initial_dx, initial_dy)}
+                _, shifted_mask = self._apply_transformation(
+                    processed_img,
+                    processed_mask,
+                    test_params
+                )
+                _, shifted_mask_bin = cv2.threshold(shifted_mask, 127, 255, cv2.THRESH_BINARY)
+                intersection = np.logical_and(source_mask_bin > 0, shifted_mask_bin > 0).sum()
+                union = np.logical_or(source_mask_bin > 0, shifted_mask_bin > 0).sum()
+                best_iou = intersection / union if union > 0 else 0
+                
+                print(f"Starting with previous alignment: ({initial_dx}, {initial_dy}), IoU: {best_iou:.4f}")
+            
             # Optimize performance by downsampling for initial alignment
-            # This drastically reduces computation time while maintaining accuracy
-            scale_factor = 0.25  # Use 1/2 resolution for initial search
+            # Using lower resolution for faster processing with video frames
+            scale_factor = 0.25  # Use 1/4 resolution for initial search
             small_source_mask = cv2.resize(source_mask_bin, None, fx=scale_factor, fy=scale_factor, 
                                           interpolation=cv2.INTER_NEAREST)
             small_processed_mask = cv2.resize(processed_mask, None, fx=scale_factor, fy=scale_factor, 
@@ -589,25 +582,63 @@ class EnhancedCropReinserter:
             # Calculate smaller dimensions for the downsampled search
             small_h, small_w = small_source_mask.shape[:2]
             
-            # Use adaptive search range based on image size
-            max_shift = min(w, h) // 4  # 12.5% of image dimension
+            # For video frames, movement between frames should be minimal
+            # Use a much smaller search range - just 5% of image dimension
+            max_shift = min(w, h) // 20  
             small_max_shift = int(max_shift * scale_factor)  # Scale down the shift range
             
-            # First do a coarse grid search on downsampled masks
-            step_size = max(1, small_max_shift // 4)
+            # Use a smaller step size for better precision in video frame alignment
+            step_size = max(1, small_max_shift // 5)
             
             # Pre-calculate masks for vectorized operations
             small_source_bool = small_source_mask > 0
 
-            # Track when we're not improving to potentially early stop
+            # For video, we can be more aggressive with early stopping
+            # since the alignment should be very similar to previous frames
             no_improvement_count = 0
+            early_stop_threshold = 5  # Stop after fewer non-improving iterations
             
-            for dx in range(-small_max_shift, small_max_shift + 1, step_size):
+            # If we have a very high initial IoU, we can use an even smaller search range
+            # This is common in consecutive video frames
+            initial_iou = np.logical_and(small_source_bool, small_processed_mask_bin > 0).sum() / \
+                         np.logical_or(small_source_bool, small_processed_mask_bin > 0).sum()
+            
+            # If frames are very similar (>80% IoU without any alignment), 
+            # we can use an even smaller search range
+            if initial_iou > 0.8:
+                small_max_shift = max(2, small_max_shift // 2)
+                step_size = 1
+            
+            # If we have a previous alignment, center our search around it
+            search_center_dx = 0
+            search_center_dy = 0
+            if hasattr(self, 'last_alignment') and self.last_alignment is not None:
+                search_center_dx = int(self.last_alignment[0] * scale_factor)
+                search_center_dy = int(self.last_alignment[1] * scale_factor)
+                
+                # Constrain search range to be around previous alignment
+                dx_range = range(
+                    max(-small_max_shift, search_center_dx - small_max_shift // 2), 
+                    min(small_max_shift + 1, search_center_dx + small_max_shift // 2 + 1),
+                    step_size
+                )
+                dy_range = range(
+                    max(-small_max_shift, search_center_dy - small_max_shift // 2),
+                    min(small_max_shift + 1, search_center_dy + small_max_shift // 2 + 1),
+                    step_size
+                )
+            else:
+                # Standard search range if no previous alignment
+                dx_range = range(-small_max_shift, small_max_shift + 1, step_size)
+                dy_range = range(-small_max_shift, small_max_shift + 1, step_size)
+            
+            # Perform grid search within our search range
+            for dx in dx_range:
                 # Early stopping if we're not seeing improvements
-                if no_improvement_count > 10:  # Stop after 10 iterations without improvement
+                if no_improvement_count > early_stop_threshold:
                     break
                     
-                for dy in range(-small_max_shift, small_max_shift + 1, step_size):
+                for dy in dy_range:
                     # Shift the mask using numpy's roll function - much faster than transformation
                     shifted_mask_bool = np.roll(np.roll(small_processed_mask_bin > 0, dx, axis=1), dy, axis=0)
                     
@@ -629,44 +660,86 @@ class EnhancedCropReinserter:
             best_dx = int(best_dx / scale_factor)
             best_dy = int(best_dy / scale_factor)
             
-            # Then fine-tune around the best coarse result at full resolution
-            fine_range = max(1, step_size // 5)
-            fine_step = 1  # Use smaller steps for fine-tuning
+            # For video frames, fine-tuning can be narrower and more precise
+            fine_range = max(1, 2)  # Smaller range for video frames
+            fine_step = 1  # Single pixel precision for fine-tuning
             best_fine_iou = 0
             
             # Cache the binary source mask for faster operations
             source_mask_bool = source_mask_bin > 0
             
-            # Limit the fine-tuning search area
+            # Limit the fine-tuning search area - smaller for video frames
             dx_range = range(max(-max_shift, best_dx - fine_range), min(max_shift + 1, best_dx + fine_range + 1), fine_step)
             dy_range = range(max(-max_shift, best_dy - fine_range), min(max_shift + 1, best_dy + fine_range + 1), fine_step)
             
-            for dx in dx_range:
-                for dy in dy_range:
-                    # Create translation parameters
-                    test_params = {'translation': (dx, dy)}
+            # If initial alignment is already very good (>0.95 IoU), we can skip fine-tuning
+            if best_iou > 0.95:
+                best_fine_iou = best_iou
+            else:
+                for dx in dx_range:
+                    for dy in dy_range:
+                        # Create translation parameters
+                        test_params = {'translation': (dx, dy)}
+                        
+                        # Apply translation to get shifted mask
+                        _, shifted_mask = self._apply_transformation(
+                            processed_img,
+                            processed_mask,
+                            test_params
+                        )
+                        
+                        # Threshold the shifted mask for IoU calculation
+                        _, shifted_mask_bin = cv2.threshold(shifted_mask, 127, 255, cv2.THRESH_BINARY)
+                        shifted_mask_bool = shifted_mask_bin > 0
+                        
+                        # Calculate IoU using vectorized operations
+                        intersection = np.logical_and(source_mask_bool, shifted_mask_bool).sum()
+                        union = np.logical_or(source_mask_bool, shifted_mask_bool).sum()
+                        iou = intersection / union if union > 0 else 0
+                        
+                        # Update best if improved
+                        if iou > best_fine_iou:
+                            best_fine_iou = iou
+                            best_dx = dx
+                            best_dy = dy
+            
+            # Apply temporal smoothing to reduce jitter
+            # Store the current best alignment in our history
+            if hasattr(self, 'alignment_history'):
+                # Validate current alignment before adding to history
+                if isinstance(best_dx, int) and isinstance(best_dy, int) and abs(best_dx) < 1000 and abs(best_dy) < 1000:
+                    self.alignment_history.append((best_dx, best_dy))
+                    # Keep only the most recent alignments
+                    if len(self.alignment_history) > self.max_history:
+                        self.alignment_history.pop(0)
                     
-                    # Apply translation to get shifted mask
-                    _, shifted_mask = self._apply_transformation(
-                        processed_img,
-                        processed_mask,
-                        test_params
-                    )
-                    
-                    # Threshold the shifted mask for IoU calculation
-                    _, shifted_mask_bin = cv2.threshold(shifted_mask, 127, 255, cv2.THRESH_BINARY)
-                    shifted_mask_bool = shifted_mask_bin > 0
-                    
-                    # Calculate IoU using vectorized operations
-                    intersection = np.logical_and(source_mask_bool, shifted_mask_bool).sum()
-                    union = np.logical_or(source_mask_bool, shifted_mask_bool).sum()
-                    iou = intersection / union if union > 0 else 0
-                    
-                    # Update best if improved
-                    if iou > best_fine_iou:
-                        best_fine_iou = iou
-                        best_dx = dx
-                        best_dy = dy
+                    # If we have enough history, apply smoothing
+                    if len(self.alignment_history) >= 3:
+                        try:
+                            # Simple weighted average with more weight on recent frames
+                            weights = [0.1, 0.2, 0.3, 0.4, 0.5][-len(self.alignment_history):]
+                            weights = [w / sum(weights) for w in weights]  # Normalize weights
+                            
+                            smoothed_dx = int(sum(dx * w for (dx, _), w in zip(self.alignment_history, weights)))
+                            smoothed_dy = int(sum(dy * w for (_, dy), w in zip(self.alignment_history, weights)))
+                            
+                            # Safety check - limit maximum shift to prevent extreme values
+                            max_allowed_shift = min(w, h) // 4  # Max 25% of image dimension
+                            best_dx = max(min(smoothed_dx, max_allowed_shift), -max_allowed_shift)
+                            best_dy = max(min(smoothed_dy, max_allowed_shift), -max_allowed_shift)
+                            
+                            print(f"Applied temporal smoothing: ({best_dx}, {best_dy})")
+                        except Exception as e:
+                            print(f"Error in temporal smoothing: {str(e)}, using unsmoothed values")
+                else:
+                    print(f"Warning: Detected extreme alignment values ({best_dx}, {best_dy}), not adding to history")
+            
+            # Store this frame's alignment for the next frame (with validation)
+            if isinstance(best_dx, int) and isinstance(best_dy, int) and abs(best_dx) < 1000 and abs(best_dy) < 1000:
+                self.last_alignment = (best_dx, best_dy)
+            else:
+                print(f"Warning: Resetting invalid alignment ({best_dx}, {best_dy}) to (0,0)")
+                self.last_alignment = (0, 0)
             
             # Set best translation parameters
             transformation_params['translation'] = (best_dx, best_dy)
@@ -923,9 +996,8 @@ class EnhancedCropReinserter:
             print(f"Advanced blending failed: {str(e)}")
             import traceback
             traceback.print_exc()
-        
-        # Fallback to a simple feathered blend - still preserves most sharpness
-        return fallback_result
+            # Add fallback return here
+            return source_img
 
     def _feathered_blend(self, source_img, processed_img, mask, blend_extent=5):
         """
@@ -2144,7 +2216,7 @@ class EnhancedCropReinserter:
         
         return cleaned_mask
         """
-
+    
     def _reinsert_with_resolution_handling(self, source_path, processed_path, mask_path, output_path, debug_dir=None):
         """
         Reinsert a processed image region into the source image with enhanced mask alignment.
@@ -2278,7 +2350,7 @@ class EnhancedCropReinserter:
         #     # Save the cleaned source mask for debugging
         #     if debug_dir:
         #         cv2.imwrite(os.path.join(debug_dir, "clean_source_mask.png"), source_mask)
-
+        
         # If we're not handling different masks, simply use standard blending
         if not self.app.reinsert_handle_different_masks.get() or source_mask is None:
             # Improve basic alpha blending with edge-preserving approach
@@ -2461,7 +2533,7 @@ class EnhancedCropReinserter:
                 if debug_dir:
                     cv2.imwrite(os.path.join(debug_dir, "initial_gaps_before_fill.png"), remaining_gaps)
                     cv2.imwrite(os.path.join(debug_dir, "mask_after_initial_aggressive_fill.png"), aligned_mask)
-        
+                
         # Preserve hair parting if option enabled
         if self.app.preserve_hair_parting.get():
             # Detect landmarks for source and processed images
@@ -2551,7 +2623,7 @@ class EnhancedCropReinserter:
             # cv2.imwrite(os.path.join(debug_dir, "mask_after_boundary_cleaning.png"), aligned_mask)
             # cv2.imwrite(os.path.join(debug_dir, "final_mask_before_blend.png"), aligned_mask)
             pass
-
+        
         # Blending stage with improved methods
         if blend_mode == "alpha":
             result_img = self._alpha_blend(

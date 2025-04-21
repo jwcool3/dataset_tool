@@ -783,17 +783,39 @@ class ConfigTab:
         )
         protection_help.pack(anchor=tk.W, padx=20, pady=2)
         
+        # Create a hair details frame below the bangs frame
+        hair_details_frame = ttk.LabelFrame(content, text="Hair Detail Preservation", padding=5)
+        hair_details_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        # Add hair parting preservation option
+        ttk.Checkbutton(
+            hair_details_frame,
+            text="Preserve hair parting line",
+            variable=self.parent.preserve_hair_parting
+        ).pack(anchor=tk.W, padx=5, pady=5)
+
         # Help text for the feature
-        bangs_only_help = ttk.Label(
-            bangs_frame,
-            text="This will isolate just the bangs/forehead area of the mask for reinsertion, " + 
-                 "ignoring the rest of the hair. Useful for adding only bangs while keeping the original hairstyle.",
+        parting_help = ttk.Label(
+            hair_details_frame,
+            text="Detects and preserves the natural hair parting line from the original image. " + 
+                "This helps maintain a realistic look when the hair part is visible.",
             font=("Helvetica", 8),
             foreground="gray",
             wraplength=400,
             justify="left"
         )
-        bangs_only_help.pack(anchor=tk.W, padx=20, pady=2)
+        parting_help.pack(anchor=tk.W, padx=20, pady=2)
+
+        # Add a small visual example
+        example_frame = ttk.Frame(hair_details_frame)
+        example_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(
+            example_frame,
+            text="Effect: Without preservation, hair parts can appear doubled or unnatural.",
+            font=("Helvetica", 8),
+            foreground="gray"
+        ).pack(anchor=tk.W, padx=20)
         
         # Source directory
         source_frame = ttk.LabelFrame(content, text="Original Uncropped Images Directory", padding=5)
@@ -846,11 +868,32 @@ class ConfigTab:
         alignment_combo = ttk.Combobox(
             alignment_frame,
             textvariable=self.parent.reinsert_alignment_method,
-            values=["none", "centroid", "bbox", "landmarks", "contour", "iou"],
+            values=["none", "centroid", "bbox", "landmarks", "contour", "iou", "translation_only"],
             width=15,
             state="readonly"
         )
         alignment_combo.pack(side=tk.LEFT, padx=5)
+        
+        # Default to translation_only as it often works better
+        self.parent.reinsert_alignment_method.set("translation_only")
+        
+        # Add the "translation only" option right after the alignment method selection
+        translation_frame = ttk.Frame(self.advanced_frame)
+        translation_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Checkbutton(
+            translation_frame,
+            text="Use translation-only transform (no rotation/scaling of hair)",
+            variable=self.parent.use_translation_only
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Add help text explaining the option
+        ttk.Label(
+            translation_frame,
+            text="(Recommended: preserves hair structure while aligning position)",
+            font=("Helvetica", 8),
+            foreground="gray"
+        ).pack(side=tk.LEFT, padx=5)
         
         # Blend mode selection
         blend_frame = ttk.Frame(self.advanced_frame)
@@ -997,6 +1040,51 @@ class ConfigTab:
         # Initially hide the advanced options if different masks handling is disabled
         if not self.parent.reinsert_handle_different_masks.get():
             self.advanced_frame.pack_forget()
+            
+        # Add gap filling and artifact removal frame
+        gap_filling_frame = ttk.LabelFrame(content, text="Gap Filling & Artifact Removal", padding=5)
+        gap_filling_frame.pack(fill=tk.X, pady=5, padx=5)
+        
+        # Basic gap filling option
+        ttk.Checkbutton(
+            gap_filling_frame,
+            text="Fill gaps between source and processed masks",
+            variable=self.parent.fill_mask_gaps
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Color-specific gap filling option
+        ttk.Checkbutton(
+            gap_filling_frame,
+            text="Use color-specific gap filling (sample nearby hair colors)",
+            variable=self.parent.use_color_specific_fill
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Textured gap filling option
+        ttk.Checkbutton(
+            gap_filling_frame,
+            text="Use enhanced textured gap filling (adds natural hair texture variations)",
+            variable=self.parent.use_textured_gap_filling
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Artifact removal option
+        ttk.Checkbutton(
+            gap_filling_frame,
+            text="Remove thin artifacts at hair boundaries",
+            variable=self.parent.remove_artifacts
+        ).pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Help text
+        help_text = ttk.Label(
+            gap_filling_frame,
+            text="Gap filling ensures complete coverage of the original hair area. " +
+                 "Color-specific filling samples hair colors to prevent dark patches. " +
+                 "Artifact removal eliminates thin bright lines at hair edges.",
+            font=("Helvetica", 8),
+            foreground="gray",
+            wraplength=400,
+            justify="left"
+        )
+        help_text.pack(anchor=tk.W, padx=10, pady=5)
 
     def _toggle_mask_alignment_controls(self):
         """Show or hide advanced mask alignment controls based on the checkbox state."""

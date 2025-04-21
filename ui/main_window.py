@@ -141,7 +141,7 @@ class MainWindow:
 
 
         # Add this new variable for hair parting preservation
-        self.preserve_hair_parting = tk.BooleanVar(value=False)
+        self.preserve_hair_parting = tk.BooleanVar(value=True)
         # Add bangs extension options
         self.extend_bangs = tk.BooleanVar(value=False)
         self.bangs_extension_amount = tk.IntVar(value=30)
@@ -177,7 +177,13 @@ class MainWindow:
         # Add face protection variables
         self.protect_face_from_bangs = tk.BooleanVar(value=False)
         self.face_protection_strength = tk.DoubleVar(value=0.7)
-    
+        
+        # Add gap filling and artifact removal variables
+        self.fill_mask_gaps = tk.BooleanVar(value=True)  # Enable basic gap filling
+        self.use_color_specific_fill = tk.BooleanVar(value=True)  # Enable color-specific fill
+        self.remove_artifacts = tk.BooleanVar(value=True)  # Enable artifact removal
+        self.use_textured_gap_filling = tk.BooleanVar(value=True)  # Enable enhanced textured gap filling
+
     def _create_menu(self):
         # Clear any existing menus
         for i in range(self.menu_bar.index('end') + 1):
